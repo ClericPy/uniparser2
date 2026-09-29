@@ -133,7 +133,10 @@ def _cmd_ops(args: argparse.Namespace) -> int:
         for action in item["actions"]:
             missing = f"  [missing {', '.join(action['missing'])}]" if action["missing"] else ""
             form = action["param_form"]
-            print(f"  - {action['name']}{missing}  [slot3={form}]  {action['summary']}")
+            # The parameter slot is the operator's last one: slot 3 for a 3-slot operator, slot 2
+            # for a 2-slot one (`json` / `const` / `code`).
+            head = f"  - {action['name']}{missing}  [slot{item['arity']}={form}]"
+            print(f"{head}  {action['summary']}")
     return EXIT_OK
 
 

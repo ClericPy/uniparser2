@@ -90,6 +90,10 @@ def test_ops_text_reports_the_parameter_slot_shape(capsys) -> None:
     out = capsys.readouterr().out
     for form in ("value", "named", "none"):
         assert f"[slot3={form}]" in out
+    # A 2-slot operator's parameter slot is slot 2, not slot 3: `code` takes a named object
+    # (`src` / `inputs`) and `json` takes the value itself.
+    assert "[slot2=named]" in out
+    assert "[slot2=value]" in out
 
 
 def test_conformance_check_passes(capsys) -> None:

@@ -214,8 +214,8 @@ uniparser2/
 │   ├── cli/            the up2 command (ops / conformance / lint / trial)
 │   └── py.typed        PEP 561 type marker
 ├── tests/              operator behavior dictionary · compile-time/runtime error codes · serialization round-trip · CLI end-to-end · conformance audit
-├── tools/              local development scripts (the HTML report of every declared pair; not shipped)
-├── docs/               documentation index and the design notes (`docs/specs/0NN-*.md`)
+├── tools/              local development scripts (the generated catalogue; not shipped)
+├── docs/               index, the design notes (`docs/specs/0NN-*.md`), the operator reference and the generated catalogue
 ├── .github/workflows/  CI and release
 └── pyproject.toml      dependencies and publishing managed by uv; uv.lock is committed
 ```
@@ -232,8 +232,18 @@ uv build                    # build sdist + wheel
 ```
 
 Two scripts stay outside the package and are run from the repository root: `uv run python demo.py`
-(the walkthrough above) and `uv run python tools/demo_report.py`, which writes an HTML report of every
-declared `(operator, action)` pair, grouped by operator, to `.cache/report/up2-report.html`.
+(the walkthrough above) and `uv run python tools/demo_report.py`, which renders a catalogue of every
+declared `(operator, action)` pair from a real run — `.cache/report/up2-report.html` locally, or
+`--md` for the committed [`docs/report/up2-report.md`](docs/report/up2-report.md). The committed
+catalogue is refreshed from the test suite:
+
+```bash
+uv run pytest tests/report                          # fails when the catalogue is stale
+UP2_UPDATE_REPORT=1 uv run pytest tests/report      # rewrites it instead
+```
+
+The repository-facing reference is the hand-maintained
+[`docs/operator-reference.md`](docs/operator-reference.md).
 
 **The conformance audit is the backbone of this project**: it turns "every piece of syntax is covered
 by tests" into a mechanically checkable criterion — every `(operator, action)` declared in the registry

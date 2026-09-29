@@ -326,6 +326,7 @@ After changing `.py` / `.sh` files, run these checks through the project environ
 | Coverage gate | `uv run pytest --cov=uniparser2.core --cov-fail-under=95` | before a PR / wrapping up a stage |
 | Security | `uv run bandit -r src` | when input validation, deserialization, regular expressions or subprocesses are touched (in this project `core/compile.py`, `ops/re.py` and `store/*` are long-term hits) |
 | Dependencies | `uv run pip-audit` | when the dependency list changes |
+| Catalogue freshness | `uv run pytest tests/report` | when an operator, an action or a case changes — the suite compares `docs/report/up2-report.md` with a fresh render, so a stale catalogue fails like any other test; `UP2_UPDATE_REPORT=1 uv run pytest tests/report` rewrites the file from the same run. The module skips when an optional engine is missing, so the cells that install every extra are the ones that really check it |
 
 **When a check was not run, or the tool is missing, the gap must be reported truthfully** — never claim "done".
 

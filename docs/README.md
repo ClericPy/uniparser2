@@ -19,6 +19,17 @@ what the system should be; design note `05` §5 describes how code and notes are
 Code, tests and OpenSpec changes cite these notes by their leading number (`design note 02 §6.12`
 means §6.12 of `002-dsl-spec-triples-and-operators.md`).
 
+## Reference pages
+
+- **[`operator-reference.md`](operator-reference.md)**: what each operator and action means, how the
+  parameter slot is written, and worked examples with their real outputs. It is **hand-maintained**;
+  the authority for the action list stays the registry (`uv run up2 ops --json`).
+- **[`report/up2-report.md`](report/up2-report.md)**: the machine-written catalogue — one case per
+  declared `(operator, action)` pair, the multi-stage compositions and the compile-time invalid forms,
+  each produced by a real run. A test keeps it honest:
+  `uv run pytest tests/report` fails when it is stale, and
+  `UP2_UPDATE_REPORT=1 uv run pytest tests/report` rewrites it (`005` §6).
+
 ## Conventions
 
 - **Interfaces, error codes and DSL syntax changes must land in the notes** before or with the code

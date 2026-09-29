@@ -190,8 +190,8 @@ uniparser2/
 │   ├── cli/            up2 命令（ops / conformance / lint / trial）
 │   └── py.typed        PEP 561 类型标记
 ├── tests/              算子行为字典 · 编译期/运行期错误码 · 序列化往返 · CLI 端到端 · 一致性审计
-├── tools/              本地开发脚本（按算子分组的全量用例 HTML 报告；不随发行物发布）
-├── docs/               文档索引与设计稿（`docs/specs/0NN-*.md`）
+├── tools/              本地开发脚本（生成目录的工具；不随发行物发布）
+├── docs/               索引、设计稿（`docs/specs/0NN-*.md`）、算子参考与生成的目录
 ├── .github/workflows/  CI 与发布
 └── pyproject.toml      uv 管理依赖与发布；uv.lock 入库
 ```
@@ -208,8 +208,16 @@ uv build                    # 构建 sdist + wheel
 ```
 
 两个脚本留在包外，都从仓库根目录运行：`uv run python demo.py`（上面的走查）与
-`uv run python tools/demo_report.py`——后者把注册表里每一对 `(算子, 动作)` 按算子分组写成 HTML 报告，
-输出到 `.cache/report/up2-report.html`。
+`uv run python tools/demo_report.py`——后者按真实运行结果，把每个 `(算子, 动作)` 一对渲染成目录：
+默认本地 HTML（`.cache/report/up2-report.html`），`--md` 则写入库的
+[`docs/report/up2-report.md`](docs/report/up2-report.md)。入库那份由测试负责刷新：
+
+```bash
+uv run pytest tests/report                          # 目录过期就失败
+UP2_UPDATE_REPORT=1 uv run pytest tests/report      # 改成重写该文件
+```
+
+面向仓库读者的参考页是**手写**的 [`docs/operator-reference.md`](docs/operator-reference.md)。
 
 **一致性审计是这套工程的骨干**：它把「所有语法都被测到」变成可机械检查的判据——
 注册表声明的每个 `(算子, 动作)` 必须在测试源码里有可见的覆盖声明，

@@ -17,9 +17,27 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   has to fill — a parameter the action slot itself provides does not count. Both the human view
   (`[slot3=value]`) and `--json` report it, so a chain writer no longer has to infer the rule from the
   DSL spec.
+- [`docs/operator-reference.md`](docs/operator-reference.md): a hand-maintained reference for the ten
+  operators — what each action means, which writing its parameter slot takes, and worked examples with
+  their real outputs. The registry stays the authority (`up2 ops --json`); this page is the map next
+  to it.
+- [`docs/report/up2-report.md`](docs/report/up2-report.md): the machine-written catalogue — one case per
+  declared `(operator, action)` pair, the multi-stage compositions and the compile-time invalid forms,
+  each produced by a real run. `tests/report/test_catalogue.py` compares it with a fresh render, so the
+  suite is both where freshness is enforced and where the file is refreshed
+  (`UP2_UPDATE_REPORT=1 uv run pytest tests/report`); the timestamped HTML build stays local in
+  `.cache/report/`.
 
 ### Fixed
 
+- Two report fixtures were wrong and are corrected, now guarded by the widened self-check (it covers
+  the multi-stage compositions, not only the single-action cases): `["css", …, ["code", …]]` fed the
+  sandbox a *list* (it needed a string), and the XPath namespace demo put the `{"expr", "ns"}` object
+  in slot 2 instead of slot 3, so it never compiled. A rendered outcome is stable now as well: the
+  measured sandbox duration in a limit message differed on every run and moved the tail of the
+  180-character truncation window, so it is collapsed before truncation.
+- `up2 ops` printed `[slot3=…]` for the 2-slot operators (`json` / `const` / `code`) whose parameter
+  slot is slot 2; the label now follows the operator's arity.
 - `py` validates its scalar parameters at compile time, as every other operator already did: a JSON
   container written where the function needs a string or an integer (`urljoin.base`, `slice.spec`,
   `split.sep` / `split.maxsplit`, `getitem.index`, `get.key`, `replace.old` / `replace.new`) and an

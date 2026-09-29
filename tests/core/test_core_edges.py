@@ -1,0 +1,344 @@
+"""Kernel boundaries and diagnostic branches (pushing ``core/`` coverage past the acceptance line).
+
+Only **real error paths and diagnostic output** are tested here on purpose -- they are what users
+and LLMs read, so they are worth pinning more than the happy paths (``05`` §4's "every error code
+must have a case" is the same discipline).
+"""
+
+from __future__ import annotations
+
+import importlib.util
+from collections.abc import Mapping
+from typing import Any, ClassVar
+
+import pytest
+
+from uniparser2 import (
+    Failed,
+    Missing,
+    Ok,
+    Outcome,
+    Policy,
+    Ref,
+    Scope,
+    Up2Error,
+    compile_field,
+    dumps,
+    eval_field,
+    loads,
+)
+from uniparser2.core import registry, udfs, values
+from uniparser2.core.ast import CompiledStage, Stage, parse_stage
+from uniparser2.core.conformance import check
+from uniparser2.core.refs import parse_path_text, parse_ref
+from uniparser2.core.registry import ActionSpec, Call, Op
+
+# ---------------------------------------------------------------- values diagnostics
+
+
+def test_missing_sentinel_has_readable_repr() -> None:
+    assert repr(values.MISSING) == "<MISSING>"
+    assert values.preview(values.MISSING) == "<MISSING>"
+    assert values.type_name(values.MISSING) == "missing"
+
+
+def test_opaque_is_reported_as_opaque() -> None:
+    class Node(values.Opaque):
+        __slots__ = ()
+
+    node = Node()
+    assert values.type_name(node) == "opaque"
+    assert values.preview(node) == "<opaque Node>"
+
+
+def test_preview_truncates_long_values() -> None:
+    text = values.preview("x" * 300, 10)
+    assert text.startswith('"xxxxxxxxx') and text.endswith("...(+292)")
+
+
+def test_preview_handles_unserialisable_values() -> None:
+    """``json.dumps(default=repr)`` downgrades an unserialisable value to a string, not an error."""
+    assert values.preview({1, 2}) == '"{1, 2}"'
+
+
+# ---------------------------------------------------------------- ast shape and serialization
+
+
+def test_ref_and_compiled_stage_expose_helpers() -> None:
+    ref = parse_ref("$globals.base_url")
+    assert str(ref) == "$globals.base_url"
+
+    compiled = compile_field([["py", "strip", ""]])
+    stage: CompiledStage = compiled.stages[0]
+    assert stage.pointer == "/0"
+    assert compiled.dumps() == '[["py","strip",""]]'
+
+
+def test_compile_field_accepts_already_compiled_field() -> None:
+    """``compile_field`` is idempotent: an already compiled field chain must not error."""
+    once = compile_field([["py", "strip", ""]])
+    twice = compile_field(once)
+    assert twice.stages == once.stages
+
+
+def test_parse_stage_rejects_scalar_and_empty_chain() -> None:
+    with pytest.raises(Up2Error) as scalar:
+        parse_stage(5)
+    assert scalar.value.diagnostic.code == "UP2-E1004"
+    with pytest.raises(Up2Error) as empty:
+        loads([])
+    assert empty.value.diagnostic.code == "UP2-E1004"
+
+
+def test_loads_rejects_stage_list_with_non_list_items() -> None:
+    with pytest.raises(Up2Error) as info:
+        loads([5])
+    assert info.value.diagnostic.code == "UP2-E1004"
+
+
+# ---------------------------------------------------------------- compile branches
+
+
+def test_arity_is_checked_before_action_resolution() -> None:
+    """Arity precedes action resolution: a short 3-slot stage reports E1004, not E1003/E1107."""
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "no_such_fn"]])
+    assert info.value.diagnostic.code == "UP2-E1004"
+    assert info.value.diagnostic.pointer == "/0"
+
+
+def test_lit_directive_escapes_dollar_literal() -> None:
+    """``{"$lit": ...}`` keeps a ``$``-prefixed string in literal semantics (not a reference)."""
+    from uniparser2.core.ast import Lit
+
+    compiled = compile_field([["py", "urljoin", {"$lit": "$weird"}]])
+    assert compiled.stages[0].params["base"] == Lit("$weird")
+
+
+def test_ref_kind_success_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """L1 has no ref-only parameter; patch one in to cover the REF slot accepting a reference."""
+    from uniparser2.core.registry import Kind, ParamSpec
+
+    py_op = registry.get("py")
+    assert py_op is not None
+    original = py_op.actions["urljoin"]
+    patched = ActionSpec(
+        original.name,
+        original.summary,
+        (ParamSpec("base", Kind.REF),),
+        original.requires,
+        original.accepts_missing,
+    )
+    monkeypatch.setattr(py_op, "actions", {**py_op.actions, "urljoin": patched})
+    compiled = compile_field([["py", "urljoin", "$globals.base"]], products=())
+    base = compiled.stages[0].params["base"]
+    assert isinstance(base, Ref)
+    assert eval_field(compiled, "page", scope=Scope(globals={"base": "https://x/"})) == Ok(
+        "https://x/page"
+    )
+
+
+def test_list_valued_reference_param_descends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """References inside a container are resolved one by one (``_resolve_param`` list branch)."""
+
+    def tag(value: Any, **kwargs: Any) -> Any:
+        return kwargs
+
+    monkeypatch.setattr(registry, "action_missing_deps", lambda instance, action: ())
+    udfs.register_udf("up2_test_edge_tag", tag)
+    try:
+        outcome = eval_field(
+            compile_field([["udf", "up2_test_edge_tag", ["$globals.x"]]]),
+            "v",
+            scope=Scope(globals={"x": 1}),
+            policy=Policy(on_missing="drop"),
+        )
+    finally:
+        udfs.unregister_udf("up2_test_edge_tag")
+    # A list is not a named-parameter object ⇒ runtime E2002; all that is required here is that
+    # the reference was resolved instead of crashing at compile time.
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2002"
+
+
+def test_reference_inside_list_is_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    def tag(value: Any, **kwargs: Any) -> Any:
+        return kwargs
+
+    monkeypatch.setattr(registry, "action_missing_deps", lambda instance, action: ())
+    udfs.register_udf("up2_test_edge_tag2", tag)
+    try:
+        with pytest.raises(Up2Error) as info:
+            compile_field([["udf", "up2_test_edge_tag2", ["$nope.x"]]])
+    finally:
+        udfs.unregister_udf("up2_test_edge_tag2")
+    assert info.value.diagnostic.code == "UP2-E1006"
+
+
+# ---------------------------------------------------------------- refs error branches
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["$", "$globals.", "$.a", "$globals..a"],
+)
+def test_bad_reference_shapes_are_rejected(text: str) -> None:
+    with pytest.raises(Up2Error) as info:
+        parse_ref(text)
+    assert info.value.diagnostic.code == "UP2-E1006"
+
+
+def test_bad_path_text_is_rejected() -> None:
+    with pytest.raises(Up2Error) as info:
+        parse_path_text("")
+    assert info.value.diagnostic.code == "UP2-E1005"
+    with pytest.raises(Up2Error) as dotted:
+        parse_path_text("locals..a")
+    assert dotted.value.diagnostic.code == "UP2-E1005"
+
+
+def test_write_text_refuses_non_writable_root() -> None:
+    with pytest.raises(ValueError, match="is not a writable path"):
+        Scope().write_text("globals.base", 1)
+
+
+def test_delete_local_with_non_dict_intermediate_returns_false() -> None:
+    scope = Scope(locals={"a": 1})
+    assert scope.delete_text("locals.a.b") is False
+    assert scope.locals == {"a": 1}
+
+
+# ---------------------------------------------------------------- evaluator policy
+
+
+def test_policy_rejects_unknown_error_strategy() -> None:
+    with pytest.raises(ValueError, match="on_error"):
+        Policy(on_error="nope")
+
+
+def test_missing_short_circuits_non_accepting_next_step() -> None:
+    chain = [["re", "search", r"\d+"], ["py", "strip", ""]]
+    assert isinstance(
+        eval_field(compile_field(chain), "abc", policy=Policy(on_missing="drop")), Missing
+    )
+
+
+def test_failed_short_circuits_when_error_is_dropped() -> None:
+    # The former ``cast`` operator has been merged into ``py``: ``["py","int",""]`` is its
+    # equivalent spelling.
+    chain = [["py", "int", ""], ["py", "strip", ""]]
+    outcome = eval_field(
+        compile_field(chain), "not-a-number", policy=Policy(on_error="drop", on_missing="drop")
+    )
+    assert isinstance(outcome, Missing)
+
+
+def test_on_missing_none_yields_json_null() -> None:
+    chain = [["re", "search", r"\d+"]]
+    assert eval_field(compile_field(chain), "abc", policy=Policy(on_missing="none")) == Ok(None)
+
+
+def test_system_errors_are_not_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """System exceptions such as ``OSError`` / ``KeyboardInterrupt`` must keep propagating."""
+
+    def boom(self: Op, call: Call) -> Outcome:
+        raise OSError("disk exploded")
+
+    from uniparser2.ops.pyops import Py
+
+    monkeypatch.setattr(Py, "evaluate", boom)
+    with pytest.raises(OSError, match="disk exploded"):
+        eval_field(compile_field([["py", "strip", ""]]), " a ")
+
+
+# ---------------------------------------------------------------- registry boundaries
+
+
+def test_register_requires_name_and_non_empty_alias() -> None:
+    class NoName(Op):
+        actions: ClassVar[Mapping[str, ActionSpec]] = {}
+
+        def evaluate(self, call: Call) -> Outcome:
+            del call
+            return Ok(None)
+
+    with pytest.raises(ValueError, match="does not declare name"):
+        registry.register(NoName)
+
+    class EmptyAlias(NoName):
+        name = "up2_test_no_alias"
+        aliases = ("",)
+
+    with pytest.raises(ValueError, match="has an empty alias"):
+        registry.register(EmptyAlias)
+
+
+def test_missing_deps_survives_broken_find_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(name: str) -> Any:
+        raise ValueError(f"bad spec for {name}")
+
+    monkeypatch.setattr(importlib.util, "find_spec", boom)
+    assert registry.missing_deps(("whatever",)) == ("whatever",)
+
+
+def test_op_missing_deps_requires_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    xpath = registry.get("xpath")
+    assert xpath is not None
+    monkeypatch.setattr(registry, "missing_deps", lambda names: tuple(names))
+    assert registry.op_missing_deps(xpath) == xpath.requires
+
+
+def test_action_available_helper() -> None:
+    py_op = registry.get("py")
+    assert py_op is not None
+    assert registry.action_available(py_op, "strip") is True
+
+
+def test_base_dynamic_action_summary_is_available() -> None:
+    py_op = registry.get("py")
+    assert py_op is not None
+    assert "registered by the host" in py_op.dynamic_action_summary()
+
+
+def test_register_udf_validates_arguments() -> None:
+    with pytest.raises(ValueError, match="register_udf"):
+        udfs.register_udf("", lambda value: value)
+    # Pass a non-callable object through an Any variable: mypy/ty/pyright all accept it, so no
+    # checker-specific ignore syntax is needed.
+    not_callable: Any = "not-callable"
+    with pytest.raises(ValueError, match="register_udf"):
+        udfs.register_udf("name", not_callable)
+
+
+# ---------------------------------------------------------------- conformance report
+
+
+def test_report_renders_all_problem_kinds() -> None:
+    report = check(
+        covered_pairs=[("gone", "x")],
+        covered_codes=["UP2-E1001", "UP2-E" + "9999"],
+        declared_pairs=[("py", "strip")],
+        declared_codes=["UP2-E1001", "UP2-E2002"],
+    )
+    text = report.render()
+    assert "uncovered (operator, action)" in text
+    assert "orphan cases" in text
+    assert "error codes without cases" in text
+    assert "orphan error codes" in text
+    assert "FAIL" in text
+    assert report.ok is False
+
+
+def test_report_renders_pass() -> None:
+    report = check(covered_pairs=[], covered_codes=[], declared_pairs=[], declared_codes=[])
+    assert "PASS" in report.render()
+    assert report.ok is True
+
+
+# ---------------------------------------------------------------- serialization edge inputs
+
+
+def test_dumps_accepts_raw_stage_lists() -> None:
+    """``Stage`` keeps only the raw slots: ``slot1`` is the 2nd slot, ``slot2`` is the 3rd."""
+    assert dumps([Stage(op="py", slot1="strip", slot2=None, length=2)]) == '[["py","strip"]]'
+    assert dumps([Stage(op="py", slot1="strip", slot2="", length=3)]) == '[["py","strip",""]]'

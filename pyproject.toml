@@ -1,0 +1,138 @@
+[project]
+name = "uniparser2"
+dynamic = ["version"]
+description = "A declarative, deterministic, serializable text parsing engine"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "ClericPy" }]
+keywords = ["parser", "dsl", "extraction", "html", "json", "declarative", "llm"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Text Processing :: Markup",
+  "Typing :: Typed",
+]
+# The kernel has zero third-party dependencies (design draft 01, section 1.1, invariant I1);
+# engines are grouped into optional dependencies per operator.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/ClericPy/uniparser2"
+Repository = "https://github.com/ClericPy/uniparser2"
+Issues = "https://github.com/ClericPy/uniparser2/issues"
+Changelog = "https://github.com/ClericPy/uniparser2/blob/master/CHANGELOG.md"
+Documentation = "https://github.com/ClericPy/uniparser2/blob/master/README.md"
+
+[project.optional-dependencies]
+html = ["selectolax>=0.3.21"]
+xml = ["lxml>=5.0"]
+json = ["jmespath>=1.0.1"]
+time = ["dateparser>=1.2"]
+md = ["html-to-markdown>=3.0"]
+# The in-place trial bench (`up2 studio`, design note 06) is not implemented yet, so this extra is
+# declared but unused, and -- like `code` -- deliberately kept out of `all`: installing everything
+# should not pull in a GUI toolkit that no code imports.
+ui = ["pywebview>=5.0"]
+# Sandboxed execution of in-chain code: **deliberately not part of all** -- installing everything
+# should not hand out code execution as a side effect.
+code = ["pydantic-monty>=1.0.0"]
+all = ["uniparser2[html,xml,json,time,md]"]
+
+[project.scripts]
+up2 = "uniparser2.cli.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.9",
+    "mypy>=1.14",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# Single source of truth for the version: the __version__ literal in src/uniparser2/__init__.py.
+path = "src/uniparser2/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+# The PEP 561 marker py.typed lives inside the package directory and ships with the wheel.
+packages = ["src/uniparser2"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/.github",
+  "/CHANGELOG.md",
+  "/CONTRIBUTING.md",
+  "/LICENSE",
+  "/README.md",
+  "/pyproject.toml",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# `.cache` and `.venv` are scratch/environment. `docs` holds the design notes: their fenced Python
+# blocks are illustrative sketches whose layout (aligned comments, elisions, box text) carries meaning,
+# so the formatter must not reflow them. `README.md` stays in scope and is format-checked.
+extend-exclude = [".cache", ".venv", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF", "S"]
+# RUF001/002/003 flag ambiguous characters mixed into Latin text as a security concern. They stay
+# ignored because ordinary punctuation in non-Latin prose only ever produces false positives here;
+# revisit once the repository-wide migration to English is complete.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# In tests, assert is the assertion itself, not a security risk.
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests", "demo.py", "tools/demo_report.py"]
+warn_unreachable = true
+
+# Test files are not forced to annotate every fixture parameter (pytest's capsys/tmp_path do have
+# official types, but annotating each one pays off very little); all other strict rules still apply.
+# tests/ is a real package, hence the module pattern tests.*.
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config"
+filterwarnings = ["error"]
+markers = [
+    "covers(op, action): declare the (operator, action) pair this test covers, for the up2 conformance --check audit",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["uniparser2"]
+
+[tool.coverage.report]
+show_missing = true
+# The kernel is the "zero dependencies, no IO" layer, the one most worth pinning coverage on;
+# the gate command is documented in docs/specs/005 §6 and CI:
+#   uv run pytest --cov=uniparser2.core --cov-fail-under=95
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "@overload",
+  "pragma: no cover",
+]

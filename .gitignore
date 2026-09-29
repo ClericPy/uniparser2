@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Agent tooling: local skills for this workspace. The workflow they implement is
+# part of the repo (AGENTS.md, CONTRIBUTING.md, openspec/), the copies are not.
+.agents/

@@ -1,0 +1,30 @@
+# Uniform line endings: every text file in the repo is LF, so committing from
+# Windows does not rewrite whole files as CRLF.
+* text=auto eol=lf
+
+*.py text eol=lf
+*.pyi text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.txt text eol=lf
+
+# Windows scripts stay CRLF (PowerShell / cmd have historical trouble with LF).
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binaries: no line-ending conversion and no diff.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary

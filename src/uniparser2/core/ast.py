@@ -1,0 +1,182 @@
+"""Canonical model of stages and compile products (design doc 02 §1, 03 §2).
+
+This module only handles **shape**: stage parsing, serialization round-trip, and the parameter
+carriers (``Lit`` / ``Ref``). Every validity check (operator exists, action is legal, parameter
+kind) lives in ``core.compile``.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+from .errors import Up2Error, diag
+
+MIN_STAGE_LEN = 2
+MAX_STAGE_LEN = 3
+
+
+@dataclass(frozen=True, slots=True)
+class Ref:
+    """Reference (``$<root>[.<segment>]...``). The shape is here; validity is at compile time."""
+
+    root: str
+    path: tuple[str, ...]
+    raw: str
+
+    def __str__(self) -> str:
+        return self.raw
+
+
+@dataclass(frozen=True, slots=True)
+class Lit:
+    """Literal (including the result of a ``{"$lit": v}`` escape)."""
+
+    value: Any
+
+
+type Param = Lit | Ref | list[Param] | dict[str, Param]
+"""Parameter carrier: scalars are ``Lit``/``Ref``; containers are walked recursively (02 §4)."""
+
+
+@dataclass(frozen=True, slots=True)
+class Stage:
+    """The **raw slots** of one stage: ``[operator, action, parameter]`` (design doc 02 §1).
+
+    The slot shape is **uniform across all operators**: slot 2 = action (the action enum declared
+    by that operator, or the function name for ``py``/``udf``), slot 3 = parameter (selector /
+    XPath / regex / argument, any value); an operator with a single action is written with two
+    slots ``[operator, parameter]``. This class keeps only the raw text and the length; semantics
+    are left to compile time (``compile_stage`` reads them through ``Op.action_slot`` /
+    ``Op.param_slot``).
+
+    ``length`` records the **raw array length** (2 or 3); serialization must restore it exactly,
+    otherwise the round-trip does not hold.
+    """
+
+    op: str
+    slot1: Any
+    slot2: Any
+    length: int = MAX_STAGE_LEN
+
+    def to_list(self) -> list[Any]:
+        if self.length == MIN_STAGE_LEN:
+            return [self.op, self.slot1]
+        return [self.op, self.slot1, self.slot2]
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledStage:
+    """A compiled stage: action canonicalized, parameters resolved by kind, payload precompiled."""
+
+    index: int
+    stage: Stage
+    op_name: str
+    action: str
+    params: dict[str, Param]
+    accepts_missing: bool = False
+    payload: Any = None
+
+    @property
+    def pointer(self) -> str:
+        return f"/{self.index}"
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledField:
+    """One field chain (the smallest executable unit in L1)."""
+
+    stages: tuple[CompiledStage, ...]
+    source: tuple[Stage, ...]
+
+    def dumps(self) -> str:
+        return dumps(self.source)
+
+
+def parse_stage(raw: Any, /, *, pointer: str = "") -> Stage:
+    """Parse a raw JSON value into a ``Stage``; a shape mismatch is ``UP2-E1004``."""
+    if not isinstance(raw, (list, tuple)):
+        raise Up2Error(
+            diag(
+                "UP2-E1004",
+                f"a stage must be an array, got {type(raw).__name__}",
+                fix='write ["operator", "action", "value"], for example ["py", "strip"]',
+                pointer=pointer,
+            )
+        )
+    length = len(raw)
+    if not (MIN_STAGE_LEN <= length <= MAX_STAGE_LEN):
+        raise Up2Error(
+            diag(
+                "UP2-E1004",
+                f"stage length is {length}, only 2 or 3 is allowed",
+                fix='follow the declared arity: 3 slots is ["operator", slot2, slot3]; '
+                '2 slots is ["operator", parameter]',
+                pointer=pointer,
+            )
+        )
+    op = raw[0]
+    if not isinstance(op, str):
+        raise Up2Error(
+            diag(
+                "UP2-E1004",
+                f"stage slot 1 must be an operator name (str), got {type(op).__name__}",
+                fix='write the operator name first, for example "css" / "re" / "py"',
+                pointer=f"{pointer}/0",
+            )
+        )
+    action = raw[1]
+    value = raw[2] if length == MAX_STAGE_LEN else None
+    return Stage(op=op, slot1=action, slot2=value, length=length)
+
+
+def dumps(stages: Any) -> str:
+    """Canonical serialization (compact, non-ASCII not escaped).
+
+    ``dumps(loads(dumps(x))) == dumps(x)`` holds character by character.
+    """
+    return json.dumps(_as_lists(stages), separators=(",", ":"), ensure_ascii=False)
+
+
+def loads(source: Any) -> tuple[Stage, ...]:
+    """Accept a JSON string / stage array / field-chain array, always return ``tuple[Stage, ...]``.
+
+    The three input forms are idempotent.
+    """
+    if isinstance(source, (str, bytes)):
+        source = json.loads(source)
+    stages = _split_stages(source)
+    return tuple(parse_stage(raw, pointer=f"/{index}") for index, raw in enumerate(stages))
+
+
+def _as_lists(stages: Any) -> list[list[Any]]:
+    if isinstance(stages, CompiledField):
+        return [stage.to_list() for stage in stages.source]
+    out: list[list[Any]] = []
+    for item in stages:
+        out.append(item.to_list() if isinstance(item, Stage) else list(item))
+    return out
+
+
+def _split_stages(source: Any) -> list[Any]:
+    """Tell a single stage (``["py","strip"]``) apart from a field chain (``[["py","strip"]]``)."""
+    if not isinstance(source, (list, tuple)):
+        raise Up2Error(
+            diag(
+                "UP2-E1004",
+                f"a chain must be an array, got {type(source).__name__}",
+                fix='pass a single stage ["py","strip"], or a field chain [["py","strip"]]',
+                pointer="",
+            )
+        )
+    if not source:
+        raise Up2Error(
+            diag("UP2-E1004", "the chain is empty", fix="write at least one stage", pointer="")
+        )
+    first = source[0]
+    if isinstance(first, Stage):
+        return list(source)
+    if isinstance(first, str):
+        return [list(source)]
+    return list(source)

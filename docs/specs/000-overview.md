@@ -69,8 +69,8 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 
 | Layer | What it does | What it explicitly does not do |
 |---|---|---|
-| **L1 operator layer** | the value domain / tri-state / references / compile-time validation / export packing; **10 operators** (`css`/`css1`/`xpath`/`json`/`re`/`py`/`udf`/`ctx`/`const`/`code`, where `time`/`cast` have been merged into `py` and `code` is in `02` §6.12) with all their actions; **the globals/locals design of `ctx`**; **the conformance test set** (every `(operator, action)` has a case) | no multi-field orchestration, no list/nested structures, **no domain names or business keys** |
-| **L2 structure layer** | field-chain orchestration, `select` fan-out, `callback` + `presets` iteration, `result`/`$map` assembly → arbitrarily nested `list`/`dict`; the three node types and the executor; lint; the trial UI; the `request` structure (**assembled only, never sent**) | **still no domain names or business keys**; no network requests |
+| **L1 operator layer** | the value domain / tri-state / references / compile-time validation / export packing; **11 operators** (`css`/`css1`/`xpath`/`json`/`re`/`py`/`udf`/`ctx`/`const`/`each`/`code`, where `time`/`cast` have been merged into `py` and `code` is in `02` §6.12) with all their actions; **the globals/locals design of `ctx`**; **the conformance test set** (every `(operator, action)` has a case) | no multi-field orchestration, no list/nested structures, **no domain names or business keys** |
+| **L2 structure layer** | field-chain orchestration, `each` iteration (a list → one dictionary per element), `result` assembly → arbitrarily nested `list`/`dict`; the three node types and the executor; lint; the trial UI; the `request` structure (**assembled only, never sent**) | **still no domain names or business keys**; no network requests |
 | **L3 binding layer** | binding a chain to a business identity and freezing it: `root_domain` / `tpl_key`, the Store, fingerprints and auditing, the `publish` gates, the `S0–S7` SOP; a seam example of a host consuming the request dict | — |
 
 **Criterion**: item 5 of the L3 acceptance criteria in `07` §3 requires that "after deleting every concept of `04` from the code, all L1/L2 tests still pass" — that is the mechanically checkable form of "the first two layers have zero business coupling".
@@ -134,7 +134,7 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 | `000-overview.md` (this document) | positioning, the end-state acceptance criteria, goal mapping, scope, glossary, map |
 | `001-architecture-and-value-model.md` | layering and invariants, package structure, the value tree, tri-state and policy, export packing, security and resource limits |
 | `002-dsl-spec-triples-and-operators.md` | the canonicalisation of the chain stage `[operator, mode, argument]` and the increasing enumeration strength of the slots, reference syntax, the full operator set, allowlisted functions, compile-time error codes |
-| `003-parse-chain-spec.md` | the three node-type contracts, the graph structure, `select` splitting, `result` assembly, scope propagation, the execution model, the lint checklist, a complete example |
+| `003-parse-chain-spec.md` | the three node-type contracts, the graph structure, `each` iteration, `result` assembly, scope propagation, the execution model, the lint checklist, a complete example |
 | `004-persistence-and-sop.md` | the `Template`/`TemplateAudit` data model, fingerprints, the Store abstraction and its implementations, the `S0–S7` SOP, the counter-example list |
 | `005-engineering-workflow.md` | uv dependencies and releases, directory structure, TDD and test layering, documentation-driven development, OpenSpec integration, change-linter, CI |
 | `006-trial-ui-design.md` | the pywebview three-column trial UI, single-step trace, the save-as-snapshot loop, TUI/CLI degradation |

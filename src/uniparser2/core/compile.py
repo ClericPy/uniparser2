@@ -15,20 +15,35 @@ from typing import Any
 from . import registry
 from .ast import CompiledField, CompiledStage, Lit, Param, Ref, Stage, loads, parse_stage
 from .errors import Up2Error, diag
-from .limits import MAX_STEPS_PER_FIELD
+from .limits import MAX_EACH_DEPTH, MAX_STEPS_PER_FIELD
 from .refs import LIT_DIRECTIVE, RESERVED_ROOTS, is_ref_text, parse_ref
+from .values import type_name
 
 logger = logging.getLogger("uniparser2")
 
 _DIRECTIVE_PREFIX = "$"
-_DEFERRED_ROOTS = ("item",)
-_DEFERRED_FIX = "$item is only available inside a $map template (L2); use $locals / $globals"
 _NO_PARAM_PLACEHOLDERS = (None, "")
 
 
-def compile_field(source: Any, /, *, products: Iterable[str] = ()) -> CompiledField:
-    """Compile a stage array / field chain / JSON string / compiled field into ``CompiledField``."""
-    source_stages = _as_stages(source)
+def compile_field(
+    source: Any, /, *, products: Iterable[str] = (), depth: int = 0, pointer: str = ""
+) -> CompiledField:
+    """Compile a stage array / field chain / JSON string / compiled field into ``CompiledField``.
+
+    ``depth`` counts the enclosing ``each`` field maps and ``pointer`` is the JSON Pointer prefix
+    this chain sits at inside the chain being compiled; both stay at their defaults for a top-level
+    chain and are non-default only for a sub-chain.
+    """
+    if depth > MAX_EACH_DEPTH:
+        raise Up2Error(
+            diag(
+                "UP2-E1012",
+                f"`each` is nested {depth} levels deep, over MAX_EACH_DEPTH={MAX_EACH_DEPTH}",
+                fix="split the iteration over several nodes, or flatten the inner list first",
+                pointer=pointer,
+            )
+        )
+    source_stages = _as_stages(source, pointer=pointer)
     if len(source_stages) > MAX_STEPS_PER_FIELD:
         raise Up2Error(
             diag(
@@ -37,21 +52,23 @@ def compile_field(source: Any, /, *, products: Iterable[str] = ()) -> CompiledFi
                 f"MAX_STEPS_PER_FIELD={MAX_STEPS_PER_FIELD}",
                 fix="split it into several field chains, or fold a piece of logic into a "
                 "named operator/udf",
-                pointer="",
+                pointer=pointer,
             )
         )
     declared = tuple(dict.fromkeys(products))
     stages = tuple(
-        compile_stage(stage, index=index, products=declared)
+        compile_stage(stage, index=index, products=declared, depth=depth, pointer=pointer)
         for index, stage in enumerate(source_stages)
     )
     logger.debug("compiled field: steps=%d ops=%s", len(stages), [item.op_name for item in stages])
     return CompiledField(stages=stages, source=source_stages)
 
 
-def compile_stage(raw: Any, /, *, index: int = 0, products: Iterable[str] = ()) -> CompiledStage:
-    """Compile a single stage."""
-    pointer = f"/{index}"
+def compile_stage(
+    raw: Any, /, *, index: int = 0, products: Iterable[str] = (), depth: int = 0, pointer: str = ""
+) -> CompiledStage:
+    """Compile a single stage. ``pointer`` is the prefix of the chain this stage belongs to."""
+    pointer = f"{pointer}/{index}"
     stage = raw if isinstance(raw, Stage) else parse_stage(raw, pointer=pointer)
     instance = registry.get(stage.op)
     if instance is None:
@@ -85,6 +102,8 @@ def compile_stage(raw: Any, /, *, index: int = 0, products: Iterable[str] = ()) 
         instance.params_source(action_text, _slot(stage, param_slot)),
         preset=instance.action_params(action, action_text),
         pointer=f"{pointer}/{param_slot}",
+        products=tuple(products),
+        depth=depth,
     )
     _check_refs(params, products=tuple(products), pointer=f"{pointer}/{param_slot}")
     payload = instance.precompile(action, params, pointer=f"{pointer}/{param_slot}")
@@ -99,10 +118,10 @@ def compile_stage(raw: Any, /, *, index: int = 0, products: Iterable[str] = ()) 
     )
 
 
-def _as_stages(source: Any) -> tuple[Stage, ...]:
+def _as_stages(source: Any, *, pointer: str = "") -> tuple[Stage, ...]:
     if isinstance(source, CompiledField):
         return source.source
-    return loads(source)
+    return loads(source, pointer=pointer)
 
 
 def _slot(stage: Stage, index: int | None) -> Any:
@@ -185,6 +204,8 @@ def _build_params(
     *,
     preset: Mapping[str, Param],
     pointer: str,
+    products: tuple[str, ...] = (),
+    depth: int = 0,
 ) -> dict[str, Param]:
     """The four shapes of the parameter slot -> named parameters (02 §4).
 
@@ -192,12 +213,15 @@ def _build_params(
 
     ``preset`` holds the **parameters the action slot already provided** (``css``'s ``@href``
     providing ``attr``, for example); they take no part in the parameter-slot mapping and only join
-    the final merge.
+    the final merge. ``products`` / ``depth`` are the compile-time context a nested field map
+    inherits (``each``'s argument).
     """
     active = tuple(param for param in spec.params if param.name not in preset)
     shape = _classify(active, raw)
     if shape is _Shape.DEFAULTS:
-        return _fill_defaults(spec, active, {}, preset=preset, pointer=pointer)
+        return _fill_defaults(
+            spec, active, {}, preset=preset, pointer=pointer, products=products, depth=depth
+        )
     if shape is _Shape.DIRECTIVE:
         directive = _directive_name(raw) or ""
         return _directive_params(spec, active, raw, directive, preset=preset, pointer=pointer)
@@ -212,15 +236,29 @@ def _build_params(
         )
     if shape is _Shape.SINGLE:
         first = _first_param(active).name
-        return _fill_defaults(spec, active, {first: raw}, preset=preset, pointer=pointer)
+        return _fill_defaults(
+            spec,
+            active,
+            {first: raw},
+            preset=preset,
+            pointer=pointer,
+            products=products,
+            depth=depth,
+        )
     if shape is _Shape.NAMED:
-        return _named_params(spec, active, raw, preset=preset, pointer=pointer)
+        return _named_params(
+            spec, active, raw, preset=preset, pointer=pointer, products=products, depth=depth
+        )
     if shape is _Shape.POSITIONAL:
-        return _positional_params(spec, active, raw, preset=preset, pointer=pointer)
+        return _positional_params(
+            spec, active, raw, preset=preset, pointer=pointer, products=products, depth=depth
+        )
     # A scalar given to a multi-parameter action lands on the first parameter, and the rest take
     # their defaults (["time","$parse","zh"], for example).
     first = _first_param(active).name
-    return _fill_defaults(spec, active, {first: raw}, preset=preset, pointer=pointer)
+    return _fill_defaults(
+        spec, active, {first: raw}, preset=preset, pointer=pointer, products=products, depth=depth
+    )
 
 
 def _named_params(
@@ -230,6 +268,8 @@ def _named_params(
     *,
     preset: Mapping[str, Param],
     pointer: str,
+    products: tuple[str, ...] = (),
+    depth: int = 0,
 ) -> dict[str, Param]:
     declared_names = {param.name for param in active}
     unknown = [key for key in raw if key not in declared_names]
@@ -243,7 +283,9 @@ def _named_params(
                 allowed=tuple(param.name for param in active),
             )
         )
-    return _fill_defaults(spec, active, dict(raw), preset=preset, pointer=pointer)
+    return _fill_defaults(
+        spec, active, dict(raw), preset=preset, pointer=pointer, products=products, depth=depth
+    )
 
 
 def _positional_params(
@@ -253,6 +295,8 @@ def _positional_params(
     *,
     preset: Mapping[str, Param],
     pointer: str,
+    products: tuple[str, ...] = (),
+    depth: int = 0,
 ) -> dict[str, Param]:
     if len(raw) > len(active):
         raise Up2Error(
@@ -271,6 +315,8 @@ def _positional_params(
         {param.name: value for param, value in zip(active, raw, strict=False)},
         preset=preset,
         pointer=pointer,
+        products=products,
+        depth=depth,
     )
 
 
@@ -281,13 +327,19 @@ def _fill_defaults(
     *,
     preset: Mapping[str, Param],
     pointer: str,
+    products: tuple[str, ...] = (),
+    depth: int = 0,
 ) -> dict[str, Param]:
     """Merge the parameters the action slot provided, fill in defaults, and resolve by kind."""
     params: dict[str, Param] = dict(preset)
     for param in active:
         if param.name in values:
             params[param.name] = _resolve_param(
-                param, values[param.name], pointer=f"{pointer}/{param.name}"
+                param,
+                values[param.name],
+                pointer=f"{pointer}/{param.name}",
+                products=products,
+                depth=depth,
             )
         elif param.required:
             raise Up2Error(
@@ -304,15 +356,64 @@ def _fill_defaults(
     return params
 
 
-def _resolve_param(spec: registry.ParamSpec, raw: Any, *, pointer: str) -> Param:
-    """Resolve by kind; containers are walked recursively (leaves take the same parameter kind)."""
+def _resolve_param(
+    spec: registry.ParamSpec,
+    raw: Any,
+    *,
+    pointer: str,
+    products: tuple[str, ...] = (),
+    depth: int = 0,
+) -> Param:
+    """Resolve by kind; containers are walked recursively (leaves take the same parameter kind).
+
+    ``Kind.FIELDS`` is the exception: its containers are **chains**, so they are compiled here
+    instead of being walked as values.
+    """
+    if spec.kind is registry.Kind.FIELDS:
+        return _resolve_field_map(spec, raw, pointer=pointer, products=products, depth=depth)
     if spec.kind is registry.Kind.LITERAL:
         return Lit(raw)
     if isinstance(raw, list):
-        return [_resolve_param(spec, item, pointer=pointer) for item in raw]
+        return [
+            _resolve_param(spec, item, pointer=pointer, products=products, depth=depth)
+            for item in raw
+        ]
     if isinstance(raw, dict):
-        return {key: _resolve_param(spec, item, pointer=pointer) for key, item in raw.items()}
+        return {
+            key: _resolve_param(spec, item, pointer=pointer, products=products, depth=depth)
+            for key, item in raw.items()
+        }
     return _resolve_leaf(spec, raw, pointer=pointer)
+
+
+def _resolve_field_map(
+    spec: registry.ParamSpec,
+    raw: Any,
+    *,
+    pointer: str,
+    products: tuple[str, ...],
+    depth: int,
+) -> dict[str, CompiledField]:
+    """Compile a **field map** (``each``'s argument): every value is a chain.
+
+    The compiled chains are the operator's payload, so the runtime only evaluates them.
+    """
+    if not isinstance(raw, Mapping):
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"parameter {spec.name!r} must be an object of field name to chain, "
+                f"got {type_name(raw)}",
+                fix='write {"title": [["py","strip",""]]}',
+                pointer=pointer,
+            )
+        )
+    return {
+        str(name): compile_field(
+            item, products=products, depth=depth + 1, pointer=f"{pointer}/{name}"
+        )
+        for name, item in raw.items()
+    }
 
 
 def _resolve_leaf(spec: registry.ParamSpec, raw: Any, *, pointer: str) -> Param:
@@ -355,8 +456,7 @@ def _directive_params(
             diag(
                 "UP2-E1005",
                 f"unsupported directive object {directive!r}",
-                fix='only {"$lit": value} is supported today '
-                "($map belongs to L2 structure assembly)",
+                fix='only {"$lit": value} is supported; `each` takes a plain field map',
                 pointer=pointer,
             )
         )
@@ -376,15 +476,6 @@ def _directive_params(
 
 def _check_refs(params: Mapping[str, Param], *, products: tuple[str, ...], pointer: str) -> None:
     for ref in _iter_refs(params):
-        if ref.root in _DEFERRED_ROOTS:
-            raise Up2Error(
-                diag(
-                    "UP2-E1006",
-                    f"{ref.raw} is unavailable in L1",
-                    fix=_DEFERRED_FIX,
-                    pointer=pointer,
-                )
-            )
         if ref.root in RESERVED_ROOTS:
             continue
         if ref.root in products:

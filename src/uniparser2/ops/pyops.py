@@ -119,7 +119,8 @@ def _items(value: Any, who: str) -> list[Any] | Failed:
     return Failed(
         code="UP2-E2002",
         reason=f"py.{who} needs a list, got {type_name(value)}",
-        fix="expand it with callback/$map, or cut out a list with py.split",
+        fix='cut out a list first with ["py","split",","] / ["css","nodes",S], or take the list '
+        'apart with ["each",{...}]',
     )
 
 

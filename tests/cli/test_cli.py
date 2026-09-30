@@ -39,6 +39,7 @@ def test_ops_json_lists_operators(capsys) -> None:
     names = {item["name"] for item in payload}
     assert names == {
         "const",
+        "each",
         "css",
         "css1",
         "xpath",

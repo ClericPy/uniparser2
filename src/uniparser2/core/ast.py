@@ -36,8 +36,12 @@ class Lit:
     value: Any
 
 
-type Param = Lit | Ref | list[Param] | dict[str, Param]
-"""Parameter carrier: scalars are ``Lit``/``Ref``; containers are walked recursively (02 §4)."""
+type Param = Lit | Ref | list[Param] | dict[str, Param] | dict[str, CompiledField]
+"""Parameter carrier: scalars are ``Lit``/``Ref``; containers are walked recursively (02 §4).
+
+The last member is the **structured** carrier: a compiled field map (``each``'s argument), whose
+values are chains rather than other carriers.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,15 +143,16 @@ def dumps(stages: Any) -> str:
     return json.dumps(_as_lists(stages), separators=(",", ":"), ensure_ascii=False)
 
 
-def loads(source: Any) -> tuple[Stage, ...]:
+def loads(source: Any, /, *, pointer: str = "") -> tuple[Stage, ...]:
     """Accept a JSON string / stage array / field-chain array, always return ``tuple[Stage, ...]``.
 
-    The three input forms are idempotent.
+    The three input forms are idempotent. ``pointer`` is the JSON Pointer prefix of the chain, so a
+    sub-chain reports the location it really occupies.
     """
     if isinstance(source, (str, bytes)):
         source = json.loads(source)
-    stages = _split_stages(source)
-    return tuple(parse_stage(raw, pointer=f"/{index}") for index, raw in enumerate(stages))
+    stages = _split_stages(source, pointer=pointer)
+    return tuple(parse_stage(raw, pointer=f"{pointer}/{index}") for index, raw in enumerate(stages))
 
 
 def _as_lists(stages: Any) -> list[list[Any]]:
@@ -159,7 +164,7 @@ def _as_lists(stages: Any) -> list[list[Any]]:
     return out
 
 
-def _split_stages(source: Any) -> list[Any]:
+def _split_stages(source: Any, *, pointer: str = "") -> list[Any]:
     """Tell a single stage (``["py","strip"]``) apart from a field chain (``[["py","strip"]]``)."""
     if not isinstance(source, (list, tuple)):
         raise Up2Error(
@@ -167,12 +172,17 @@ def _split_stages(source: Any) -> list[Any]:
                 "UP2-E1004",
                 f"a chain must be an array, got {type(source).__name__}",
                 fix='pass a single stage ["py","strip"], or a field chain [["py","strip"]]',
-                pointer="",
+                pointer=pointer,
             )
         )
     if not source:
         raise Up2Error(
-            diag("UP2-E1004", "the chain is empty", fix="write at least one stage", pointer="")
+            diag(
+                "UP2-E1004",
+                "the chain is empty",
+                fix="write at least one stage",
+                pointer=pointer,
+            )
         )
     first = source[0]
     if isinstance(first, Stage):

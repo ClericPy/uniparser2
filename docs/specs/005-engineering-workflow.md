@@ -171,7 +171,7 @@ uniparser2/
 | **Compile-time error codes** | `tests/compile/` | At least one case for every `UP2-E1xxx` of `02` §7 (table-driven: bad chain → expected code + expected `fix` keyword) | ~30 entries | L1 |
 | **Runtime error codes** | `tests/runtime/` | At least one case for every `UP2-E2xxx` of `02` §7.1 (build an input that can trigger it → expected code) | ~15 entries | L1 |
 | **Store error codes** | `tests/store/` | At least one case for every `UP2-E3xxx` of `04` §5.1 (including `--skip-tests` without `--note`, and an inconsistent chain audit) | ~5 entries | L3 |
-| **Chain level** | `tests/chains/` | The three node types, `select` fan-out, `routes` dispatch, `result` assembly, `$map`, scope visibility | ~40 entries | L2 |
+| **Chain level** | `tests/chains/` | The three node types, `each` iteration (including the per-element scope), `routes` dispatch, `result` assembly, scope visibility | ~40 entries | L2 |
 | **Snapshots** | `tests/snapshots/` | The expected output of a chain × a sample (`04` §7-S4/S5); **structural comparison**, and a failure prints the JSON Pointer difference | ≥ 1 per chain | L2 |
 | **Serialization, character by character** | `tests/serialization/` | A **character-for-character** assertion of `dumps(loads(x)) == dumps(x)`; plus fingerprint stability assertions | ~10 entries | L1 |
 | **CLI end to end** | `tests/cli/` | `lint` / `trial` / `snapshot` / `publish` / `get` / `audit` / `doctor`, using `tmp_path` as `UP2_HOME` | ~20 entries | L2 (the last three are L3) |
@@ -209,7 +209,7 @@ up2 conformance --check          # a non-zero exit code means acceptance failed
 2. **A test must not contain the literal of a "deliberately nonexistent" code** (such as `UP2-E9999`): it too counts as a coverage declaration and pollutes the repository-level audit. Such a test has to build it as `"UP2-E" + "9999"`.
 3. **`tests/` must be a real package** (an `__init__.py` in every subdirectory): otherwise same-name test files in different directories shadow each other as far as mypy is concerned (`Duplicate module named "test_errors"`), and mypy's `module = ["tests.*"]` override rule fails to match (it requires fully qualified names).
 
-> This mechanism is the direct implementation of "the test cases that nail down all syntax at the DSL operator layer guarantee this part is complete and consistent": **completeness** is guaranteed by set coverage (declaration ⊆ coverage and coverage ⊆ declaration), and **consistency** by "parameterize the same group of assertions over every action" plus the engine contract assertions. The latest measurement round (including the `code` operator): 59 declared `(operator, action)` pairs = 59 covered pairs, all 25 implemented error codes have cases, and `up2 conformance --check` exits 0.
+> This mechanism is the direct implementation of "the test cases that nail down all syntax at the DSL operator layer guarantee this part is complete and consistent": **completeness** is guaranteed by set coverage (declaration ⊆ coverage and coverage ⊆ declaration), and **consistency** by "parameterize the same group of assertions over every action" plus the engine contract assertions. The latest measurement round: 61 declared `(operator, action)` pairs = 61 covered pairs, all 26 implemented error codes have cases, and `up2 conformance --check` exits 0.
 
 ### 4.2 TDD rhythm (red-green-refactor)
 

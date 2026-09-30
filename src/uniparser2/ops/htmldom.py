@@ -48,8 +48,8 @@ Four implementation disciplines:
    in the ``04`` draft): this is **the semantics this operator promises** and does not rely on
    engine defaults (selectolax's ``text()`` would include them).
 4. **The input is a ``str`` or a node**; a list input reports ``UP2-E2002`` — per-item parsing
-   belongs to the chain-level structures (``select`` / ``callback``, L2), and doing it here only
-   yields a concatenation of unclear semantics.
+   belongs to the chain-level structure (``each``), and doing it here only yields a concatenation of
+   unclear semantics.
 5. **Write attribute names in lowercase** (``@href``, not ``@HREF``): HTML attribute names are
    themselves case-insensitive, but the engine's ``.attributes`` keys are already normalized to
    lowercase, so ``@HREF`` finds nothing (**no** case folding is done — that would mean giving the
@@ -314,7 +314,7 @@ def _context_doc(active: SelectolaxEngine, value: Any) -> Any:
     return Failed(
         code="UP2-E2002",
         reason=f"css needs a str or a node input, got {type_name(value)}",
-        fix="per-item parsing of a list is a chain-level structure (select / callback, L2)",
+        fix='per-item parsing belongs to the chain level: ["css","nodes",S] then ["each",{...}]',
     )
 
 

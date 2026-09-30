@@ -2,13 +2,13 @@
 
 Input → triple chain → output repr: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `--md --check` fails when it is stale. The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
 
-Generated from `uniparser2` 0.2.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
+Generated from `uniparser2` 0.3.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
 
 ## Coverage check
 
 - **Coverage check passed**: every declared pair has a case and every behavior case ran `Ok`.
-- the registry declares **60** pairs = **60** pairs covered by cases
-- states across every run: `Failed` 5, `Missing` 2, `Ok` 87
+- the registry declares **61** pairs = **61** pairs covered by cases
+- states across every run: `Failed` 5, `Missing` 2, `Ok` 89
 
 | operator | arity | slots | summary | actions |
 |---|---|---|---|---|
@@ -22,6 +22,7 @@ Generated from `uniparser2` 0.2.0 · one case per `(operator, action)` pair decl
 | `const` | 2 | value | Literal (never resolved as a reference) | 1 |
 | `code` | 2 | source & inputs | In-chain code (sandboxed; optional dependency [code]) | 1 |
 | `udf` | 3 | action / parameter | Host-registered named function (the chain carries no code) | 1 |
+| `each` | 2 | fields | One dictionary per element of a list | 1 |
 
 
 ## Commonness tiers
@@ -124,6 +125,15 @@ Shared input for this section:
   - `["py", "len", ""]` → `Ok(value=2)`
 - input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
 - output: `Ok(value=2)` (Ok)
+
+#### `composition` — css
+- tier ★★★ Core
+- note: node set → one dictionary per list item (each): the per-item shape
+- chain:
+  - `["css", "nodes", "ul.rel li"]` → `Ok(value=[<DomNode Node>, <DomNode Node>])`
+  - `["each", {"title": [["css1", "text", "a"]], "href": [["css1", "@href", "a"]]}]` → `Ok(value=[{'title': 'Related one', 'href': '/p/1.html'}, {'title': 'Related two', 'href': '/p/2.html'}])`
+- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- output: `Ok(value=[{'title': 'Related one', 'href': '/p/1.html'}, {'title': 'Related two', 'href': '/p/2.html'}])` (Ok)
 
 ### Invalid forms
 
@@ -785,6 +795,26 @@ Shared input for this section:
 | invalid chain | code | pointer | message | fix |
 |---|---|---|---|---|
 | `[["udf", "not_registered", ""]]` | `UP2-E1010` | `/0/1` | the custom function 'not_registered' is not registered | call register_udf(name, function) in the host, or declare an entry point (group uniparser2.udfs) |
+
+
+## `each` — One dictionary per element of a list
+
+arity 2 · slot 2=fields · dependencies: none · 1 actions (Core)
+
+Shared input for this section:
+
+```text
+['  a  ', 'bb']
+```
+
+### Actions (sorted by commonness)
+
+#### `each` — Run the field map once per element
+- tier ★★★ Core · parameter slot: the value itself · `fields: fields`
+- note: 2 positions: field map; one dictionary per element
+- chain: `[["each", {"title": [["py", "strip", ""]], "size": [["py", "len", ""]]}]]`
+- input: the shared sample above
+- output: `Ok(value=[{'title': 'a', 'size': 5}, {'title': 'bb', 'size': 2}])` (Ok)
 
 
 ## Appendix: mechanisms shared by all operators

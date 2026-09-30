@@ -11,7 +11,10 @@ Scope (L1):
   name the same namespace; L2 merges node products into ``fields``.
 - ``<node key>``: the product of an earlier node, injected by the caller as ``products``
   (read-only).
-- ``item``: the iteration variable inside a ``$map`` template, available in L2 only.
+
+Scopes form a chain: ``Scope.child()`` gives one iteration of ``each`` its own ``locals``, and a
+read falls back outward. There is no iteration variable to name — the current element is the input
+value of the sub-chain (the ``item`` root is gone).
 """
 
 from __future__ import annotations
@@ -26,11 +29,11 @@ from .values import is_json_value, type_name
 
 REF_PREFIX: Final = "$"
 LIT_DIRECTIVE: Final = "$lit"
-RESERVED_ROOTS: Final = ("globals", "locals", "fields", "item")
+RESERVED_ROOTS: Final = ("globals", "locals", "fields")
 WRITABLE_ROOTS: Final = ("locals", "fields")
-# In L1, $fields and $locals name the scope of the current field; $item waits for $map (L2).
+# In L1, $fields and $locals name the scope of the current field; L2 splits them (the node's
+# product versus the scratch area) and adds the per-element scope that `each` already needs.
 _LOCAL_ALIASES: Final = ("locals", "fields")
-_DEFERRED_ROOTS: Final = ("item",)
 CTX_PARTITIONS: Final = ("locals", "globals")
 """The two partitions the scope exposes (``ctx.locals`` / ``ctx.globals``, design doc 01 Q40).
 
@@ -101,56 +104,46 @@ def parse_path_text(text: str, /, *, pointer: str = "") -> Ref:
 
 @dataclass(slots=True)
 class Scope:
-    """The evaluation scope. ``locals`` is writable, everything else is read-only."""
+    """The evaluation scope. ``locals`` is writable, everything else is read-only.
+
+    ``parent`` links a nested scope to the one it was created from (one iteration of ``each``),
+    which is what makes a read fall back outward while a write stays where it was asked for.
+    """
 
     globals: Mapping[str, Any] = field(default_factory=dict)
     products: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     locals: dict[str, Any] = field(default_factory=dict)
+    parent: Scope | None = None
+
+    def child(self) -> Scope:
+        """A fresh scope for one iteration: same globals/products, empty locals, outward reads."""
+        return Scope(globals=self.globals, products=self.products, parent=self)
 
     def read(self, ref: Ref) -> Outcome:
         """Read a reference.
 
         An absent key is ``Missing``; a structure shallower than declared is ``Failed(E2001)``.
+        A ``locals``/``fields`` read walks the scope chain outward.
         """
-        base: Any
         if ref.root == "globals":
-            base = self.globals
-        elif ref.root in _LOCAL_ALIASES:
-            base = self.locals
-        else:
-            product = self.products.get(ref.root)
-            if product is None:
-                return Failed(
-                    code="UP2-E2001",
-                    reason=f"there is no earlier node product named {ref.root!r}",
-                    fix="check the node key, or inject it with --product",
-                )
-            base = product
-        current = base
-        walked: list[str] = []
-        for segment in ref.path:
-            if isinstance(current, Mapping):
-                if segment not in current:
-                    return Missing(
-                        reason=f"{ref.raw} is missing key {segment!r} at "
-                        f"{'.'.join(walked) or ref.root}"
-                    )
-                current = current[segment]
-            elif isinstance(current, list):
-                return Failed(
-                    code="UP2-E2001",
-                    reason=f"{ref.raw} tried to index a list with {segment!r}",
-                    fix='references do not support array subscripts, use ["py","getitem",N]',
-                )
-            else:
-                return Failed(
-                    code="UP2-E2001",
-                    reason=f"{ref.raw} hit {type_name(current)} at "
-                    f"{'.'.join(walked) or ref.root} and cannot continue to {segment!r}",
-                    fix="check how deep the reference path is, or add the intermediate fields",
-                )
-            walked.append(segment)
-        return Ok(current)
+            return _walk_path(self.globals, ref)
+        if ref.root in _LOCAL_ALIASES:
+            return self._read_locals(ref)
+        product = self.products.get(ref.root)
+        if product is None:
+            return Failed(
+                code="UP2-E2001",
+                reason=f"there is no earlier node product named {ref.root!r}",
+                fix="check the node key, or inject it with --product",
+            )
+        return _walk_path(product, ref)
+
+    def _read_locals(self, ref: Ref) -> Outcome:
+        """Walk outward until a scope owns the first segment; the innermost owner decides."""
+        scope = self
+        while scope.parent is not None and ref.path and ref.path[0] not in scope.locals:
+            scope = scope.parent
+        return _walk_path(scope.locals, ref)
 
     def read_text(self, text: str, /, *, pointer: str = "") -> Outcome:
         """Read by bare-path text (used by ctx.get / ctx.map)."""
@@ -174,15 +167,31 @@ class Scope:
     def json_view(self) -> dict[str, dict[str, Any]]:
         """The **JSON projection** of the scope: ``{"locals": {...}, "globals": {...}}``.
 
+        The ``locals`` view is resolved along the scope chain (outermost first, the innermost
+        winning), so in-chain code and host functions see what a reference read would see.
+
         Non-JSON values (``Opaque`` node handles, for example) are **dropped** rather than
         reported as an error -- they could never leave the chain anyway (``UP2-E2003``), so in-chain
         code not seeing them follows the same principle instead of being a new silent drop.
         """
+        merged: dict[str, Any] = {}
+        for outer in self.chain():
+            merged.update(outer.locals)
         view: dict[str, dict[str, Any]] = {}
         for partition in CTX_PARTITIONS:
-            source: Mapping[str, Any] = self.locals if partition in _LOCAL_ALIASES else self.globals
+            source: Mapping[str, Any] = merged if partition in _LOCAL_ALIASES else self.globals
             view[partition] = {key: value for key, value in source.items() if is_json_value(value)}
         return view
+
+    def chain(self) -> tuple[Scope, ...]:
+        """The scope chain, outermost first."""
+        scopes: list[Scope] = []
+        scope: Scope | None = self
+        while scope is not None:
+            scopes.append(scope)
+            scope = scope.parent
+        scopes.reverse()
+        return tuple(scopes)
 
     def write_local(self, path: tuple[str, ...], value: Any) -> None:
         """Write into the current field scope (``locals``), creating dicts as needed."""
@@ -204,6 +213,34 @@ class Scope:
                 return False
             target = nxt
         return target.pop(path[-1], _SENTINEL) is not _SENTINEL
+
+
+def _walk_path(base: Any, ref: Ref) -> Outcome:
+    """Walk a reference path: an absent key is ``Missing``, a shallower structure ``Failed``."""
+    current = base
+    walked: list[str] = []
+    for segment in ref.path:
+        if isinstance(current, Mapping):
+            if segment not in current:
+                return Missing(
+                    reason=f"{ref.raw} is missing key {segment!r} at {'.'.join(walked) or ref.root}"
+                )
+            current = current[segment]
+        elif isinstance(current, list):
+            return Failed(
+                code="UP2-E2001",
+                reason=f"{ref.raw} tried to index a list with {segment!r}",
+                fix='references do not support array subscripts, use ["py","getitem",N]',
+            )
+        else:
+            return Failed(
+                code="UP2-E2001",
+                reason=f"{ref.raw} hit {type_name(current)} at "
+                f"{'.'.join(walked) or ref.root} and cannot continue to {segment!r}",
+                fix="check how deep the reference path is, or add the intermediate fields",
+            )
+        walked.append(segment)
+    return Ok(current)
 
 
 _SENTINEL: Final = object()

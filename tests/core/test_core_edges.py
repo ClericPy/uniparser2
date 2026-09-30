@@ -208,6 +208,39 @@ def test_delete_local_with_non_dict_intermediate_returns_false() -> None:
     assert scope.locals == {"a": 1}
 
 
+# ---------------------------------------------------------------- the scope chain
+
+
+def test_a_child_scope_reads_outward() -> None:
+    """One iteration of ``each`` reads the calling scope's locals, including a nested path."""
+    outer = Scope(locals={"nested": {"n": 1}})
+    inner = outer.child()
+    assert inner.read_text("locals.nested.n") == Ok(1)
+
+
+def test_a_child_scope_shadows_and_does_not_write_outward() -> None:
+    outer = Scope(locals={"k": "outer"})
+    inner = outer.child()
+    inner.write_text("locals.k", "inner")
+    assert inner.read_text("locals.k") == Ok("inner")
+    assert outer.read_text("locals.k") == Ok("outer")
+
+
+def test_an_owned_name_does_not_fall_through() -> None:
+    """When the inner scope owns the first segment, a deeper miss stays a miss."""
+    outer = Scope(locals={"k": {"n": 1}})
+    inner = outer.child()
+    inner.write_text("locals.k", 5)
+    assert isinstance(inner.read_text("locals.k.n"), Failed)
+
+
+def test_the_scope_view_merges_the_chain() -> None:
+    outer = Scope(locals={"a": 1, "b": 2})
+    inner = outer.child()
+    inner.write_text("locals.b", 3)
+    assert inner.json_view()["locals"] == {"a": 1, "b": 3}
+
+
 # ---------------------------------------------------------------- evaluator policy
 
 

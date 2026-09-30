@@ -41,6 +41,7 @@ CODES: Final[dict[str, str]] = {
     "UP2-E2007": "py.parse_time failed to parse",
     "UP2-E2008": "py.parse_time needs natural-language dates but dateparser is not installed",
     "UP2-E2009": "operator returned a value that cannot be serialized",
+    "UP2-E2012": "the iteration count of `each` exceeds MAX_EACH_ITER",
     "UP2-E2015": "value is missing and the effective policy is raise",
     "UP2-E2016": "sandbox execution over limits (feed time / memory / host round-trip budget)",
     "UP2-E2017": "sandbox code raised an exception (syntax or unsupported constructs)",

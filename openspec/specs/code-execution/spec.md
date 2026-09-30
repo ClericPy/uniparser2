@@ -232,12 +232,12 @@ The `code` operator and the `udf` operator SHALL adopt the same parameter conven
 ### Requirement: Conformance audit and conformance declaration
 
 The operator SHALL declare the `(code, run)` pair in the registry and have a visible coverage declaration in the test source;
-`up2 conformance --check` MUST exit 0, and the declared `(operator, action)` total MUST be **59**.
+`up2 conformance --check` MUST exit 0, and the declared `(operator, action)` total MUST be equal to the number the registry declares.
 
 #### Scenario: The audit passes with the right pair count
 
 - **WHEN** running `up2 conformance --check`
-- **THEN** the exit code is 0 and the output shows 59 declared pairs = 59 covered pairs
+- **THEN** the exit code is 0 and the output shows the declared pair count equal to the covered pair count
 
 #### Scenario: Capability self-description exposes dependencies
 

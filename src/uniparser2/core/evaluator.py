@@ -58,6 +58,7 @@ def eval_field(
 ) -> Outcome:
     """Evaluate one field chain stage by stage."""
     active_scope = scope if scope is not None else Scope()
+    run_chain = _subchain_runner(policy)
     current: Outcome = Ok(value)
     for stage in compiled.stages:
         if isinstance(current, Failed):
@@ -65,9 +66,9 @@ def eval_field(
         if isinstance(current, Missing):
             if not stage.accepts_missing:
                 return _degrade_missing(current, policy)
-            current = _invoke(stage, MISSING, active_scope)
+            current = _invoke(stage, MISSING, active_scope, run_chain)
         else:
-            current = _invoke(stage, current.value, active_scope)
+            current = _invoke(stage, current.value, active_scope, run_chain)
     if isinstance(current, Failed):
         return _degrade_error(current, policy)
     if isinstance(current, Missing):
@@ -75,7 +76,25 @@ def eval_field(
     return current
 
 
-def _invoke(stage: CompiledStage, value: Any, scope: Scope) -> Outcome:
+def _subchain_runner(policy: Policy) -> registry.ChainRunner:
+    """How a structural operator evaluates a compiled sub-chain (design D2 of the L2 change).
+
+    The sub-chain is evaluated under the **policy in force** for the chain that owns it, so ``each``
+    applies the effective policy per element instead of inventing one of its own.
+    """
+
+    def run(chain: CompiledField, value: Any, scope: Scope) -> Outcome:
+        return eval_field(chain, value, scope=scope, policy=policy)
+
+    return run
+
+
+def _invoke(
+    stage: CompiledStage,
+    value: Any,
+    scope: Scope,
+    run_chain: registry.ChainRunner,
+) -> Outcome:
     instance = registry.get(stage.op_name)
     if instance is None:  # pragma: no cover - compile time already guarantees it exists
         return Failed(
@@ -92,6 +111,7 @@ def _invoke(stage: CompiledStage, value: Any, scope: Scope) -> Outcome:
         params=resolved,
         payload=stage.payload,
         scope=scope,
+        run_chain=run_chain,
     )
     try:
         return instance.evaluate(call)

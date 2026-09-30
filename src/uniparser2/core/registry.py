@@ -21,17 +21,22 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, ClassVar, Final
 
-from .ast import MAX_STAGE_LEN, Param
+from .ast import MAX_STAGE_LEN, CompiledField, Param
 from .errors import Outcome, Up2Error, diag
 from .refs import Scope
 
 
 class Kind(StrEnum):
-    """How a parameter is resolved (02 §3.2). Ambiguity exists only in ``REF_OR_LITERAL``."""
+    """How a parameter is resolved (02 §3.2). Ambiguity exists only in ``REF_OR_LITERAL``.
+
+    ``FIELDS`` is the structured kind: the value is not a value at all but a **field map**
+    (``field name -> chain``) that the compiler compiles recursively (``each``'s argument).
+    """
 
     REF = "ref"
     LITERAL = "literal"
     REF_OR_LITERAL = "ref_or_literal"
+    FIELDS = "fields"
 
 
 class ParamForm(StrEnum):
@@ -100,6 +105,14 @@ class OpReport:
     actions: tuple[ActionReport, ...]
 
 
+ChainRunner = Callable[[CompiledField, Any, Scope], Outcome]
+"""How a structural operator evaluates a compiled sub-chain (``each``'s field map, for example).
+
+The kernel injects one into :class:`Call`, so the operator never imports the evaluator, and every
+sub-chain is evaluated under **the policy in force for the chain that owns it**.
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class Call:
     """Every input of one operator call.
@@ -112,6 +125,7 @@ class Call:
     params: Mapping[str, Any]
     payload: Any
     scope: Scope
+    run_chain: ChainRunner
 
 
 class Op(ABC):

@@ -6,17 +6,17 @@ A declarative, deterministic, serializable **text parsing engine**: it turns the
 input text to a specified structure into JSON data (a **parse chain**), generated offline by a human
 or an LLM, with nothing but deterministic evaluation at runtime.
 
-> **Status**: `0.1.0`, L1 (the DSL operator layer) is complete. **10 operators** are implemented:
+> **Status**: `0.3.0`, L1 (the DSL operator layer) is complete. **11 operators** are implemented:
 > `css` / `css1` (HTML selectors — all matches vs. first match only, selectolax), `xpath` (XML, lxml),
-> `json` (jmespath), `re`, `py` (31 allowlist functions), `udf` (host-registered, no code in the
+> `json` (jmespath), `re`, `py` (32 allowlist functions), `udf` (host-registered, no code in the
 > chain), `code` (in-chain code, language-level sandbox, **not present by default** — see the
-> security note), plus the scoping operator `ctx` and the building block `const` — 59
-> `(operator, action)` pairs in total. Chain-level structure (`seed`/`parse`/`emit`, `select`
-> fan-out, `result` assembly) and the in-place trial UI are L2. For progress and acceptance criteria
-> see the roadmap in the design notes; to see it run right now, in a source checkout: `uv run python
-> demo.py` — one walkthrough that exercises all 10 operators, the tri-state settlement and bad-chain
-> diagnostics. (`demo.py` and `tools/demo_report.py` live in the repository only: neither the wheel nor
-> the sdist ships them.)
+> security note), plus the scoping operator `ctx`, the building block `const` and the iteration
+> operator `each` — 61 `(operator, action)` pairs in total. The chain-level structure
+> (`seed`/`parse`/`emit`, `result` assembly) and the in-place trial UI are L2. For progress and
+> acceptance criteria see the roadmap in the design notes; to see it run right now, in a source
+> checkout: `uv run python demo.py` — one walkthrough that exercises all 11 operators, the tri-state
+> settlement and bad-chain diagnostics. (`demo.py` and `tools/demo_report.py` live in the repository
+> only: neither the wheel nor the sdist ships them.)
 
 ## Why it exists
 
@@ -36,8 +36,8 @@ store rules as data and reuse them. uniparser2 solves all five at once:
 
 ## What you get today (L1)
 
-The **operator layer** is complete and mechanically audited: 10 operators, 59 `(operator, action)`
-pairs, each with a covering case (`uv run up2 conformance --check`), and 25 implemented error codes
+The **operator layer** is complete and mechanically audited: 11 operators, 61 `(operator, action)`
+pairs, each with a covering case (`uv run up2 conformance --check`), and 26 implemented error codes
 each asserted by a test.
 
 | Operator | Engine (extra) | Actions |
@@ -51,6 +51,7 @@ each asserted by a test.
 | `udf` | host-registered | any function the host registered beforehand; the chain carries only a name |
 | `code` | pydantic-monty (`[code]`, deliberately not in `[all]`) | `run` — in-chain code in a language-level sandbox (see the security note) |
 | `const` | stdlib | the literal building block |
+| `each` | stdlib | one dictionary per element of a list: the argument is a **field map** (`field name → chain`), a `_`-prefixed field is a per-element temporary, and every element gets its own scope |
 
 This table is a summary: **the registry is the authority**, so ask it. `uv run up2 ops --json` prints
 every operator with its arity, slot roles, action enumeration, parameter schema, dependencies,
@@ -60,10 +61,10 @@ chain.
 ## Not there yet (L2–L4)
 
 Only the operator layer exists today; everything the design puts on top of it is unimplemented. There
-are no `seed` / `parse` / `emit` node types, no sequential executor or `routes`, no `select` fan-out,
-no `callback` / `presets` iteration, no `result` / `$map` / `$lit` assembly, no Schema validator, none
-of the 20 lint rules, no `up2 trial --trace`, no `up2 studio` bench, no Store (`FileStore` /
-`SqliteStore`), no fingerprints and no `S0–S7` publishing SOP; the ADRs have not been written either.
+are no `seed` / `parse` / `emit` node types, no sequential executor or `routes`, no `result` / `$lit`
+assembly, no Schema validator, none of the lint rules, no `up2 trial --trace`, no `up2 studio` bench,
+no Store (`FileStore` / `SqliteStore`), no fingerprints and no `S0–S7` publishing SOP; the ADRs have
+not been written either.
 The CLI is exactly `ops` / `conformance` / `lint` / `trial`, and the public API is `compile_field` /
 `compile_stage` / `eval_field` plus the value, scope and policy types. The layers, their deliverables
 and their acceptance criteria are in [`docs/specs/007` §3](docs/specs/007-source-decisions-and-roadmap.md).

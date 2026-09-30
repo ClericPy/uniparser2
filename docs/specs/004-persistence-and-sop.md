@@ -243,7 +243,7 @@ up2 schemas --json > schemas.json  # registered schema names
 The LLM (or a person) produces the chain JSON, **using only operators and actions that appear in `ops.json`**. While drafting, these must be decided explicitly:
 
 1. the input contract (`seed.inject` + `input_format`);
-2. whether fan-out is needed (`select`);
+2. whether per-item parsing is needed (an `each` stage inside the field chain that holds the list);
 3. the product shape (`emit.produces`) and the schema;
 4. the missing-value policy of fields (`on_missing`).
 
@@ -310,7 +310,7 @@ up2 publish backup.json --domain … --key … --actor ops:me --source human --n
 |---|---|---|
 | S2 | a compile error (`UP2-E1xxx`) | fix the chain per `fix`; the lint rules **must not** be changed or skipped |
 | S3 | `Failed` (`UP2-E2xxx`) | use `trace` to locate the concrete stage; usually a misspelt selector or a type mismatch |
-| S3 | too many fields produce `Missing` | check whether `select` splits correctly and whether the selectors match the current page version |
+| S3 | too many fields produce `Missing` | check whether the field chain that carries the `each` stage produced the elements you thought, and whether the selectors match the current page version |
 | S5 | a snapshot difference | first decide whether "the chain regressed" or "the page changed"; the latter needs updated samples, a fresh `--accept`, and a statement of that in the audit `note` |
 | S6 | `UP2-E3002` | the `tpl_key` character set is illegal |
 | S6 | `UP2-E3003` | chain and audit are inconsistent (leftovers of a file-Store crash) → `up2 doctor --fix` |
@@ -341,7 +341,7 @@ up2 publish backup.json --domain … --key … --actor ops:me --source human --n
 | 5 | `ctx.set` writing `globals.x` | `UP2-E1015` | the write surface is limited to `locals.*` |
 | 6 | a misspelt value mode (css: `["css","innerHTML","div.c"]`; xpath: `["xpath","innerText","//item"]`) | `UP2-E1002` | use `["css","html","div.c"]` / `["xpath","text","//item"]` (slot 2 = mode, slot 3 = selector); read `up2 ops --json` first |
 | 7 | `routes` without `default_route` | `UP2-E1102` | add the fallback branch |
-| 8 | forgetting `select`, so fields run over the whole page | no compile error (a wrong product at runtime) | only S3's `trace` can reveal it; the `tpl_key` name and the samples should hint that this is a list page |
+| 8 | forgetting the `each` stage, so the fields run once over the whole page (or `each` receives something that is not a list) | the list version fails loudly with `UP2-E2002`; the "ran once over the page" version is a wrong product at runtime | only S3's `trace` can reveal the latter; the `tpl_key` name and the samples should hint that this is a list page |
 | 9 | `["py","int"]` (a 3-ary operator written with two positions) | `UP2-E1004` | a stage's length equals its arity exactly: for a function without arguments write `""` in position 3, i.e. `["py","int",""]`; `datetime` is not on the allowlist, so parse time with `["py","parse_time","zh"]` |
 | 10 | `["re","group","<pattern>"]` missing the group name | `UP2-E1005` | use a named object `["re","group",{"pattern":"…","group":1}]` |
 | 11 | putting a node handle straight into the export (forgetting `text`/`@attr`) | `UP2-E2003` | serialize the `Opaque` handle into text first |
@@ -349,7 +349,7 @@ up2 publish backup.json --domain … --key … --actor ops:me --source human --n
 | 13 | a node key using a reserved name (`globals`) or duplicated | `UP2-E1009` | change the key |
 | 14 | `tpl_key` carrying `:` or `/` | `UP2-E3002` | pick a name inside the character set |
 | 15 | two `next` in one chain pointing at the same node (trying to merge two paths) | `UP2-E1108` | the kernel does not join; split into two chains, or let the upstream nodes stay independent |
-| 16 | a field chain longer than 32 stages / `$map` nested deeper than 3 levels | `UP2-E1012` | split it with `presets`, or switch to `udf` |
+| 16 | a field chain longer than 32 stages / `each` nested deeper than 3 levels | `UP2-E1012` | split the chain, spread the nesting over several nodes, or switch to `udf` |
 
 ---
 
@@ -376,7 +376,7 @@ boundary as four layers: **the first three are the three sources of code capabil
 
 A chain is JSON, and `core/` contains no `eval` / `exec` / `__import__` (`N6`). **A default installation (including `uniparser2[all]`) installs
 no code-execution capability at all**: a chain can only call operators and actions already declared in the registry. This layer is statically decidable — read the chain and read
-the output of `up2 ops` and you can enumerate everything it can do; the 31 allowlisted `py` functions are pure functions that ship with the engine (JSON in, JSON out, no IO) and belong to this layer.
+the output of `up2 ops` and you can enumerate everything it can do; the 32 allowlisted `py` functions are pure functions that ship with the engine (JSON in, JSON out, no IO) and belong to this layer.
 
 ### 11.2 Layer two: `udf` = host-registered functions (the chain holds only a name)
 

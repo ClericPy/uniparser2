@@ -215,7 +215,7 @@ def _context_node(etree: Any, value: Any) -> Any:
                 f"xpath needs XML text or a node input, got {type_name(value)} "
                 f"({preview(value, 40)})"
             ),
-            fix="per-item parsing of a list is a chain-level structure (select / callback, L2)",
+            fix='per-item parsing belongs to the chain level: "nodes" then ["each",{...}]',
         )
     try:
         # Encode first: lxml rejects a unicode string carrying <?xml encoding=...?>.

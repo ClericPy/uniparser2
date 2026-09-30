@@ -112,7 +112,7 @@
 |---|---|
 | Engineering scaffold | `pyproject.toml` (`dependencies = []`), `uv.lock`, `src` layout, dev group, ruff/mypy/pytest configuration |
 | Kernel | `values` (value domain + `Opaque` + `canonicalize`), `errors` (tri-state + error codes), `limits`, `ast`, `registry` (`@op` + `find_spec` probing), `compile` (stage Schema + action slots + argument kind validation + selector/regex pre-compilation), `evaluator` (single-stage evaluation + tri-state short-circuit), `refs` (reference parsing and evaluation), `export` (the single packing point) |
-| **9 operators** (the original was written before `code`; there are 10 now, see "L1 acceptance item status" below) | §2.1–§2.7 of the `04` parser-syntax draft: `css` / `css1` / `json` / `re` / `py` (allowlist functions) / `udf` / time parsing, **the complete behavior of every operator**; plus `xpath` needed for XML, the `ctx` scope operator and the literal `const` (`time`/`cast` were later merged into `py`, see D-02-14) |
+| **11 operators** (the original was written before `code`; there were 10 before `each`, see "L1 acceptance item status" below) | §2.1–§2.7 of the `04` parser-syntax draft: `css` / `css1` / `json` / `re` / `py` (allowlist functions) / `udf` / time parsing, **the complete behavior of every operator**; plus `xpath` needed for XML, the `ctx` scope operator, the literal `const` and the `each` iteration operator (`time`/`cast` were later merged into `py`, see D-02-14) |
 | **The ctx operator** | `globals` read-only + `locals` writable + `get`/`set`/`del`/`map`; a write outside the surface is a compile-time error |
 | Error codes | `02` §7 (compile-time `E1xxx`) + §7.1 (runtime `E2xxx`) fully implemented in code |
 | **Conformance test suite** | see `05` §4.1: full `(operator, action)` coverage + positive and negative argument-kind cases + engine contract assertions + all error codes |
@@ -189,13 +189,15 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | Deliverable | Content |
 |---|---|
 | Field-chain orchestration | multi-field sequential evaluation, cross-field `locals` references, chain-level/node-level/field-level overrides of `on_missing`/`on_error` |
-| **Lists and nesting** | `select` fan-out, `callback` + `presets` iteration, `result` templates, `$map` list expansion, `$lit` escaping, arbitrarily deep nested `dict`/`list` |
+| **Lists and nesting** | `each` iteration (one dictionary per element, with the per-element scope), `result` templates, `$lit` escaping, arbitrarily deep nested `dict`/`list` |
 | Chains and the export | the three node types, the executor, `routes` dispatch, `emit`'s `flat` / `record` and **per-item products**, the built-in `$request` structure (assembled only, never sent) |
 | schema | the own restricted Schema validator + `register_schema` |
-| lint | all 20 rules of `03` §10, each with at least one test |
+| lint | every live rule of `03` §10, each with at least one test (L20 is retired with `presets`) |
 | trace | `up2 trial --trace --json` (the data structure of `06` §5.1) |
 | trial bench | `up2 studio` (pywebview three-column + trace + save as a snapshot), with TUI/CLI fallback |
 | cases | the two `ah.gov.cn` chains (`03` §11) + samples + snapshots; a set of "pure structure" chains (multi-level nesting, a list of lists, a list turned into a dict) |
+
+> **Iteration redesign (change `l2-chain-structure-and-each`, landed in the operator layer)**: the `select` fan-out, the `callback` operator with its `presets` container, the `$map` template directive and the `item` scope root were **retired in favour of one operator, `each`** (`02` §6.9, `03` §4.1). It takes the list the stage above produced plus an **inline field map** (`field name → chain`, the same shape a node's `fields` has) and yields one dictionary per element; a `_`-prefixed field name is a local of that element, and every element is evaluated in its own child scope. `$item` is gone because the element is simply the input value of each field chain, and lint L20 is retired with the container. Implemented in the operator layer: 61 `(operator, action)` pairs, 26 error codes, `MAX_EACH_DEPTH` / `MAX_EACH_ITER` (`01` §9).
 
 **Acceptance**
 
@@ -203,7 +205,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 2. The `ah.gov.cn` collection chain produces 20 items on a real page fragment; the parse chain produces a single record conforming to `$article`.
 3. Each "fixed" blocker among the 18 of draft `02` has a corresponding test (**named item by item**, see §2).
 4. All 22 behavior tests of the old v3's `test_parsers.py` pass in the form of a "behavior dictionary" (API compatibility is not required).
-5. Each of the 20 lint rules of `03` §10 has a positive and a negative case.
+5. Each live lint rule of `03` §10 has a positive and a negative case (L20 is retired).
 6. All 7 UI acceptance items of `06` §10 pass, among which "works with the network down" must be tested under a real network disconnection.
 7. A chain of 500 items × 20 fields finishes within 3 s (`05` §4.4).
 8. **Disproof**: no domain name or business key appears as an **engine concept** in any L1/L2 case (it appears only as an ordinary value of the caller's `inputs`).

@@ -197,6 +197,15 @@ def coverage_cases() -> list[Case]:
             note="2 positions: literal",
         ),
         Case(
+            "each",
+            "each",
+            [["each", {"title": [["py", "strip", ""]], "size": [["py", "len", ""]]}]],
+            ["  a  ", "bb"],
+            "Core",
+            1,
+            note="2 positions: field map; one dictionary per element",
+        ),
+        Case(
             "code",
             "run",
             [["code", {"src": "ctx.locals.prefix + normalize_space(obj)"}]],
@@ -423,6 +432,16 @@ def chain_cases() -> list[Case]:
             [["css", "nodes", "ul.rel a"], ["py", "len", ""]],
             HTML_DOC,
             note="node set → count",
+        ),
+        Case(
+            "css",
+            "composition",
+            [
+                ["css", "nodes", "ul.rel li"],
+                ["each", {"title": [["css1", "text", "a"]], "href": [["css1", "@href", "a"]]}],
+            ],
+            HTML_DOC,
+            note="node set → one dictionary per list item (each): the per-item shape",
         ),
         Case(
             "css",

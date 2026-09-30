@@ -80,7 +80,7 @@ def test_e1005_too_many_positional_args() -> None:
 
 
 def test_e1005_unsupported_directive() -> None:
-    assert compile_error([["py", "strip", {"$map": "$locals.x"}]]) == "UP2-E1005"
+    assert compile_error([["py", "strip", {"$nope": "$locals.x"}]]) == "UP2-E1005"
 
 
 def test_e1005_lit_directive_needs_single_param() -> None:
@@ -99,8 +99,12 @@ def test_e1006_malformed_reference() -> None:
     assert compile_error([["py", "urljoin", "$"]]) == "UP2-E1006"
 
 
-def test_e1006_deferred_item_root() -> None:
-    assert compile_error([["py", "urljoin", "$item.x"]]) == "UP2-E1006"
+def test_e1006_retired_item_root_is_unknown() -> None:
+    """There is no iteration variable: the current element is the input of the sub-chain."""
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "urljoin", "$item.x"]])
+    assert info.value.diagnostic.code == "UP2-E1006"
+    assert "item" not in info.value.diagnostic.allowed
 
 
 def test_e1006_lists_allowed_roots_and_products() -> None:

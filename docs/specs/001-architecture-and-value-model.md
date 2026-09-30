@@ -26,7 +26,7 @@ core (zero third-party deps)    │  values · ast · compile · registry       
                                                          │ one-way calls + reverse injection through the registry
                                 ┌────────────────────────▼─────────────────────────────────────┐
 ops (each lazy-imports)         │  html(css/css1) · xml(xpath) · json · re                     │
-                                │  const · text(py) · ctx · callback · udf                     │
+                                │  const · text(py) · ctx · each · udf                      │
                                 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -39,7 +39,7 @@ ops (each lazy-imports)         │  html(css/css1) · xml(xpath) · json · re 
 | I3 | **exactly one function** may produce the final product (`core.export.pack`); `N5` is guaranteed in exactly one place | the export type guarantee fails (R5 of the old v3) |
 | I4 | **the compile product and the chain data are separate**: `compile()` returns a standalone object, and never hangs the compile result on a `str` subclass or on the chain dict | the dual payload of the old v3's `CompiledString` (R3) |
 | I5 | operators are **without side effects, without IO, without global state**; the write surface of `ctx` is limited to `locals` | `N1` fails and the chain is not replayable |
-| I6 | control flow **may only appear in the form of fields** (`select` / `routes` / `on_missing`), and there are no reserved keys in the result namespace | the old v3's protocol-like keys such as `__object__` (R2) |
+| I6 | control flow **may only appear in the form of fields** (`each` / `routes` / `on_missing`), and there are no reserved keys in the result namespace | the old v3's protocol-like keys such as `__object__` (R2) |
 | I7 | third-party engines may only be **lazily imported**; at import time only `find_spec` probing is allowed | a missing dependency makes the import fail and the whole package unusable (R7) |
 | I8 | any chain that reaches the runtime has **already passed every lint**; the runtime performs no structural validation | `N3` fails and a bad chain blows up halfway |
 
@@ -63,9 +63,8 @@ src/uniparser2/
     json.py       json (jmespath)
     re.py         re (standard library)
     text.py       py allowlist functions (plain text / collections / encoding / type conversion / time parsing)
-    basic.py      const (literal, 2-ary)
+    basic.py      const (literal, 2-ary) · each (one dictionary per element of a list, 2-ary)
     ctx.py        ctx (get/set/del/map)
-    callback.py   callback (preset chain iteration)
     udf.py        udf (host-registered functions)
   graph/
     model.py      node TypedDict / dataclass
@@ -120,13 +119,13 @@ Value     = JsonValue | Opaque
 
 | Decision | Content |
 |---|---|
-| **Adopt the Tree model** (D1-c of the old `dsl-design`) | the HTML/XML/JSON inputs are all trees, and the export is one projection of the tree; "multiple values" are opened up by explicit operators (`nodes` / `callback` / `$map`), not by an implicit boolean flag |
+| **Adopt the Tree model** (D1-c of the old `dsl-design`) | the HTML/XML/JSON inputs are all trees, and the export is one projection of the tree; "multiple values" are opened up by explicit operators (`nodes` hands out a list, `each` expands it), not by an implicit boolean flag |
 | **Do not adopt the D1-b Row model** | it would promote the special case of "a list page" to a global model, wrapping scalar scenarios in containers |
 | **Do not adopt the D1-d stream model** | the export needs a fold to finish, the mental burden is permanent, and low-code users cannot follow it |
 | **`Opaque` is an explicit type** | `self` / `nodes` produce node handles; **the export packing layer rejects `Opaque`** (`N5`), so a value must pass through a serializing action such as `text` / `html` / `@attr` before it can leave the chain |
 | **`bytes` never enters the value domain** | input decoding happens once in the `seed` layer (`input_format` decides decoding and sniffing); only `str` and tree nodes flow inside a chain |
 
-**Lessons from v3**: the `_RECURSION_LIST` boolean flag let every operator decide on its own "whether to expand a list element by element", scattering the behavior across 14 classes (the internal source material, not shipped in this repository, `uniparser-essence.md` §5-R). This design **does not have that flag**: multiple values are always expressed by `select` (splitting) or `callback` / `$map` (explicit expansion), and the behavior of any operator on a `list` input must be written down explicitly in its own Schema.
+**Lessons from v3**: the `_RECURSION_LIST` boolean flag let every operator decide on its own "whether to expand a list element by element", scattering the behavior across 14 classes (the internal source material, not shipped in this repository, `uniparser-essence.md` §5-R). This design **does not have that flag**: a list is produced by an ordinary operator (`css nodes` / `xpath nodes` / `re findall` / `json`) and expanded in exactly one place — an explicit `each` stage whose field map says what one element becomes — and the behavior of any operator on a `list` input must be written down explicitly in its own Schema.
 
 ### 3.2 Value equality and normalization
 
@@ -285,7 +284,7 @@ class CssOp: ...
 | **Regex backtracking (ReDoS)** | at compile time a **nested-quantifier check** is run on regexes and reports `UP2-E1013`. **Measured correction**: Python 3.13/3.14 `re` **has no `timeout` argument**, so **there is no timeout backstop at runtime** — static detection catches only the most classic shape (`(a+)+`), and missed shapes such as overlapping alternations are a recorded gap (`02` §6.3) |
 | **Resource exhaustion** | see §9 limits: the shape of a chain is validated entirely at compile time, and the iteration count is validated at runtime |
 | **Reference out of bounds** | a reference may only point at a **declared** scope and the **declared product keys** of preceding nodes; a `_`-prefixed key referenced **across nodes** is rejected (`UP2-E1014`), while within its own node it is legal |
-| **Cycles** | chains are acyclic (`UP2-E1104`); `$map` nesting depth is limited; the path list of `ctx.map` cannot reference itself |
+| **Cycles** | chains are acyclic (`UP2-E1104`); `each` field-map nesting depth is limited; the path list of `ctx.map` cannot reference itself |
 | **Deserialization** | chains are read from JSON only, never with `pickle`/`yaml.load` (unsafe loaders are never used); after a Store reads a chain back it **must `compile()` again**, and the compile product in storage is never trusted |
 
 ---
@@ -301,8 +300,8 @@ The limit constants are centralized in one place, taken from there by both compi
 | `MAX_STEPS_PER_FIELD` | 32 | cap on the number of stages per field (compile time, exceeding it gives `UP2-E1012`) | **L1 (implemented)** |
 | `MAX_NODES` | 64 | cap on the number of nodes in a chain (compile time) | L2 |
 | `MAX_FIELDS_PER_NODE` | 128 | cap on the number of fields per node (compile time) | L2 |
-| `MAX_MAP_DEPTH` | 3 | `$map` nesting depth (compile time) | L2 |
-| `MAX_MAP_ITER` | 10_000 | number of elements iterated by a single `$map` / `callback` (turned into `Failed` at runtime) | L2 |
+| `MAX_EACH_DEPTH` | 3 | `each` field-map nesting depth (compile time, exceeding it gives `UP2-E1012`) | **L1 (implemented)** |
+| `MAX_EACH_ITER` | 10_000 | number of elements a single `each` iterates (turned into `Failed` at runtime, `UP2-E2012`) | **L1 (implemented)** |
 | `MAX_TEXT_BYTES` | 16 MiB | byte cap after a single input decoding (turned into `Failed` in the `seed` layer) | L2 |
 
 > **Deleted constant**: `REGEX_TIMEOUT_S`. It originally corresponded to `UP2-E2006` "regex execution timeout", but Python's `re` has no `timeout` argument (measured), so this constant has no real point of application. The constant and its error code are removed rather than leaving a false promise.

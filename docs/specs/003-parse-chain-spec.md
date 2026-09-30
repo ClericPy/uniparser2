@@ -1,7 +1,7 @@
 # uniparser2 Design · 03 Parse Chain Spec
 
 > **Status**: design draft v0.1, now located in `docs/specs/` and committed. **Upstream**: `00`, `01`, `02`.
-> **What this document answers**: which nodes a chain is made of, how data flows, how `select` splits, how `result` assembles the export, and what counts as a bad chain.
+> **What this document answers**: which nodes a chain is made of, how data flows, how `each` turns a list into one dictionary per element, how `result` assembles the export, and what counts as a bad chain.
 > **Structural changes relative to `docs/specs/001-architecture-and-value-model.md`**: the four node types (`seed`/`request`/`parse`/`doc`) converge into **three** (`seed`/`parse`/`emit`) —
 > `request` is demoted from a node type to an export shape (§1.1), and `doc` degrades from a host concept to a caller input (§8.3).
 
@@ -12,7 +12,7 @@
 | Type | Consumes | Produces | Notes |
 |---|---|---|---|
 | `seed` | the caller's `inputs` | **the injected input dictionary** (the keys declared by `inject`) | the only place that can materialize `bytes`/`str` into structure |
-| `parse` | `input` (an explicit reference) + `select` | a field dictionary; when `select` is present, **one per selected element** | the only place that runs field chains; may carry `presets` |
+| `parse` | `input` (an explicit reference) | **one** field dictionary; a list becomes one dictionary per element only where a field chain says so with `each` | the only place that runs field chains |
 | `emit` | upstream products | **the export value** (`record` / `flat` / `request`) | the chain's terminal; assembled with `result`, validated with `schema` |
 
 "Product types" such as `article` / `file` are **not node types**; they are the names of export `schema`s (§7).
@@ -98,33 +98,33 @@ The two are **neither merged nor share a name**. Draft `01` called both globals,
   "config": {
     "input": "$seed-0001.text",                  // required; references a value that already exists
     "format": "html",                            // optional; materializes a str input once more (the json→html fragment scenario)
-    "select": ["css", "nodes", "li"],            // optional; when present, fans out per item
     "policy": { "on_missing": "drop" },          // optional; overrides the chain level
-    "fields": { /* §4.2 */ },
-    "presets": { "row": { /* §4.3 */ } },        // optional; preset chains for callback to call
+    "fields": { /* §4.2; a field chain may end in ["each", {…}] for per-item parsing (§4.1) */ },
     "route_field": "route"                       // optional, defaults to "route"
   },
   "next": "emit-0001"                            // mutually exclusive with routes (§4.4)
 }
 ```
 
-### 4.1 `select`: node splitting (the ruling on blocker A of draft `02`)
+### 4.1 Per-item parsing: `each` (the ruling on blocker A of draft `02`)
 
 Draft `02` points out that draft `01` **dropped the whole layer** of the legacy rule's `nodes` (split the chain first, then extract values per item, with `[:20]` truncation): if the first stage of `fields` is `["python","getattr","attributes"]`, the object being evaluated is the whole document rather than a single `<a>`, so the result is necessarily wrong.
 
-This design promotes splitting to a **first-class field**:
+The layer is back as **one operator inside a field chain** (`02` §6.9), not as a node-level field:
 
 ```jsonc
-"select": ["css", "nodes", "li"]                                  // short form: a single stage
-"select": { "chain": [["css","nodes","li"], ["py","slice",":20"]] } // full form: a complete chain
+"rows": [["css","nodes","li"], ["py","slice",":20"], ["each", {"title": [["css1","text","a"]]}]]
 ```
 
 | Rule | Content |
 |---|---|
-| `select` omitted | no fan-out: `fields` is evaluated once on `input`, producing one dictionary |
-| `select` present | fan-out: `fields` is evaluated once per selected element, producing `list[dict]` |
-| Truncation/sorting | expressed with later stages of the `select` chain (the `slice` in the example above) |
-| Empty collection | produces an empty `list` (not `Missing`) — an empty list page is a normal result |
+| `fields` itself | always evaluated **once** on `input` and always produces **one** dictionary — the node has exactly one product shape |
+| `each` in a field chain | its input must be a list (here: the node set the stage above produced); the result is one dictionary per element, so that field holds `list[dict]` |
+| Truncation/sorting | ordinary stages **before** `each` (`["py","slice",":20"]` above); limiting how many elements become records is a plain list operation |
+| Empty collection | `each` on an empty list yields an empty `list` (not `Missing`) — an empty list page is a normal result |
+| Exporting the list | the list is a **named field**, so `emit` names it: `{"produces": "flat", "field": "rows"}` (§5.1) |
+
+The nested `each` (a field map inside a field map) is legal up to `MAX_EACH_DEPTH`, and the whole field-map argument is compiled recursively, so a mistake inside it is reported at compile time with a pointer that reaches the offending stage.
 
 ### 4.2 `fields`
 
@@ -132,29 +132,19 @@ Field definitions and evaluation semantics are in `02` §5. The key points resta
 
 - a key **without a `_` prefix** ⇒ travels down with the node's product and can be referenced by later nodes;
 - a key **with a `_` prefix** ⇒ local to this node (`locals`): **referenceable inside this node, while a cross-node reference yields `UP2-E1014`**;
-- fields are evaluated in declaration order, and a later field may reference earlier `_` local values (this is the standard use of `callback`: first `_rows` collects the node set, then `callback` iterates).
+- fields are evaluated in declaration order, and a later field may reference earlier `_` local values — inside an `each` field map the same rule holds **per element** (the two paragraphs below).
+
+**The `_` prefix inside `each`'s field map**: such a key is stored in the element's locals, later fields of the same element read it as `$locals._name`, and it never appears in the element's dictionary. So "compute something for two fields, `each` it once" needs no relay field and no extra container.
+
+**Scope inside `each`**: every element is evaluated in its own child scope; reads fall back outward (the element's locals, then this node's locals, then the chain-level values), writes stay in the element, and the element's locals do not outlive the element. There is no iteration variable to name — the element is the input value of every field chain.
 
 **`$fields` is shorthand for this node** (including this node's `_` keys) and is valid only inside the node that defines `fields`; an `emit` node has no `fields`, so it must write `$parse-0001.<key>`. **A node cannot reference its own key** (`$parse-0001.x` written inside `parse-0001`'s own `fields` ⇒ `UP2-E1006`, whose message should point to `$fields.x`). These two are the mistakes chain authors make most often, and the `UP2-E1006` message must say so explicitly.
 
-### 4.3 `presets`: preset chains
+### 4.3 `presets`: removed
 
-Named chain groups with exactly the same syntax as `fields`, callable by name from `callback` only (`02` §6.9):
+Preset chains existed only to give `callback` a name to call. With `each` the field map is **inline**, so the container, the name-resolution pass and the "presets cannot reference one another" rule went with it: there is nothing left to name, and the identity "the argument is the same shape as `fields`" is visible at the use site rather than hidden behind a jump.
 
-```jsonc
-"presets": {
-  "row": {
-    "title":    [["css","text","a.title"]],
-    "href":     [["css","@href","a.title"], ["py","urljoin","$globals.base_url"]],
-    "pub_time": [["css1","text","span.date"], ["py","parse_time","zh"]]
-  }
-}
-```
-
-- `presets` is **not a node product**; it is evaluated only when `callback` calls it.
-- `presets` **cannot reference one another** (implicit recursion is forbidden, `UP2-E1105`).
-- the keys of `presets` and the keys of `fields` do not interfere (different namespaces).
-
-> **Deviation record D-03-1**: draft `04` uses `parsers` as the container name. This design renames it `presets` so that each member of the word family means one thing: operator = `op`, chain = `chain`, preset chain = `preset`.
+> **Deviation record D-03-1** (superseded by the L2 iteration redesign, change `l2-chain-structure-and-each`): draft `04` used `parsers` as the container name and this design renamed it `presets`; both names are now retired with the container. If reuse is ever wanted, it belongs to a **callable stage** (a named chain used like any other stage), never to a second argument shape of `each`.
 
 ### 4.4 `next` and `routes`
 
@@ -185,6 +175,7 @@ Named chain groups with exactly the same syntax as `fields`, callable by name fr
   "key": "emit-0001", "type": "emit",
   "config": {
     "produces": "record",                 // record (default) | flat | request
+    "field": "rows",                      // only with produces=flat: which field's value is the export
     "schema": "$article",                 // optional; a named schema or an inline description
     "result": { /* the §6 assembly template */ },  // omitted when produces=flat
     "policy": { "on_missing": "drop" }
@@ -195,12 +186,14 @@ Named chain groups with exactly the same syntax as `fields`, callable by name fr
 | `produces` | Semantics | `result` |
 |---|---|---|
 | `record` (default) | assembles one structured product with the `result` template | required |
-| `flat` | no assembly; the upstream visible fields are the product directly (the "fall back to flattening the loose fields" of Q36 in draft `01`) | must be omitted |
+| `flat` | no assembly; the upstream visible fields are the product directly (the "fall back to flattening the loose fields" of Q36 in draft `01`). With `field`, that one field **is** the export — the shape a per-item list needs, since `each` puts the list under a name (§4.1) | must be omitted |
 | `request` | assembles per the built-in request structure and **fills in defaults automatically** | optional (when omitted, keys are taken by name directly) |
 
 ### 5.1 The place of `flat`
 
 `flat` is the "default stated plainly": drafts `01`/`04` already settled on "fall back to flattening the loose fields when there is no `result`" (Q36), and this design keeps it as an explicit shape. But it carries **no** `dict[str,str]` typing promise — `int`/`list`/`null` in the value domain leave as they are (see `00` §2.1).
+
+**`flat` + `field` is the export of a list**: `{"produces": "flat", "field": "rows"}` exports the value of `$parse-0001.rows`, which is exactly what `each` produced — one record per item. There is deliberately no "the single key is the export" rule: which field is the product is written down, in the same spirit as `route_field`.
 
 ### 5.2 The built-in structure of `request`
 
@@ -249,10 +242,7 @@ A `result` is a tree whose leaves are evaluated by the reference rules of `02` �
   "pub_time":  "$parse-0001.pub_time",
   "channel":   "$parse-0001.channel",
   "tags":      ["$parse-0001.tag1", "\u56fa\u5b9a\u6807\u7b7e"],   // array: evaluated element by element
-  "files":     {                                        // directive: list expansion
-    "$map": "$parse-0001.files", "as": "f",
-    "template": { "name": "$f.name", "url": "$f.url", "size": "$f.size?" }
-  },
+  "related":   "$parse-0001.rows",                      // a list of records, already built by `each` (§4.1)
   "note": {"$lit": "$\u5f00\u5934\u5c31\u8981\u8f6c\u4e49"}          // directive: literal escaping
 }
 ```
@@ -263,13 +253,11 @@ A `result` is a tree whose leaves are evaluated by the reference rules of `02` �
 | Array | recursive evaluation element by element → `list` |
 | String | the value-position kind is `ref_or_literal`: starting with `$` ⇒ a reference, otherwise a literal |
 | `{"$lit": v}` | produces `v` (used for literals that start with `$`) |
-| `{"$map": ref, "as": "x", "template": T}` | applies `T` to each item of the collection that `ref` points to; inside `T`, `$x.<path>` references the current element |
 
-- the variable declared by `$map.as` **is visible only inside that `template`** and must not share a name with a reserved root (`globals`/`locals`/`fields`/`item`) (`UP2-E1106`).
-- `$map` nesting depth ≤ `MAX_MAP_DEPTH` (`01` §9).
+- **Per-item structure is built in `fields`, not here**: a list of records comes out of `each` (§4.1), and a `result` merely references the field that holds it. There is no template-level iteration directive — that is exactly what the retired `$map` was, and it put a second iteration mechanism (with its own name resolution, depth limit and error class) next to the operator that already existed.
 - when a value is `Missing`, it lands per `emit.policy` (default `empty` ⇒ `""`).
 
-> **This is the direct answer to blocker R of draft `02`**: the `result` of draft `04` exhibited three undefined forms (`$fields.*`, `$seed-0001.<multi-level path>`, and a pure literal) plus a `$get` that was never defined. This design fixes the three categories "reference / literal / directive" once and for all; `$get` is deleted.
+> **This is the direct answer to blocker R of draft `02`**: the `result` of draft `04` exhibited three undefined forms (`$fields.*`, `$seed-0001.<multi-level path>`, and a pure literal) plus a `$get` that was never defined. This design fixes the three categories "reference / literal / directive" once and for all; `$get` is deleted, and `$lit` is now the only directive.
 
 ---
 
@@ -346,8 +334,8 @@ run(chain, inputs) -> Ok(value) | Missing | Failed
   │    node = nodes[cur]
   │    outs = exec_node(node)
   │      ├─ seed                      → [the injected input dictionary]
-  │      ├─ parse without select      → [one field dictionary]
-  │      ├─ parse with select         → [one per selected element]
+  │      ├─ parse (fields)             → [one field dictionary]
+  │      ├─ a field chain ending in each → [that field holds one dictionary per element]
   │      └─ emit                      → [one assembly per upstream product]
   │    dispatch:
   │      ├─ next   → cur = next; outs are fed to that node one by one
@@ -373,7 +361,7 @@ run(chain, inputs) -> Ok(value) | Missing | Failed
 |---|---|---|
 | L1 | all required fields present; `dsl_version` is a positive integer; `output` has a legal value | `UP2-E1103` |
 | L2 | `entry` exists and is of type `seed` | `UP2-E1103` |
-| L3 | node keys are unique and not reserved names (`globals`/`locals`/`fields`/`item`/`entry`) | `UP2-E1009` |
+| L3 | node keys are unique and not reserved names (`globals`/`locals`/`fields`/`entry`) | `UP2-E1009` |
 | L4 | node count ≤ `MAX_NODES` | `UP2-E1012` |
 | L5 | `next` / `routes` are mutually exclusive; `routes` implies `default_route` | `UP2-E1101` / `UP2-E1102` |
 | L6 | the target nodes of `next` / `routes` / `default_route` all exist | `UP2-E1103` |
@@ -381,18 +369,18 @@ run(chain, inputs) -> Ok(value) | Missing | Failed
 | L8 | acyclic | `UP2-E1104` |
 | L9 | every node has in-degree ≤ 1 (exactly one predecessor node key) | `UP2-E1108` |
 | L10 | terminal ≥ 1; exactly 1 terminal when `output="single"` | `UP2-E1103` |
-| L11 | a reference points at a **preceding** node / the `seed` product / `globals` / `$fields` / `$locals` / `$item`; the path exists in the target product; **a node must not reference its own key** | `UP2-E1006` |
+| L11 | a reference points at a **preceding** node / the `seed` product / `globals` / `$fields` / `$locals`; the path exists in the target product; **a node must not reference its own key** | `UP2-E1006` |
 | L12 | a **cross-node** referenced key carries no `_` prefix (`$fields._x` / `$locals._x` are legal inside the node itself) | `UP2-E1014` |
 | L13 | `seed.inject` covers every `$<seed key>.*` reference | `UP2-E1006` |
 | L14 | `route_field` is a key of `fields`; with `routes` present there must be a `default_route` fallback | `UP2-E1105` |
-| L15 | `result` is present when `emit.produces="record"` and absent when `="flat"` | `UP2-E1105` |
-| L16 | every reference inside the `result` template resolves; `$map.as` collides with no reserved root and is declared inside the template | `UP2-E1106` |
-| L17 | every stage inside `fields`/`presets`/`select`/`result` passes operator Schema validation | `UP2-E1001`…`E1005` |
+| L15 | `result` is present when `emit.produces="record"` and absent when `="flat"`; with `produces="flat"` and a `field`, that field must be a key of the preceding node's product | `UP2-E1105` |
+| L16 | every reference inside the `result` template resolves | `UP2-E1106` |
+| L17 | every stage inside `fields` (including the sub-chains of an `each` field map) and inside `result` passes operator Schema validation | `UP2-E1001`…`E1005` |
 | L18 | no resource limit is exceeded (`01` §9) | `UP2-E1012` |
 | L19 | the `schema` name is registered, or the inline description resolves | `UP2-E1011` |
-| L20 | no `presets` reference one another | `UP2-E1105` |
+| ~~L20~~ | **withdrawn**: `presets` and their mutual-reference rule went with the container (§4.3) | — |
 
-> **Changes relative to §2.6 of draft `01`**: removed 5 (`request ≤ 2`), 5b (a `request` may only have a seed upstream), 5c (a collection chain's parse must have routes), 5d (`tpl_key` must not start with `:` → moved to the storage layer, `04` §2), the `outputs` part of 7, and 9/10 (the `default`/`none` reserved names, and `tpl_key` being unrenamable → these belong to the host or the storage layer); added L9 (no join), L10 (terminal count), L15/L16 (export shape and template), L18 (limits), and L20 (no mutual references among presets).
+> **Changes relative to §2.6 of draft `01`**: removed 5 (`request ≤ 2`), 5b (a `request` may only have a seed upstream), 5c (a collection chain's parse must have routes), 5d (`tpl_key` must not start with `:` → moved to the storage layer, `04` §2), the `outputs` part of 7, and 9/10 (the `default`/`none` reserved names, and `tpl_key` being unrenamable → these belong to the host or the storage layer); added L9 (no join), L10 (terminal count), L15/L16 (export shape and template), L18 (limits), and L20 (no mutual references among presets). **L20 was withdrawn later**, when the L2 iteration redesign replaced `presets` with `each`'s inline field map (change `l2-chain-structure-and-each`); the number stays retired rather than being reused, so existing references keep pointing at the same rule.
 
 ---
 
@@ -417,23 +405,23 @@ Material: the legacy rule of §1 in draft `01` (1 list rule + 2 detail rules, wi
     { "key": "parse-0001", "type": "parse",
       "config": {
         "input": "$seed-0001.text",
-        "select": { "chain": [
-          ["css", "nodes", "a[href*='/public/1681/']"],
-          ["py", "slice", ":20"]
-        ]},
         "fields": {
-          "url":     [["css", "@href", ""], ["py", "urljoin", "$globals.base_url"]],
-          "title":   [["css", "text", ""], ["py", "normalize_space", ""]],
-          "channel": [["const", "\u653f\u5e9c\u6587\u4ef6"]],
-          "source":  [["const", "\u5b89\u5fbd\u7701\u4eba\u6c11\u653f\u5e9c"]],
-          "region":  [["const", "\u5b89\u5fbd\u7701"]],
-          "route":   [["const", "article"]]
+          "rows": [["css", "nodes", "a[href*='/public/1681/']"],
+                   ["py", "slice", ":20"],
+                   ["each", {
+                     "url":     [["css", "@href", ""], ["py", "urljoin", "$globals.base_url"]],
+                     "title":   [["css", "text", ""], ["py", "normalize_space", ""]],
+                     "channel": [["const", "\u653f\u5e9c\u6587\u4ef6"]],
+                     "source":  [["const", "\u5b89\u5fbd\u7701\u4eba\u6c11\u653f\u5e9c"]],
+                     "region":  [["const", "\u5b89\u5fbd\u7701"]],
+                     "route":   [["const", "article"]]
+                   }]]
         }
       },
       "next": "emit-0001" },
 
     { "key": "emit-0001", "type": "emit",
-      "config": { "produces": "flat" } }
+      "config": { "produces": "flat", "field": "rows" } }
   ]
 }
 ```
@@ -444,13 +432,13 @@ Product (`output: "list"`): `[{"url": …, "title": …, "channel": "\u653f\u5e9
 
 | Blocker in draft `02` | How this design dissolves it |
 |---|---|
-| **A** missing node-splitting semantics | `select` explicitly takes on "split first, then run `fields` per item" and can be continued with `slice` for `[:20]` truncation |
+| **A** missing node-splitting semantics | `each` takes on "run this field map per element, after an ordinary chain that produced the list" — the truncation is a plain `["py","slice",":20"]` before it, and the records land in the named field `rows` |
 | **B** can a chain argument position reference `$node.slot` | Yes. `["py","urljoin","$globals.base_url"]` is exactly such a reference (argument kind = `ref_or_literal`, `02` §3.2); swapping in `$seed-0001.meta.url` holds just as well. The base therefore varies with the input instead of freezing the URL into the chain |
 | **C** a non-empty `headers` has nowhere to land | a collection chain produces only items (with `url`); detail request headers belong to the **host**. When needed, assemble them with `produces:"request"` in a parse chain (§5.2), or add hotlink-protection headers uniformly in the host's request layer |
 | **D** mutually exclusive sources for `channel/source/region` | always produced with `["const", …]` in `fields` (§8.1) |
-| **E/F/G** the propagation container was undecided / a single route had to write routes / per-item semantics were not explicit | propagation = fields without a `_` prefix are visible automatically; a single target uses `next` directly; per-item is switched on explicitly by `select` |
+| **E/F/G** the propagation container was undecided / a single route had to write routes / per-item semantics were not explicit | propagation = fields without a `_` prefix are visible automatically; a single target uses `next` directly; per-item is switched on explicitly by an `each` stage inside the field chain that holds the list |
 
-**The empty selector of `["css","@href",""]`**: an empty selector string ⇒ takes **the current input node itself**. After `select` the first-stage input of a field chain is that element, so this is the standard way to extract a value per item (the rule is in `02` §6.1).
+**The empty selector of `["css","@href",""]`**: an empty selector string ⇒ takes **the current input node itself**. Inside `each`'s field map the first-stage input of a field chain is that element, so this is the standard way to extract a value per item (the rule is in `02` §6.1).
 
 ### 11.2 The parse chain (`tpl_key = "\u6b63\u6587\u8be6\u60c5"`)
 
@@ -534,7 +522,7 @@ Product (`output: "list"`): `[{"url": …, "title": …, "channel": "\u653f\u5e9
 | `task_name` / `channel` / `region` | a `const` product in `parse.fields`, or the caller's `inputs` |
 | `request` / `request.url` | the caller's job; when needed, assemble with `emit.produces="request"` |
 | `input_format` | `seed.config.input_format` (primary input) / `parse.config.format` (secondary materialization) |
-| `nodes` (splitting + truncation) | `parse.config.select` |
+| `nodes` (splitting + truncation) | a field chain: `["css","nodes",…]` → `["py","slice",":20"]` → `["each", {…}]` |
 | `fields` | `parse.config.fields` (triples, semantics unchanged) |
 | `fields.headers` | the host's request layer |
 | `fields.referer_info` | deleted (fields without a `_` prefix propagate downward automatically) |

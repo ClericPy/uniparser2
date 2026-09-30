@@ -495,6 +495,28 @@ def section_diagnostics() -> None:
                 print(f"       fix: {diagnostic.fix}")
 
 
+def section_iteration() -> None:
+    heading("12. `each` — one dictionary per element of a list")
+    one(
+        "a node set becomes one record per item",
+        [
+            ["css", "nodes", "ul.rel li"],
+            ["each", {"title": [["css1", "text", "a"]], "href": [["css1", "@href", "a"]]}],
+        ],
+        SAMPLE_HTML,
+    )
+    one(
+        "no engine needed: a list of strings",
+        [["each", {"raw": [["py", "strip", ""]]}]],
+        ["  a  ", "bb"],
+    )
+    one(
+        "a `_`-prefixed field is a per-element temporary, not a key",
+        [["each", {"_raw": [["py", "strip", ""]], "seen": [["ctx", "get", "locals._raw"]]}]],
+        ["  a  ", "bb"],
+    )
+
+
 SECTIONS: Final[tuple[tuple[str, Callable[[], None]], ...]] = (
     ("css / css1", section_selectors),
     ("xpath", section_xpath),
@@ -507,9 +529,10 @@ SECTIONS: Final[tuple[tuple[str, Callable[[], None]], ...]] = (
     ("code", section_code),
     ("policy", section_policy),
     ("diagnostics", section_diagnostics),
+    ("each", section_iteration),
 )
 ALL_OPERATORS: Final = frozenset(
-    {"css", "css1", "py", "xpath", "json", "re", "ctx", "const", "code", "udf"}
+    {"css", "css1", "py", "xpath", "json", "re", "ctx", "const", "code", "udf", "each"}
 )
 
 

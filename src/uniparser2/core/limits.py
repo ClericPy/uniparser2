@@ -18,3 +18,9 @@ from typing import Final
 
 MAX_STEPS_PER_FIELD: Final = 32
 """The stage limit per field (checked at compile time; exceeding it is ``UP2-E1012``)."""
+
+MAX_EACH_DEPTH: Final = 3
+"""How deeply ``each`` stages may nest (checked at compile time; exceeding it is ``UP2-E1012``)."""
+
+MAX_EACH_ITER: Final = 10_000
+"""How many elements one ``each`` stage may iterate (``UP2-E2012``, checked before it evaluates)."""

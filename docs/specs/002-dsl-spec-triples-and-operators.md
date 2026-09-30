@@ -30,8 +30,8 @@ only gives the two positions their **names** (`up2 ops` prints them out for huma
 | `udf` | 3 | function name (host-registered) | kwargs | `["udf", "my_fn", {"strict": true}]` |
 | `json` | 2 | jmespath path | — | `["json", "data.html"]` |
 | `const` | 2 | arbitrary JSON value | — | `["const", "article"]` |
+| `each` | 2 | field map (field name → chain) | — | `["each", {"title": [["css1","text","a"]]}]` |
 | `code` | 2 | source and inputs | — | `["code", {"src": "len(obj)"}]` |
-| `callback` | 3 | selector object | preset chain name | see §6.9 (L2) |
 
 > **The enumeration strength of the three positions increases step by step**: slot 1 = an operator in the registry (closed enumeration); slot 2 = the behaviour
 > declared by that operator itself (closed enumeration; the only parameterisable member is `css`'s `@<attribute name>`); slot 3 = an arbitrary value (it may be
@@ -98,7 +98,6 @@ $<root>[.<segment>][.<segment>]…
 | `globals` | the chain-level environment (`graph.globals` + `seed` injection), consistent across nodes | only the `seed` node | all nodes |
 | `locals` | this node's locals (`_`-prefixed fields + `ctx.set locals.*`) | this node | only this node |
 | `fields` | shorthand for this node's `fields` product (equivalent to `$<this node's key>.fields`) | — | only this node |
-| `item` | the current iteration element of `$map` / `callback` | — | only inside the corresponding template block |
 | `<node key>` | the product of an earlier node | — | only its **later** nodes |
 
 - **Only dotted paths are supported, not array indices** (settled by Q24 in `01`). To take an index, use the explicit operator `["py","getitem",0]`.
@@ -108,6 +107,8 @@ $<root>[.<segment>][.<segment>]…
 - **Referencing the current node's own key is forbidden**: inside this node use `$fields.<key>` (this is exactly what the hint attached to `UP2-E1006` says).
 - A `_`-prefixed key is a **local of this node**: **it may be referenced inside this node, but downstream nodes are forbidden to reference it** (`UP2-E1014`) —
   the semantics of a local value is precisely "it does not leave this node".
+- **There is no iteration variable**: inside `each`'s field map the current element is the **input value** of every field chain (§6.9), and each element is
+  evaluated in its own child scope — `$locals.*` reads that element's locals first and falls back outward, while a write stays in the element.
 
 ### 3.2 When a string counts as a reference: decided by the parameter Schema, not by a global scan
 
@@ -117,7 +118,8 @@ Every parameter of every operator declares a **kind** in its Schema:
 |---|---|---|
 | `ref` | must be a reference; a literal is a compile error | the path of `ctx.get` |
 | `literal` | always a literal; a leading `$` does not make it a reference | `css`'s selector, `re`'s regex, URL templates other than `py.urljoin` |
-| `ref_or_literal` | a string starting with `$` ⇒ a reference; otherwise a literal | `py`'s parameter slot, `$map.from` |
+| `ref_or_literal` | a string starting with `$` ⇒ a reference; otherwise a literal | `py`'s parameter slot (`["py","parse_time",{"now":"$globals.now"}]`) |
+| `fields` | a **field map** (`field name → chain`), compiled recursively | `each`'s single argument |
 
 **Why it has to be designed this way**: `$` is a legal character in regexes and CSS (`a[href$=".pdf"]`, the regex `$foo`). Deciding references by "scan the
 whole document for strings starting with `$`" would damage real rules. Once the decision is made per parameter kind, ambiguity exists only in `ref_or_literal`
@@ -152,12 +154,13 @@ plain literal) were all guesswork. This design's rule can be stated in one sente
 | **Scalar** | `"a.title"` / `1` / `true` / `null` | a single parameter |
 | **Reference** | `"$globals.base_url"` | the parameter comes from a scope (only in `ref` / `ref_or_literal` positions) |
 | **Positional array** | `["\u65e7", "\u65b0"]` (old, new) | several parameters passed positionally (`py.replace` / `py.split`) |
-| **Named object** | `{"pattern": "…", "group": 1}` | many parameters, or self-documentation needed (`re.group` / `py.parse_time` / `callback`) |
+| **Named object** | `{"pattern": "…", "group": 1}` | many parameters, or self-documentation needed (`re.group` / `py.parse_time`) |
 
 **Decision order for the object form** (fixed at compile time):
 
-1. The object has **exactly one key and that key starts with `$`** ⇒ a **directive object** (`$lit` / `$map`), handled according to the directive's semantics.
-2. Otherwise ⇒ a **named argument object**, each value resolved independently by kind (it may be a literal or a reference).
+1. The object has **exactly one key and that key starts with `$`** ⇒ a **directive object** (`$lit`), handled according to the directive's semantics.
+2. Otherwise ⇒ a **named argument object**, each value resolved independently by kind (it may be a literal or a reference). An action whose single parameter is a
+   **field map** (`each`) takes the object as that one value instead, and compiles every value in it as a chain (§6.9).
 3. A parameter name **never** starts with `$` (a parameter name is an identifier), so rule 1 and rule 2 can never conflict.
 
 Elements/values inside arrays and objects are resolved **leaf by leaf, each by its own parameter's kind**: a `ref_or_literal` leaf may hold a reference (`code`'s
@@ -193,7 +196,7 @@ Evaluation rules:
 | `Missing` | **short-circuit this field** (later stages do not run) and land a value according to the effective `on_missing` |
 | `Failed` | according to the effective `on_error`: with `raise` the whole `run()` fails; when degraded, short-circuit and land a value according to the policy |
 
-- The first stage's input = the field's `input` (the node's `input` by default; when `select` exists it is the current iteration element).
+- The first stage's input = the field's `input` (the node's `input` by default; inside `each`'s field map it is the current element, §6.9).
 - Fields are evaluated in **declaration order** (a JSON object preserves order), so a later field can reference the `_` local values produced by an earlier one.
 - **The number of stages is a hard stability boundary**: exceeding `MAX_STEPS_PER_FIELD` is a compile error (`01` §9).
 
@@ -236,11 +239,11 @@ short-circuiting.
 
 - **`text` excludes the text of `script`/`style`/`noscript`** (the noise tags are pruned on the copy before the text is taken); it does not normalise whitespace
   (use `py.normalize_space`).
-- **An empty selector `""` ⇒ take the current input itself** (do not search downward). This is the standard way to extract a value from each item after
-  `parse.select`: `["css1", "@href", ""]` = take the `href` of the current element itself — `css1` lands on that `<li>`, and `""` says "do not look further, use
-  it as it is".
+- **An empty selector `""` ⇒ take the current input itself** (do not search downward). This is the standard way to extract a value from each item inside
+  `each`'s field map: `["css1", "@href", ""]` = take the `href` of the current element itself — `css1` lands on that `<li>`, and `""` says "do not look further,
+  use it as it is".
 - The input is a `str` (containing HTML) or a node (`Opaque`). **A list input reports `UP2-E2002`**: parsing item by item belongs to the chain-level structure
-  (`select` / `callback`, L2); doing it here would only yield a semantically murky "concatenation".
+  (`each`, §6.9); doing it here would only yield a semantically murky "concatenation".
 - **Nodes are always wrapped as `DomNode(Opaque)`**: native engine objects do not enter the value domain, so the products of `nodes` / `self` are naturally
   rejected by export packing (`UP2-E2003`).
 - There is exactly one engine: **`selectolax`** (`requires=("selectolax",)`). Not installed ⇒ compile-time `UP2-E1107` + the install command.
@@ -478,25 +481,36 @@ structure is not copied** (it is treated as immutable and must not be modified i
 > value in the same scope. The former is used to "switch the input source in the middle of a chain", the latter to "pass some value to an operator as an
 > argument". Neither introduces a new scope concept.
 
-### 6.9 `callback` — evaluate a preset chain N times
+### 6.9 `each` — one dictionary per element of a list
 
 ```jsonc
-["callback", {"from": "$fields._rows", "each": true}, "row"]
+["each", {"title": [["css1","text","a"]], "href": [["css1","@href","a"]]}]
 ```
+
+`each` is a 2-slot operator with a single action, so the stage is `["each", <field map>]` and slot 2 carries the whole argument. The **field map** is an object
+mapping a field name to a chain — exactly the shape a `parse` node's `fields` block has (`03` §4.2), one level down.
 
 | Position | Meaning |
 |---|---|
-| `a` | selector object: `from` (`ref`, pointing at a collection or an object) + `each` (bool, whether to iterate element by element) |
-| `b` | preset chain name (a key in `parse.config.presets`) |
+| the argument | an object of field name → chain, compiled **recursively**; a value that is not an object is `UP2-E1005` |
 
-- `each: true` ⇒ run the preset chain once for every element of `from`, producing a `list[dict]`.
-- `each: false` / omitted ⇒ run it once with `from` as a whole as the input, producing a `dict`.
-- Preset chains live in `parse.config.presets` and their syntax is exactly the same as `fields` (an ordered chain → dict); `presets` cannot reference each other
-  (to avoid implicit recursion).
+- **The input must be a list**: one dictionary per element, in input order, so `list[dict]` comes out. An empty list yields `[]` (not a missing value); anything
+  that is not a list reports `UP2-E2002`. A missing input keeps the shared short-circuit (the operator does not accept a missing value).
+- **Every field chain starts from the element**: the element is the first stage's input (the current element is a value, not a named root).
+- **Fields are evaluated in declaration order against one element at a time**, so a later field reads what an earlier field of the same element stored.
+- **A `_`-prefixed field name is a per-element local**: it never becomes a key of the element's dictionary, and later fields of the same element read it as
+  `$locals._name` (or with `ctx.get`). `ctx.set "locals.x"` mid-chain writes there too.
+- **Every element is evaluated in its own child scope**: reads fall back outward (the element's locals, then the calling scope's, then the chain-level values),
+  writes always land in the element's scope, and the element's locals do not outlive the element.
+- **The effective policy is applied per element**, and no element is ever dropped: an element whose fields all resolve to absent is still `{}`. A `Failed` whose
+  policy is `raise` propagates out of `each` with the failing stage's code.
+- **Limits**: nesting deeper than `MAX_EACH_DEPTH` (3) is `UP2-E1012` at compile time; a list longer than `MAX_EACH_ITER` (10 000) is `UP2-E2012` before
+  anything is evaluated (`01` §9).
 
-> **Deviation record D-02-4**: the `04` draft encodes the selector as the string `"ctx.fields._rows|each"`, uses a `ctx.` prefix outside `"$"` (inconsistent
-> with the reference syntax `$...`), and calls the container `parsers`. This design unifies it as **(a) an object-form selector** (no string surgery, lintable)
-> and **(b) the container renamed `presets`** (to avoid confusion with the "operator/parser" word family).
+> **Deviation record D-02-4** (superseded by the L2 iteration redesign, change `l2-chain-structure-and-each`): the `04` draft encoded the selector as the string
+> `"ctx.fields._rows|each"`, used a `ctx.` prefix outside `"$"`, and called the chain container `parsers`; the design at that time answered with an object-form
+> selector plus a `presets` container, and a node-level `select` for the fan-out. Both are retired: one operator, one inline field map, and the input comes from
+> the stage above. See `design.md` D1–D3 of that change for the measurements behind it.
 
 ### 6.10 `udf` — a host-registered named function
 
@@ -685,7 +699,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E1005` | parameter Schema validation failure (type/required/unknown parameter) | give the parameter name + the expected type + the actual type |
 | `UP2-E1006` | the reference points at a later node or at an undeclared path | give the available node order and the list of available keys |
 | `UP2-E1007` | a literal was written in a `ref` position | hint that the position must be a `$…` reference |
-| `UP2-E1009` | a node key is a reserved name or is duplicated | list the reserved names (`globals`/`locals`/`fields`/`item`/`entry`) |
+| `UP2-E1009` | a node key is a reserved name or is duplicated | list the reserved names (`globals`/`locals`/`fields`/`entry`) |
 | `UP2-E1010` | the `udf` is not registered | hint at `register_udf` or the `entry_points` group name |
 | `UP2-E1011` | the schema name is not registered | list the registered schema names |
 | `UP2-E1012` | a resource limit is exceeded (`01` §9) | give the constant name that was hit and the limit value |
@@ -696,8 +710,8 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E1102` | `routes` exists but `default_route` is missing | hint at adding the default branch |
 | `UP2-E1103` | the target node does not exist / there is an orphan node / it is unreachable from `entry` | give the reachable set and the orphan list |
 | `UP2-E1104` | the chain contains a cycle | give the travel path |
-| `UP2-E1105` | `select` conflicts with per-item semantics (`select` exists but a non-per-item product is used, or `route_field` is not in the field key set) | see `03` §10 |
-| `UP2-E1106` | a `result` template reference cannot be resolved (including an iteration variable not declared inside `$map`) | give the set of available references |
+| `UP2-E1105` | `route_field` is not a key of the node's field map, or `routes` has no `default_route` | see `03` §10 (L14) |
+| `UP2-E1106` | a `result` template reference cannot be resolved | give the set of available references |
 | `UP2-E1107` | an operator's optional dependency is missing | give the install command (e.g. `uv add selectolax`) |
 | `UP2-E1108` | some node has an in-degree > 1 (an attempt to merge two products) | the kernel does not join; split into two chains, or keep the upstream paths independent (`03` §9.1) |
 
@@ -715,7 +729,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2009` | the operator returned a non-serialisable value | the return value must be inside the JSON value domain (`str`/`int`/`float`/`bool`/`None`/`list`/`dict`) |
 | `UP2-E2010` | `produces="request"` but `url` is missing | give `url` in `result` |
 | `UP2-E2011` | `output="single"` but several products or several terminals exist | change `output` to `auto` / `list` |
-| `UP2-E2012` | the iteration count of `$map` / `callback` exceeds `MAX_MAP_ITER` | truncate with `slice` first |
+| `UP2-E2012` | the list given to `each` is longer than `MAX_EACH_ITER` | truncate it first with `["py","slice",":100"]` |
 | `UP2-E2013` | the input text exceeds `MAX_TEXT_BYTES` | truncate in the outer layer first, or switch to a streaming upstream |
 | `UP2-E2014` | exit schema validation failed | give the JSON Pointer, the expected type and the actual type |
 | `UP2-E2015` | the tri-state is `Missing` and the effective policy is `raise` | change `on_missing` or fix the selector |
@@ -730,9 +744,9 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E1008` "a reference was written in a `literal` position" | it conflicts with §3.2: a `$` in a `literal` position **is always a literal** (that is exactly the point of deciding by kind), so this error cannot occur. An extra code is an extra branch |
 | `UP2-E2006` "regex execution timed out" | **there is no real mechanism**: Python's `re` has no `timeout` parameter (measured on 3.13/3.14). Better to delete the code than to keep a false promise |
 
-**The current status of `UP2-E1007`**: L1's five operators (`const`/`cast`/`re`/`py`/`ctx`) **have no `ref`-only parameter** — `ctx`'s path is literal path text
-and `py`'s parameters are `ref_or_literal`. That code is first genuinely triggered by L2's `$map.from` (which must be a reference); L1 covers this compile-time
-rule with a test patched to "temporarily turn `urljoin.base` into `Kind.REF`".
+**The current status of `UP2-E1007`**: L1's operators (`const`/`re`/`py`/`ctx`/`each`) **have no `ref`-only parameter** — `ctx`'s path is literal path text,
+`each`'s field map is a structured parameter and `py`'s parameters are `ref_or_literal`. `ctx`'s `refs` parameter keeps the rule alive at compile time, and L1 covers
+it with a test patched to "temporarily turn `urljoin.base` into `Kind.REF`".
 
 > Runtime error codes are returned in the form `Failed` only when `on_error: "raise"` (the default); when a policy degrades them the code goes into the log
 > (into `--trace` from L2 onwards) and does not interrupt the chain.
@@ -746,7 +760,7 @@ rule with a test patched to "temporarily turn `urljoin.base` into `Kind.REF`".
 | D-02-1 | `const`/`cast` are 2-element, the rest are 3-element | the arity is declared by the operator Schema (2 or 3) and the stage length is **matched exactly**; there is no "omitting the tail" | the shape is unified; the arity is a property of the operator and should not be hard-coded in a document |
 | D-02-2 | multiple arguments passed as a comma-joined string (`"\u65e7,\u65b0"`) | a positional array / a named object | string joining cannot be validated or escaped, and `essence` already lists it as the R1 root cause |
 | D-02-3 | `remove` is a side effect | `remove` returns a pruned copy (a pure function) | preserves `N1`/I5; avoids the cross-talk of a shared mutable DOM during per-item parsing |
-| D-02-4 | `callback` uses a `"ctx.fields.x\|each"` string; the preset-chain container is called `parsers` | a `{"from": "$x", "each": true}` object + the container name `presets` | no string surgery, consistent with the reference syntax, and the terminology does not collide |
+| D-02-4 | `callback` uses a `"ctx.fields.x\|each"` string; the preset-chain container is called `parsers` | **superseded** by the L2 iteration redesign (`each`): the argument is an inline field map, so there is no selector object, no container and no name to resolve | no string surgery, one shape in one slot, and the terminology does not collide |
 | D-02-5 | `ctx` has `get/set/del/map` with an undefined write surface; there is also a `call` verb | the write surface is hard-limited to `locals.*`; `call` is deleted | preserves purity and the immutability of products; calling a function is an operator |
 | D-02-6 | three reference forms are undefined (`$fields.*`, multi-level paths, literals), and an undefined `$get` appears | one rule: a leading `$` ⇒ a reference, `{"$lit":…}` escapes; `$get` is abolished | a rule must fit in one sentence; undefined concepts are deleted |
 | D-02-7 | the `cast` vocabulary contains `datetime`, which conflicts with exit encoding (blocker N of the `02` worked-example draft) | type conversion only converts inside the JSON value domain, and time goes to `py.parse_time` (which outputs a str) | the value domain is a JSON tree and `N2` requires serialisability |

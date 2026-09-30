@@ -12,6 +12,22 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Added
 
+- **`each`, the iteration operator** (`["each", {"title": [["css1","text","a"]]}]`): the stage above
+  produces a list, the argument is a **field map** (`field name → chain`, the same shape a node's
+  `fields` block has) and the result is **one dictionary per element**, in input order. It is a 2-slot
+  operator with a single action, so the field map is its only slot. A field name starting with `_` is a
+  **temporary of that element** (readable by later fields, never a key of the dictionary), every
+  element is evaluated in **its own scope** (reads fall back outward, writes stay in the element), the
+  effective policy is applied per element, and no element is ever dropped silently. An empty list
+  yields `[]`, a non-list input is `UP2-E2002`, a list longer than `MAX_EACH_ITER` (10 000) is
+  `UP2-E2012` before anything runs, and a field map nested deeper than `MAX_EACH_DEPTH` (3) is
+  `UP2-E1012` at compile time.
+- A **structured parameter kind** (`fields`): a parameter whose value is a field map has every
+  sub-chain compiled recursively, so a mistake inside it is reported at compile time with a pointer that
+  reaches the offending stage (`/0/1/fields/title/0/0`), and each sub-chain answers to the per-chain
+  stage limit. `Scope` gained a parent link for the per-element scope, and the call context a
+  sub-chain runner, so a structural operator never imports the evaluator and a sub-chain runs under the
+  policy in force.
 - `py.parse_time` reaches the natural-language engine **without a parameter**: the decision order is now
   an explicit `format` → the built-in table (which still loads nothing) → automatic language detection →
   `UP2-E2007`, so a chain no longer has to name a language to read one. The engine stays an optional
@@ -31,6 +47,8 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Changed
 
+- Version `0.2.0` → `0.3.0` (`005` §7: a new capability bumps the minor). Conformance: 60 → 61 pairs;
+  implemented error codes: 25 → 26.
 - The ambiguous slash writings are decided by one documented knob. Measured before: `03/04/2026` gave
   `2026-04-03` (the built-in table is day-first) while `03/04/2026 15:30` gave `2026-03-04` (the engine
   defaulted to month-first) — the same writing meaning two dates. `date_order` now orders the table's
@@ -40,6 +58,19 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   fallback, so the language could never have an effect. The `UP2-E2007` fix line no longer advises
   "add lang" (the engine is reached by default now).
 - Version `0.1.0` → `0.2.0` (`005` §7: a new capability bumps the minor).
+
+### Removed
+
+- The chain layer's iteration construct is now **one operator** instead of three mechanisms: the
+  node-level `select` fan-out, the `callback` operator with its named `presets` chains and the `$map`
+  result-template directive are all retired (an inline field map plus the input from the stage above
+  says the same thing once). The `item` scope root went with them — inside `each` the current element
+  is simply the input value of every field chain — which also removed the `UP2-E1006` "deferred root"
+  branch that existed only to explain `$item`, so the reserved roots are now `globals` / `locals` /
+  `fields`. Lint L20 is retired (there is no container left to reference itself). Per-item structure is
+  therefore assembled in `fields`, and an `emit` node exports it with `{"produces": "flat", "field":
+  "rows"}`. None of this changes implemented behavior: `select` / `callback` / `presets` / `$map` were
+  never implemented, so the retirement is a design-level one.
 
 ### Fixed
 
@@ -51,7 +82,7 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   has to fill — a parameter the action slot itself provides does not count. Both the human view
   (`[slot3=value]`) and `--json` report it, so a chain writer no longer has to infer the rule from the
   DSL spec.
-- [`docs/operator-reference.md`](docs/operator-reference.md): a hand-maintained reference for the ten
+- [`docs/operator-reference.md`](docs/operator-reference.md): a hand-maintained reference for the eleven
   operators — what each action means, which writing its parameter slot takes, and worked examples with
   their real outputs. The registry stays the authority (`up2 ops --json`); this page is the map next
   to it.

@@ -31,6 +31,7 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
     ops = {op_name for op_name, _ in pairs}
     assert ops == {
         "const",
+        "each",
         "css",
         "css1",
         "xpath",
@@ -41,7 +42,7 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
         "ctx",
         "code",
     }
-    assert len(pairs) == 60
+    assert len(pairs) == 61
     assert len([pair for pair in pairs if pair[0] == "py"]) == 32
     assert len([pair for pair in pairs if pair[0] == "css"]) == 7
     assert len([pair for pair in pairs if pair[0] == "css1"]) == 7
@@ -50,11 +51,15 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
     assert len([pair for pair in pairs if pair[0] == "ctx"]) == 4
     assert len([pair for pair in pairs if pair[0] == "json"]) == 1
     assert len([pair for pair in pairs if pair[0] == "const"]) == 1
+    assert len([pair for pair in pairs if pair[0] == "each"]) == 1
     assert len([pair for pair in pairs if pair[0] == "udf"]) == 1
     assert len([pair for pair in pairs if pair[0] == "code"]) == 1
     assert ("re", "search") in pairs
     assert ("ctx", "map") in pairs
     assert ("const", "const") in pairs
+    # `each` is a 2-slot operator with a single action, so its action name never appears in a chain
+    # either; its argument is a field map, which the compiler compiles recursively.
+    assert ("each", "each") in pairs
     # The former ``time`` operator has been folded into ``py``; the old ``json.$get`` action slot is
     # gone together with the 2-slot operator.
     assert ("py", "parse_time") in pairs
@@ -71,6 +76,8 @@ def test_report_exposes_action_params_and_dependencies() -> None:
     report = {item.name: item for item in registry.report()}
     assert report["py"].arity == 3
     assert report["const"].arity == 2
+    assert report["each"].arity == 2
+    assert report["each"].slots == ("fields",)
     # Slot semantics are declared by the operator: a 3-slot operator always carries its action in
     # slot 2, and a 2-slot operator has no action slot at all.
     assert report["py"].action_slot == 1

@@ -1,6 +1,6 @@
 # Operator reference
 
-The registry declares **10 operators and 59 `(operator, action)` pairs**; all of them are listed below.
+The registry declares **11 operators and 61 `(operator, action)` pairs**; all of them are listed below.
 The READMEs carry a one-screen summary of what the engine ships; this page is the reference next to
 it: what each action means, which writing its parameter slot takes, and a set of chains whose outputs
 were produced by running them.
@@ -13,7 +13,7 @@ this page is a map, not a second source of truth.
 ## How a stage is written
 
 A stage is a JSON array. Three positions for `css` / `css1` / `xpath` / `re` / `py` / `ctx` / `udf`,
-two for `json` / `const` / `code` (which carry no separate action):
+two for `json` / `const` / `code` / `each` (which carry no separate action):
 
 | Position | Holds |
 |---|---|
@@ -132,6 +132,29 @@ Paths are written bare, without `$` and without a `ctx.` prefix: `["ctx", "set",
 
 `["const", "article"]` produces its value verbatim, never resolving a reference. It is the building
 block for constants inside a field chain.
+
+### `each` — one dictionary per element of a list (standard library)
+
+The single argument is a **field map**: an object of `field name → chain`, the same shape a node's
+`fields` block has. The input must be a list, and the result is one dictionary per element, in input
+order:
+
+```jsonc
+[["css", "nodes", "ul.rel li"],
+ ["each", {"title": [["css1", "text", "a"]], "href": [["css1", "@href", "a"]]}]]
+// -> [{"title": "Related one", "href": "/p/1.html"}, {"title": "Related two", "href": "/p/2.html"}]
+```
+
+- Each field chain starts from the element, and the fields are evaluated in declaration order against
+  one element at a time.
+- A field name starting with `_` is a **temporary of that element**, not a key of its dictionary:
+  `["each", {"_t": [["py","strip",""]], "v": [["ctx","get","locals._t"]]}]` on `[" x "]` yields
+  `[{"v": "x"}]`.
+- Every element is evaluated in **its own scope**: reads fall back outward, writes stay in the element,
+  and the element's locals do not outlive it.
+- The input must be a list (otherwise `UP2-E2002`); an empty list yields `[]`; a list longer than
+  `MAX_EACH_ITER` (10 000) fails with `UP2-E2012` before anything runs, and nesting the field map deeper
+  than `MAX_EACH_DEPTH` (3) is `UP2-E1012` at compile time.
 
 ### `udf` — host-registered functions (no extra)
 

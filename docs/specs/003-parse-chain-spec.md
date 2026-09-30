@@ -11,7 +11,7 @@
 
 | Type | Consumes | Produces | Notes |
 |---|---|---|---|
-| `seed` | the caller's `inputs` | **the injected input dictionary** (the keys declared by `inject`) | the only place that can materialize `bytes`/`str` into structure |
+| `seed` | the caller's `inputs` | **the injected input dictionary** (the keys declared by `inject`) | the only place that carries the caller's inputs; it does not materialize them (§3.1) |
 | `parse` | `input` (an explicit reference) | **one** field dictionary; a list becomes one dictionary per element only where a field chain says so with `each` | the only place that runs field chains |
 | `emit` | upstream products | **the export value** (`record` / `flat` / `request`) | the chain's terminal; assembled with `result`, validated with `schema` |
 
@@ -61,8 +61,7 @@ In draft `01`, the `request` node carries the semantics of "assembling one HTTP 
 {
   "key": "seed-0001", "type": "seed",
   "config": {
-    "inject": ["text", "meta"],   // allowlist: which keys are taken from the caller's inputs
-    "input_format": "html"        // html | xml | json | text; applies only to the primary input key `text`
+    "inject": ["text", "meta"]    // allowlist: which keys are taken from the caller's inputs
   },
   "next": "parse-0001"
 }
@@ -71,11 +70,10 @@ In draft `01`, the `request` node carries the semantics of "assembling one HTTP 
 | Field | Required | Description |
 |---|---|---|
 | `inject` | yes | the list of key names in the caller's `inputs` that this chain is allowed to reference. **A key that is not injected cannot be referenced at compile time** (`UP2-E1006`) |
-| `input_format` | no (default `text`) | how the primary input is materialized: `html`/`xml` ⇒ an `Opaque` document; `json` ⇒ the parsed value; `text` ⇒ the `str` as it is |
 
-**Product**: one dictionary whose keys are exactly the keys declared by `inject`. Downstream nodes reference them as `$<seed key>.<key>` (`$seed-0001.text` / `$seed-0001.meta.url`).
+**Product**: one dictionary whose keys are exactly the keys declared by `inject`, holding the caller's values **verbatim** — the seed does not interpret them (§3.1). Downstream nodes reference them as `$<seed key>.<key>` (`$seed-0001.text` / `$seed-0001.meta.url`).
 
-**`text` is the conventional slot for the primary input**: `input_format` applies only to it. If the caller's primary input goes by another name, it is passed as `{"text": …}` at `run()` time — a conventional slot is cheaper than a new config item, and it leaves exactly one answer to "which input gets materialized".
+**`text` is the conventional slot for the primary input**: the document arrives under `text`, metadata under `meta`. If the caller's primary input goes by another name, it is passed as `{"text": …}` at `run()` time — a conventional slot is cheaper than a new config item.
 
 **The division of labour between `globals` and `seed` (the part of this document most often misread)**:
 
@@ -88,6 +86,36 @@ The two are **neither merged nor share a name**. Draft `01` called both globals,
 
 **The input allowlist is a security boundary**: a chain can see only the keys declared by `inject`, which makes "no implicit input source" (`N1`) a statically checkable property (lint L13).
 
+### 3.1 On-demand materialization and the run-scoped cache
+
+**Status**: the operators materialize on demand **today** (measured: `css1` on HTML text, `json` on JSON text and `xpath` on XML text all return the parsed result). The cache described below is **not implemented** — it lands with the L2 node layer (`007` §3), which is where many fields and nodes start from the same input value. Until then, feeding the same text to several `css`/`json` stages parses it once per stage.
+
+**The seed does not materialize.** How an input becomes structure is decided by the operator that consumes it, at the moment it consumes it — which is already how the operator layer behaves:
+
+| Consumer | On a `str` input | On its own value domain |
+|---|---|---|
+| `css` / `css1` | parses HTML into an `Opaque` document | a `DomNode` / a node list is unwrapped |
+| `json` | parses JSON text | a JSON tree is walked |
+| `xpath` | parses XML into an `Opaque` document | a node is unwrapped |
+
+Two consequences: **a chain never declares a format** (`input_format` and `parse.format` are both deleted, §4.5), and the "one document, one parse" property becomes the cache's job instead of the entry point's.
+
+**`bytes` never enters a chain**: the value domain is the JSON tree plus the `Opaque` handle (`01` §3), so decoding is the caller's job — `run(chain, inputs)` and the CLI's `--input K=@file` hand over text. A genuinely binary payload (an image, a PDF, a gzip stream) is materialized by the host or carried in as text (base64).
+
+**The materialization cache is run-scoped and bounded**, and it is a correctness-of-performance part of the design rather than an optimization:
+
+- **Scope**: it lives with one evaluation run and is released with it. Nothing is shared across runs, so no `Opaque` handle outlives the run that produced it and two runs cannot observe each other.
+- **Key**: the target format plus the source value — object identity first, a content hash on a miss. Hashing a 5 MB text costs a couple of milliseconds against the ≈110 ms parse it saves.
+- **Bound**: `MAX_MATERIALIZE_BYTES` (64 MiB by default, `01` §9) with LRU eviction, accounted in **materialized bytes** — not in source-text bytes, because the amplification differs per format (measured: a selectolax DOM is ≈24× its HTML text, a JSON tree ≈2.2–2.7× its JSON text). At most `MAX_MATERIALIZE_ITEMS` (8) artifacts are kept, so a run over many small documents cannot fill the cap with hundreds of tiny trees.
+- **The cap is soft for a single artifact**: an artifact larger than the cap is still retained while it is in use, so "one document, one parse" always holds and the worst-case memory is the cap plus that one artifact. Once such an artifact stops being the most recently used one it is evicted and its next consumer re-parses it — correct, only slower. The largest accepted input is `MAX_TEXT_BYTES` (16 MiB, `01` §9), whose HTML tree is ≈384 MB, so the ceiling is a documented tradeoff rather than a promise.
+- **Eviction** costs a re-parse and nothing else, because materialization is a pure function of the text: a hit and a miss MUST be observably identical, and a test pins that equality.
+- **Mutation**: a cached tree MUST NOT be mutated in place. `remove` already copies before pruning (it re-parses the subtree), and that becomes a contract for every format operator.
+- **One implementation**: the materialization entries are shared, each declaring its own optional dependency — `tomllib` and `csv` are stdlib, YAML is third-party — and a missing dependency is `UP2-E1107` with the install line, exactly like `css`'s selectolax.
+
+Measured on this commit (selectolax, synthetic pages): one parse costs 48.0 ms at 2 MB and 109.6 ms at 5 MB, an HTML tree costs **≈24×** its text in resident memory (2 MB → +49.3 MB, 5 MB → +121.7 MB) while a JSON tree costs ≈2.2–2.7× (2.1 MB → +4.6 MB), and 20 fields that each re-parse take 748.8 ms / 1976.7 ms against 16.5 ms / 48.6 ms when one parse serves all 20 (**40–45×**). The amplification is what the cap must be accounted in, and it is why the cache is not a module-level one.
+
+> **Deviation record D-03-2** (supersedes the `input_format` design of drafts `01`/`04`): the primary input used to be materialized once by the `seed` (`input_format`, later renamed to `format` on `parse`). That turned the entry point into a format registry and made every chain name a format it might never consume; the ruling here is "the consumer materializes on demand, and a run-scoped cache keeps it to one parse per document". The cache lands with the node layer (L2), where many fields and nodes start from the same input value; L1 chains are linear and short, so nothing in the operator layer changes.
+
 ---
 
 ## 4. The `parse` node
@@ -97,7 +125,6 @@ The two are **neither merged nor share a name**. Draft `01` called both globals,
   "key": "parse-0001", "type": "parse",
   "config": {
     "input": "$seed-0001.text",                  // required; references a value that already exists
-    "format": "html",                            // optional; materializes a str input once more (the json→html fragment scenario)
     "policy": { "on_missing": "drop" },          // optional; overrides the chain level
     "fields": { /* §4.2; a field chain may end in ["each", {…}] for per-item parsing (§4.1) */ },
     "route_field": "route"                       // optional, defaults to "route"
@@ -164,7 +191,7 @@ Preset chains existed only to give `callback` a name to call. With `each` the fi
 |---|---|
 | `outputs` | in a sequential execution model the "consumer-side contract" is **derived automatically from the set of field keys** (the lint just checks the `fields` keys of preceding nodes); an explicit declaration is only a redundant second source of truth. This also dissolves blocker S of draft `02` (the unclear boundary between `outputs`/`produces`/`result`) |
 | `produces` (formerly carried by parse) | the shape of each product is decided by `fields`; the chain's product shape is decided by `emit.produces`. parse no longer declares a product shape |
-| `input_format` (formerly on parse) | renamed to `format` and made optional: materializing the primary input belongs to `seed`, secondary materialization belongs to `parse.format`. One semantics, no duplicate declaration |
+| `input_format` (on seed) and its rename `format` (on parse) | both deleted: materialization is on demand inside the consuming operator, and a run-scoped cache keeps it to one parse per document (§3.1). Declaring a format up front made the entry point a format registry and forced every chain to name a format it might never use |
 
 ---
 
@@ -296,7 +323,7 @@ Reasons:
 1. the judgement of `Q44` is right — they really are values that "each product carries itself", and a `const` chain expresses that precisely;
 2. when one chain serves several channels, different `parse` nodes can give different `const` values, which is more direct than putting one copy in the seed and then finding a way to copy it onto every product;
 3. putting another copy in the seed creates the ambiguity of "which one is the truth" (the seed contract of `01 §2.3` versus `Q44`), and that is exactly where draft `02` got stuck first while walking the example;
-4. the `seed`'s responsibility converges to "inject + materialize", a single semantics.
+4. the `seed`'s responsibility converges to "inject", a single semantics — materialization is not its job but the consuming operator's (§3.1).
 
 ### 8.2 Things that do not exist (explicitly deleted)
 
@@ -399,7 +426,7 @@ Material: the legacy rule of §1 in draft `01` (1 list rule + 2 detail rules, wi
   "policy": { "on_missing": "drop" },
   "nodes": [
     { "key": "seed-0001", "type": "seed",
-      "config": { "inject": ["text"], "input_format": "html" },
+      "config": { "inject": ["text"] },
       "next": "parse-0001" },
 
     { "key": "parse-0001", "type": "parse",
@@ -449,7 +476,7 @@ Product (`output: "list"`): `[{"url": …, "title": …, "channel": "\u653f\u5e9
   "output": "single",
   "nodes": [
     { "key": "seed-0001", "type": "seed",
-      "config": { "inject": ["text", "meta"], "input_format": "html" },
+      "config": { "inject": ["text", "meta"] },
       "next": "parse-0001" },
 
     { "key": "parse-0001", "type": "parse",
@@ -521,7 +548,7 @@ Product (`output: "list"`): `[{"url": …, "title": …, "channel": "\u653f\u5e9
 |---|---|
 | `task_name` / `channel` / `region` | a `const` product in `parse.fields`, or the caller's `inputs` |
 | `request` / `request.url` | the caller's job; when needed, assemble with `emit.produces="request"` |
-| `input_format` | `seed.config.input_format` (primary input) / `parse.config.format` (secondary materialization) |
+| `input_format` | deleted: the format is decided by the operator that consumes the value, under a run-scoped materialization cache (§3.1) |
 | `nodes` (splitting + truncation) | a field chain: `["css","nodes",…]` → `["py","slice",":20"]` → `["each", {…}]` |
 | `fields` | `parse.config.fields` (triples, semantics unchanged) |
 | `fields.headers` | the host's request layer |

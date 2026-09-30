@@ -242,7 +242,7 @@ up2 schemas --json > schemas.json  # registered schema names
 
 The LLM (or a person) produces the chain JSON, **using only operators and actions that appear in `ops.json`**. While drafting, these must be decided explicitly:
 
-1. the input contract (`seed.inject` + `input_format`);
+1. the input contract (`seed.inject`) and that materialization is on demand (`03` §3.1);
 2. whether per-item parsing is needed (an `each` stage inside the field chain that holds the list);
 3. the product shape (`emit.produces`) and the schema;
 4. the missing-value policy of fields (`on_missing`).

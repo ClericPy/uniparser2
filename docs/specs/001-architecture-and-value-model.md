@@ -123,7 +123,7 @@ Value     = JsonValue | Opaque
 | **Do not adopt the D1-b Row model** | it would promote the special case of "a list page" to a global model, wrapping scalar scenarios in containers |
 | **Do not adopt the D1-d stream model** | the export needs a fold to finish, the mental burden is permanent, and low-code users cannot follow it |
 | **`Opaque` is an explicit type** | `self` / `nodes` produce node handles; **the export packing layer rejects `Opaque`** (`N5`), so a value must pass through a serializing action such as `text` / `html` / `@attr` before it can leave the chain |
-| **`bytes` never enters the value domain** | input decoding happens once in the `seed` layer (`input_format` decides decoding and sniffing); only `str` and tree nodes flow inside a chain |
+| **`bytes` never enters the value domain** | the caller decodes (`run(chain, inputs)` and the CLI's `--input K=@file` hand over text); a tree is built on demand by the operator that consumes the value, under a run-scoped cache (`03` §3.1) |
 
 **Lessons from v3**: the `_RECURSION_LIST` boolean flag let every operator decide on its own "whether to expand a list element by element", scattering the behavior across 14 classes (the internal source material, not shipped in this repository, `uniparser-essence.md` §5-R). This design **does not have that flag**: a list is produced by an ordinary operator (`css nodes` / `xpath nodes` / `re findall` / `json`) and expanded in exactly one place — an explicit `each` stage whose field map says what one element becomes — and the behavior of any operator on a `list` input must be written down explicitly in its own Schema.
 
@@ -302,7 +302,9 @@ The limit constants are centralized in one place, taken from there by both compi
 | `MAX_FIELDS_PER_NODE` | 128 | cap on the number of fields per node (compile time) | L2 |
 | `MAX_EACH_DEPTH` | 3 | `each` field-map nesting depth (compile time, exceeding it gives `UP2-E1012`) | **L1 (implemented)** |
 | `MAX_EACH_ITER` | 10_000 | number of elements a single `each` iterates (turned into `Failed` at runtime, `UP2-E2012`) | **L1 (implemented)** |
-| `MAX_TEXT_BYTES` | 16 MiB | byte cap after a single input decoding (turned into `Failed` in the `seed` layer) | L2 |
+| `MAX_TEXT_BYTES` | 16 MiB | byte cap on an accepted input (turned into `Failed` when the input is accepted, before any operator sees it) | L2 |
+| `MAX_MATERIALIZE_BYTES` | 64 MiB | cap on the run-scoped materialization cache, accounted in **materialized** bytes (`03` §3.1); LRU, and one artifact may exceed it while it is in use | L2 |
+| `MAX_MATERIALIZE_ITEMS` | 8 | how many materialized artifacts one run keeps (`03` §3.1) | L2 |
 
 > **Deleted constant**: `REGEX_TIMEOUT_S`. It originally corresponded to `UP2-E2006` "regex execution timeout", but Python's `re` has no `timeout` argument (measured), so this constant has no real point of application. The constant and its error code are removed rather than leaving a false promise.
 

@@ -12,9 +12,11 @@ Scope (L1):
 - ``<node key>``: the product of an earlier node, injected by the caller as ``products``
   (read-only).
 
-Scopes form a chain: ``Scope.child()`` gives one iteration of ``each`` its own ``locals``, and a
-read falls back outward. There is no iteration variable to name — the current element is the input
-value of the sub-chain (the ``item`` root is gone).
+Scopes form a lineage: ``Scope.child()`` gives one iteration of ``each`` its own ``locals``, and a
+read falls back outward **by name** -- the innermost scope holding the first segment of a path
+resolves the whole path, so a name the current scope wrote never resolves in an outer scope. There
+is no iteration variable to name — the current element is the input value of the sub-chain (the
+``item`` root is gone).
 """
 
 from __future__ import annotations
@@ -106,8 +108,10 @@ def parse_path_text(text: str, /, *, pointer: str = "") -> Ref:
 class Scope:
     """The evaluation scope. ``locals`` is writable, everything else is read-only.
 
-    ``parent`` links a nested scope to the one it was created from (one iteration of ``each``),
-    which is what makes a read fall back outward while a write stays where it was asked for.
+    ``parent`` links a nested scope to the one it was created from (one iteration of ``each``); the
+    fallback is outward while a write stays where it was asked for. The rule is **by name**: the
+    innermost scope holding the first segment of a path resolves the whole path, so a name this
+    scope wrote is never resolved in a parent, however deep the path goes.
     """
 
     globals: Mapping[str, Any] = field(default_factory=dict)
@@ -123,7 +127,8 @@ class Scope:
         """Read a reference.
 
         An absent key is ``Missing``; a structure shallower than declared is ``Failed(E2001)``.
-        A ``locals``/``fields`` read walks the scope chain outward.
+        A ``locals``/``fields`` read walks outward by name: the innermost scope holding the first
+        segment of the path resolves the whole path.
         """
         if ref.root == "globals":
             return _walk_path(self.globals, ref)
@@ -167,15 +172,15 @@ class Scope:
     def json_view(self) -> dict[str, dict[str, Any]]:
         """The **JSON projection** of the scope: ``{"locals": {...}, "globals": {...}}``.
 
-        The ``locals`` view is resolved along the scope chain (outermost first, the innermost
-        winning), so in-chain code and host functions see what a reference read would see.
+        The ``locals`` view is resolved along the scope lineage (outermost first, the innermost
+        winning), so in-chain code and host functions see the same name a reference read sees.
 
         Non-JSON values (``Opaque`` node handles, for example) are **dropped** rather than
         reported as an error -- they could never leave the chain anyway (``UP2-E2003``), so in-chain
         code not seeing them follows the same principle instead of being a new silent drop.
         """
         merged: dict[str, Any] = {}
-        for outer in self.chain():
+        for outer in self._lineage():
             merged.update(outer.locals)
         view: dict[str, dict[str, Any]] = {}
         for partition in CTX_PARTITIONS:
@@ -183,8 +188,8 @@ class Scope:
             view[partition] = {key: value for key, value in source.items() if is_json_value(value)}
         return view
 
-    def chain(self) -> tuple[Scope, ...]:
-        """The scope chain, outermost first."""
+    def _lineage(self) -> tuple[Scope, ...]:
+        """The scope lineage, outermost first."""
         scopes: list[Scope] = []
         scope: Scope | None = self
         while scope is not None:

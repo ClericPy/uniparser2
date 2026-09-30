@@ -150,11 +150,14 @@ order:
 - A field name starting with `_` is a **temporary of that element**, not a key of its dictionary:
   `["each", {"_t": [["py","strip",""]], "v": [["ctx","get","locals._t"]]}]` on `[" x "]` yields
   `[{"v": "x"}]`.
-- Every element is evaluated in **its own scope**: reads fall back outward, writes stay in the element,
-  and the element's locals do not outlive it.
+- Every element is evaluated in **its own scope**: a read falls back outward **by name** (the innermost
+  scope holding the path's first segment resolves the whole path, so a name the element wrote is never
+  read from the calling scope), writes stay in the element, and the element's locals do not outlive it.
 - The input must be a list (otherwise `UP2-E2002`); an empty list yields `[]`; a list longer than
-  `MAX_EACH_ITER` (10 000) fails with `UP2-E2012` before anything runs, and nesting the field map deeper
-  than `MAX_EACH_DEPTH` (3) is `UP2-E1012` at compile time.
+  `MAX_EACH_ITER` (10 000) fails with `UP2-E2012` before anything runs; nesting the field map deeper
+  than `MAX_EACH_DEPTH` (3) is `UP2-E1012` at compile time, and so is a map holding more than
+  `MAX_FIELDS_PER_MAP` (256) fields, while an empty map — or a field name that is empty or contains `.`
+  — is `UP2-E1005`.
 
 ### `udf` — host-registered functions (no extra)
 

@@ -24,3 +24,6 @@ MAX_EACH_DEPTH: Final = 3
 
 MAX_EACH_ITER: Final = 10_000
 """How many elements one ``each`` stage may iterate (``UP2-E2012``, checked before it evaluates)."""
+
+MAX_FIELDS_PER_MAP: Final = 256
+"""How many fields one field map may declare (compile time; exceeding it is ``UP2-E1012``)."""

@@ -108,7 +108,8 @@ $<root>[.<segment>][.<segment>]…
 - A `_`-prefixed key is a **local of this node**: **it may be referenced inside this node, but downstream nodes are forbidden to reference it** (`UP2-E1014`) —
   the semantics of a local value is precisely "it does not leave this node".
 - **There is no iteration variable**: inside `each`'s field map the current element is the **input value** of every field chain (§6.9), and each element is
-  evaluated in its own child scope — `$locals.*` reads that element's locals first and falls back outward, while a write stays in the element.
+  evaluated in its own child scope — `$locals.*` falls back outward **by name** (the innermost scope holding the path's first segment resolves the whole path,
+  so a name the element wrote is never read from the calling scope), while a write stays in the element.
 
 ### 3.2 When a string counts as a reference: decided by the parameter Schema, not by a global scan
 
@@ -500,12 +501,14 @@ mapping a field name to a chain — exactly the shape a `parse` node's `fields` 
 - **Fields are evaluated in declaration order against one element at a time**, so a later field reads what an earlier field of the same element stored.
 - **A `_`-prefixed field name is a per-element local**: it never becomes a key of the element's dictionary, and later fields of the same element read it as
   `$locals._name` (or with `ctx.get`). `ctx.set "locals.x"` mid-chain writes there too.
-- **Every element is evaluated in its own child scope**: reads fall back outward (the element's locals, then the calling scope's, then the chain-level values),
-  writes always land in the element's scope, and the element's locals do not outlive the element.
+- **Every element is evaluated in its own child scope**: a read falls back outward **by name** — the element's locals, then the calling scope's, then the
+  chain-level values — so a name the element itself wrote is resolved there and nowhere else: `$locals._a.b` is a miss when the element's own `_a` has no `b`,
+  even if the calling scope's `_a` does. Writes always land in the element's scope, and the element's locals do not outlive the element.
 - **The effective policy is applied per element**, and no element is ever dropped: an element whose fields all resolve to absent is still `{}`. A `Failed` whose
   policy is `raise` propagates out of `each` with the failing stage's code.
 - **Limits**: nesting deeper than `MAX_EACH_DEPTH` (3) is `UP2-E1012` at compile time; a list longer than `MAX_EACH_ITER` (10 000) is `UP2-E2012` before
-  anything is evaluated (`01` §9).
+  anything is evaluated (`01` §9); a field map with more than `MAX_FIELDS_PER_MAP` (256) fields is `UP2-E1012` at compile time, and an empty map — or a field
+  name that is empty or contains `.` — is `UP2-E1005`, because no reference path could address such a key.
 
 > **Deviation record D-02-4** (superseded by the L2 iteration redesign, change `l2-chain-structure-and-each`): the `04` draft encoded the selector as the string
 > `"ctx.fields._rows|each"`, used a `ctx.` prefix outside `"$"`, and called the chain container `parsers`; the design at that time answered with an object-form

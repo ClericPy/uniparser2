@@ -302,9 +302,12 @@ The limit constants are centralized in one place, taken from there by both compi
 | `MAX_FIELDS_PER_NODE` | 128 | cap on the number of fields per node (compile time) | L2 |
 | `MAX_EACH_DEPTH` | 3 | `each` field-map nesting depth (compile time, exceeding it gives `UP2-E1012`) | **L1 (implemented)** |
 | `MAX_EACH_ITER` | 10_000 | number of elements a single `each` iterates (turned into `Failed` at runtime, `UP2-E2012`) | **L1 (implemented)** |
+| `MAX_FIELDS_PER_MAP` | 256 | cap on the fields of **one field map** (compile time, exceeding it gives `UP2-E1012`) | **L1 (implemented)** |
 | `MAX_TEXT_BYTES` | 16 MiB | byte cap on an accepted input (turned into `Failed` when the input is accepted, before any operator sees it) | L2 |
 | `MAX_MATERIALIZE_BYTES` | 64 MiB | cap on the run-scoped materialization cache, accounted in **materialized** bytes (`03` §3.1); LRU, and one artifact may exceed it while it is in use | L2 |
 | `MAX_MATERIALIZE_ITEMS` | 8 | how many materialized artifacts one run keeps (`03` §3.1) | L2 |
+
+> **`MAX_FIELDS_PER_MAP` and `MAX_FIELDS_PER_NODE`**: a field map is the shape both `each` and an L2 node's `fields` block use, so the per-map cap is checked on every map, and the compilation cost it guards is per map. When the node layer lands, `MAX_FIELDS_PER_NODE` (128) becomes the tighter per-node cap on top of it.
 
 > **Deleted constant**: `REGEX_TIMEOUT_S`. It originally corresponded to `UP2-E2006` "regex execution timeout", but Python's `re` has no `timeout` argument (measured), so this constant has no real point of application. The constant and its error code are removed rather than leaving a false promise.
 

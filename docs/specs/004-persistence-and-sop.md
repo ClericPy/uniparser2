@@ -349,7 +349,8 @@ up2 publish backup.json --domain … --key … --actor ops:me --source human --n
 | 13 | a node key using a reserved name (`globals`) or duplicated | `UP2-E1009` | change the key |
 | 14 | `tpl_key` carrying `:` or `/` | `UP2-E3002` | pick a name inside the character set |
 | 15 | two `next` in one chain pointing at the same node (trying to merge two paths) | `UP2-E1108` | the kernel does not join; split into two chains, or let the upstream nodes stay independent |
-| 16 | a field chain longer than 32 stages / `each` nested deeper than 3 levels | `UP2-E1012` | split the chain, spread the nesting over several nodes, or switch to `udf` |
+| 16 | a field chain longer than 32 stages / `each` nested deeper than 3 levels / one field map holding more than 256 fields | `UP2-E1012` | split the chain, spread the nesting over several nodes, or switch to `udf` |
+| 17 | an empty field map, or a field name that is empty or contains `.` | `UP2-E1005` | declare at least one field, and name each one so a `$…` path can address it |
 
 ---
 

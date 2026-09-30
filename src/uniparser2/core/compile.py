@@ -15,7 +15,7 @@ from typing import Any
 from . import registry
 from .ast import CompiledField, CompiledStage, Lit, Param, Ref, Stage, loads, parse_stage
 from .errors import Up2Error, diag
-from .limits import MAX_EACH_DEPTH, MAX_STEPS_PER_FIELD
+from .limits import MAX_EACH_DEPTH, MAX_FIELDS_PER_MAP, MAX_STEPS_PER_FIELD
 from .refs import LIT_DIRECTIVE, RESERVED_ROOTS, is_ref_text, parse_ref
 from .values import type_name
 
@@ -408,12 +408,47 @@ def _resolve_field_map(
                 pointer=pointer,
             )
         )
+    _check_field_map(raw, pointer=pointer)
     return {
         str(name): compile_field(
             item, products=products, depth=depth + 1, pointer=f"{pointer}/{name}"
         )
         for name, item in raw.items()
     }
+
+
+def _check_field_map(fields: Mapping[Any, Any], *, pointer: str) -> None:
+    """Reject a field map a chain cannot use: empty, oversized, or an unaddressable name."""
+    if not fields:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                "the field map is empty, so every element would be an empty dictionary",
+                fix='declare at least one field, e.g. {"title": [["py","strip",""]]}',
+                pointer=pointer,
+            )
+        )
+    if len(fields) > MAX_FIELDS_PER_MAP:
+        raise Up2Error(
+            diag(
+                "UP2-E1012",
+                f"the field map declares {len(fields)} fields, over "
+                f"MAX_FIELDS_PER_MAP={MAX_FIELDS_PER_MAP}",
+                fix="drop the fields the chain does not read, or split the map over several nodes",
+                pointer=pointer,
+            )
+        )
+    for name in fields:
+        text = str(name)
+        if not text or "." in text:
+            raise Up2Error(
+                diag(
+                    "UP2-E1005",
+                    f"the field name {text!r} cannot be addressed by a reference path",
+                    fix=f'rename {text!r} to a non-empty name without a dot, e.g. "_tmp"',
+                    pointer=f"{pointer}/{text}",
+                )
+            )
 
 
 def _resolve_leaf(spec: registry.ParamSpec, raw: Any, *, pointer: str) -> Param:

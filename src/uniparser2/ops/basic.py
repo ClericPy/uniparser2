@@ -110,7 +110,7 @@ class Each(Op):
                 if isinstance(outcome, Missing):
                     continue  # an absent field is simply not part of this element
                 if name.startswith(_LOCAL_PREFIX):
-                    scope.locals[name] = outcome.value
+                    scope.write_local((name,), outcome.value)
                 else:
                     row[name] = outcome.value
             rows.append(row)

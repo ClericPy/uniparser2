@@ -201,6 +201,64 @@ def test_a_sub_chain_respects_the_stage_limit() -> None:
 
 
 @pytest.mark.covers("each", "each")
+def test_an_empty_field_map_is_a_schema_error() -> None:
+    """Every element would be an empty dictionary, so the map is a typo rather than a chain."""
+    info = diagnostic([["each", {}]])
+    assert info.code == "UP2-E1005"
+    assert info.pointer == "/0/1/fields"
+    assert "at least one field" in info.fix
+
+
+@pytest.mark.covers("each", "each")
+@pytest.mark.parametrize("name", ["_a.b", "a.b", ""])
+def test_a_field_name_a_reference_cannot_address_is_a_schema_error(name: str) -> None:
+    """A path splits on `.`, so such a key would be computed and then silently unreachable."""
+    info = diagnostic([["each", {name: [["py", "strip", ""]]}]])
+    assert info.code == "UP2-E1005"
+    assert info.pointer == f"/0/1/fields/{name}"
+    assert repr(name) in info.fix
+
+
+@pytest.mark.covers("each", "each")
+def test_a_field_map_over_the_field_bound_is_a_limit_error() -> None:
+    fields = {f"f{index}": [["py", "strip", ""]] for index in range(257)}
+    info = diagnostic([["each", fields]])
+    assert info.code == "UP2-E1012"
+    assert info.pointer == "/0/1/fields"
+    assert "257" in info.message
+    assert "MAX_FIELDS_PER_MAP=256" in info.message
+
+
+@pytest.mark.covers("each", "each")
+def test_a_field_map_at_the_field_bound_is_accepted() -> None:
+    fields = {f"f{index}": [["py", "strip", ""]] for index in range(256)}
+    assert run([["each", fields]], [" a "]) == Ok([dict.fromkeys(fields, "a")])
+
+
+@pytest.mark.covers("each", "each")
+def test_a_missing_key_does_not_fall_through_to_an_outer_name() -> None:
+    """The inner element owns `_a`, so a key missing under it is a miss, not the outer `_a`'s."""
+    chain = [
+        [
+            "each",
+            {
+                "_a": [["const", {"b": 1}]],
+                "kids": [
+                    [
+                        "each",
+                        {
+                            "_a": [["const", {"c": 2}]],
+                            "seen": [["ctx", "get", "locals._a.b"]],
+                        },
+                    ]
+                ],
+            },
+        ]
+    ]
+    assert run(chain, [["x"]]) == Ok([{"kids": [{}]}])
+
+
+@pytest.mark.covers("each", "each")
 def test_the_chain_round_trips_through_dumps() -> None:
     chain = [["each", {"n": [["py", "len", ""]]}]]
     assert compile_field(chain).dumps() == '[["each",{"n":[["py","len",""]]}]]'

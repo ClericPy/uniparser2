@@ -208,7 +208,7 @@ def test_delete_local_with_non_dict_intermediate_returns_false() -> None:
     assert scope.locals == {"a": 1}
 
 
-# ---------------------------------------------------------------- the scope chain
+# ---------------------------------------------------------------- the scope lineage
 
 
 def test_a_child_scope_reads_outward() -> None:

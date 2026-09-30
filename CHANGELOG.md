@@ -17,7 +17,8 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   `fields` block has) and the result is **one dictionary per element**, in input order. It is a 2-slot
   operator with a single action, so the field map is its only slot. A field name starting with `_` is a
   **temporary of that element** (readable by later fields, never a key of the dictionary), every
-  element is evaluated in **its own scope** (reads fall back outward, writes stay in the element), the
+  element is evaluated in **its own scope** (reads fall back outward **by name**, writes stay in the
+  element), the
   effective policy is applied per element, and no element is ever dropped silently. An empty list
   yields `[]`, a non-list input is `UP2-E2002`, a list longer than `MAX_EACH_ITER` (10 000) is
   `UP2-E2012` before anything runs, and a field map nested deeper than `MAX_EACH_DEPTH` (3) is
@@ -77,6 +78,13 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 - The natural-language path's own parse failure (`dateparser` raised) reported `UP2-E2007` with an
   **empty fix line**; it now names the text and the two remedies.
+- Review follow-ups on `each`: a field map is now validated **before** anything is compiled — an empty
+  map, and a field name that is empty or contains `.` (a key no `$…` path can address), are `UP2-E1005`
+  at that key, while a map holding more than `MAX_FIELDS_PER_MAP` (256) fields is `UP2-E1012`; the
+  per-element scope rule is now documented as implemented (a read falls back outward **by name**, so a
+  key missing under a name the element wrote does not fall through to an outer scope); `each` writes
+  per-element locals through `Scope.write_local`; `loads(source=…)` accepts its parameter by keyword
+  again; and `Scope.chain()` became the private `Scope._lineage()`.
 
 - `up2 ops` states, per action, which writing slot 3 takes: `param_form` is `none` (no parameter),
   `value` (the value itself) or `named` (a named object), derived from the parameters the action still

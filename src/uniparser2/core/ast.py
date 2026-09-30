@@ -143,7 +143,7 @@ def dumps(stages: Any) -> str:
     return json.dumps(_as_lists(stages), separators=(",", ":"), ensure_ascii=False)
 
 
-def loads(source: Any, /, *, pointer: str = "") -> tuple[Stage, ...]:
+def loads(source: Any, *, pointer: str = "") -> tuple[Stage, ...]:
     """Accept a JSON string / stage array / field-chain array, always return ``tuple[Stage, ...]``.
 
     The three input forms are idempotent. ``pointer`` is the JSON Pointer prefix of the chain, so a

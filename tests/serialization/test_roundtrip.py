@@ -52,6 +52,11 @@ def test_loads_single_stage_sugar_matches_wrapped_form() -> None:
     assert loads(["py", "strip", ""]) == loads([["py", "strip", ""]])
 
 
+def test_loads_accepts_the_source_by_keyword() -> None:
+    """``loads`` is public (``core.__all__``), so its single parameter is not positional-only."""
+    assert loads(source=[["py", "strip", ""]]) == loads([["py", "strip", ""]])
+
+
 def test_two_slot_and_three_slot_forms_are_preserved() -> None:
     """2-slot operators (``const``/``json``) and 3-slot operators (``py``) keep their length."""
     assert dumps(loads([["const", "article"]])) == '[["const","article"]]'

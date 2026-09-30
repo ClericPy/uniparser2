@@ -2,19 +2,19 @@
 
 Input → triple chain → output repr: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `--md --check` fails when it is stale. The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
 
-Generated from `uniparser2` 0.1.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
+Generated from `uniparser2` 0.2.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
 
 ## Coverage check
 
 - **Coverage check passed**: every declared pair has a case and every behavior case ran `Ok`.
-- the registry declares **59** pairs = **59** pairs covered by cases
-- states across every run: `Failed` 5, `Missing` 2, `Ok` 85
+- the registry declares **60** pairs = **60** pairs covered by cases
+- states across every run: `Failed` 5, `Missing` 2, `Ok` 87
 
 | operator | arity | slots | summary | actions |
 |---|---|---|---|---|
 | `css` | 3 | accessor / selector | CSS selector (all matches) | 7 |
 | `css1` | 3 | accessor / selector | CSS selector (first match only) | 7 |
-| `py` | 3 | function / params | Python built-in allowlist functions | 31 |
+| `py` | 3 | function / params | Python built-in allowlist functions | 32 |
 | `xpath` | 3 | accessor / XPath | XPath query (XML; lxml) | 3 |
 | `json` | 2 | jmespath path | JSON dot-path query (jmespath) | 1 |
 | `re` | 3 | mode / pattern | Regex matching (search / group / findall) | 3 |
@@ -228,7 +228,7 @@ Shared input for this section:
 
 ## `py` — Python built-in allowlist functions
 
-arity 3 · slot 2=function / slot 3=params · dependencies: none · 31 actions (Core, Common, Advanced, Rare)
+arity 3 · slot 2=function / slot 3=params · dependencies: none · 32 actions (Core, Common, Advanced, Rare)
 
 Shared input for this section:
 
@@ -336,12 +336,19 @@ Shared input for this section:
 - input: `'<b>text</b>'`
 - output: `Ok(value='text')` (Ok)
 
-#### `parse_time` — parse a time string into the canonical format (default %Y-%m-%d %H:%M:%S)
-- tier ★★ Common · parameter slot: a named object (a positional array also works) · `lang: literal?, default None`, `format: literal?, default None`
+#### `parse_time` — parse a time string into the canonical format %Y-%m-%d %H:%M:%S (explicit format, the built-in table, then natural-language detection)
+- tier ★★ Common · parameter slot: a named object (a positional array also works) · `lang: literal?, default None`, `format: literal?, default None`, `date_order: literal?, default None`, `now: ref_or_literal?, default None`
 - note: time normalization (0 required dependencies)
 - chain: `[["py", "parse_time", ""]]`
 - input: `'2026-09-24 15:30:00'`
 - output: `Ok(value='2026-09-24 15:30:00')` (Ok)
+
+#### `strftime` — render the canonical time string in another layout (%Y-%m-%d %H:%M:%S → %Y/%m/%d)
+- tier ★★ Common · parameter slot: the value itself · `layout: literal`
+- note: render the canonical time in another layout (output side)
+- chain: `[["py", "strftime", "%Y/%m/%d"]]`
+- input: `'2026-09-24 15:30:00'`
+- output: `Ok(value='2026/09/24')` (Ok)
 
 #### `html_to_markdown` — HTML → Markdown (no parameters; complete relative links with py.urljoin)
 - tier ★★ Common · parameter slot: no parameter (write two positions, or "")
@@ -459,6 +466,15 @@ Shared input for this section:
 
 #### `composition` — py
 - tier ★★★ Core
+- note: normalize to the canonical time → render another layout (the output side)
+- chain:
+  - `["py", "parse_time", ""]` → `Ok(value='2026-09-24 15:30:00')`
+  - `["py", "strftime", "%Y/%m/%d"]` → `Ok(value='2026/09/24')`
+- input: `'2026-09-24 15:30:00'`
+- output: `Ok(value='2026/09/24')` (Ok)
+
+#### `composition` — py
+- tier ★★★ Core
 - note: parse the JSON text first, then use the json operator to take a subtree
 - chain:
   - `["py", "from_json", ""]` → `Ok(value={'data': {'html': '<p>Body</p>', 'list': [{'url': 'u1'}, {'url': 'u2'}]}})`
@@ -499,7 +515,7 @@ Shared input for this section:
 | `[["py", "strip"]]` | `UP2-E1004` | `/0` | py needs 3 slots, got 2 | this operator's slots are slot2=function, slot3=params; for an action with no parameters, write "" in slot 3 |
 | `[["py", "strip", "", ""]]` | `UP2-E1004` | `/0` | stage length is 4, only 2 or 3 is allowed | follow the declared arity: 3 slots is ["operator", slot2, slot3]; 2 slots is ["operator", parameter] |
 | `[["py", "no_such_function", ""]]` | `UP2-E1003` | `/0/1` | the py allowlist has no function 'no_such_function' | use one of the functions below (run up2 ops --json for the full table) |
-| `[["py", "parse_time", {"format": "%Q"}]]` | `UP2-E1005` | `/0/2/format` | invalid strptime format: Invalid format string | fix the directives in format |
+| `[["py", "parse_time", {"format": "%Q"}]]` | `UP2-E1005` | `/0/2/format` | invalid strptime format: 'Q' is a bad directive in format '%Q' | fix the directives in format |
 | `[["py", "default", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare the earlier node product with --product |
 | `[["py", "urljoin", {"base": "https://example.com/news/"}]]` | `UP2-E1005` | `/0/2/base` | parameter 'base' of py.urljoin must be a string, got dict | write the value directly: ["py", "urljoin", "…"] |
 | `[["py", "slice", {"spec": "0:4"}]]` | `UP2-E1005` | `/0/2/spec` | parameter 'spec' of py.slice must be a string, got dict | write the value directly: ["py", "slice", "…"] |

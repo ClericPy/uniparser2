@@ -46,7 +46,7 @@ each asserted by a test.
 | `xpath` | lxml (`[xml]`) | `text` · `self` · `nodes` (XML; XPath is lxml-native) |
 | `json` | jmespath (`[json]`) | `get` — a jmespath expression, empty means the root |
 | `re` | stdlib | `search` · `group` · `findall` |
-| `py` | stdlib; `parse_time` needs `[time]`, `html_to_markdown` needs `[md]` | 31 allowlisted pure functions: `int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `get` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` `parse_time` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` |
+| `py` | stdlib; the natural-language path of `parse_time` needs `[time]`, `html_to_markdown` needs `[md]` | 32 allowlisted pure functions: `int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `get` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` |
 | `ctx` | stdlib | `get` · `set` · `del` · `map` (scope reads and writes) |
 | `udf` | host-registered | any function the host registered beforehand; the chain carries only a name |
 | `code` | pydantic-monty (`[code]`, deliberately not in `[all]`) | `run` — in-chain code in a language-level sandbox (see the security note) |

@@ -33,6 +33,7 @@ from uniparser2 import (
     Ok,
     Outcome,
     Policy,
+    Scope,
     Up2Error,
     compile_field,
     eval_field,
@@ -66,6 +67,7 @@ COVERS_PAIRS = (
     ("py", "b64_decode"),
     ("py", "sha256"),
     ("py", "parse_time"),
+    ("py", "strftime"),
     ("py", "str"),
     ("py", "int"),
     ("py", "float"),
@@ -74,7 +76,7 @@ COVERS_PAIRS = (
     ("py", "from_json"),
 )
 
-WHITELIST_SIZE = 31
+WHITELIST_SIZE = 32
 
 _SHA256_ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
@@ -129,6 +131,7 @@ CASES: tuple[tuple[str, object, object, Callable[[Outcome], bool]], ...] = (
     ("b64_decode", "YWJj", (), ok("abc")),
     ("sha256", "abc", (), ok(_SHA256_ABC)),
     ("parse_time", "2026-09-26 10:30:00", (), ok("2026-09-26 10:30:00")),
+    ("strftime", "2026-09-26 10:30:00", "%Y/%m/%d", ok("2026/09/26")),
     ("str", 12, (), ok("12")),
     ("int", "42", (), ok(42)),
     ("float", "1.5", (), ok(1.5)),
@@ -386,11 +389,20 @@ def test_parse_time_explicit_format_mismatch_is_e2007() -> None:
     assert "format" in outcome.fix
 
 
-def test_parse_time_unparsable_text_without_lang_is_e2007() -> None:
-    outcome = run([["py", "parse_time", ""]], "3pm the day before yesterday")
+def test_parse_time_unparsable_text_is_e2007() -> None:
+    """With the engine installed, text nothing can read stays a coded failure."""
+    pytest.importorskip("dateparser")
+    outcome = run([["py", "parse_time", ""]], "not a timestamp at all")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2007"
-    assert "uniparser2[time]" in outcome.fix
+    assert "format" in outcome.fix
+
+
+def test_parse_time_natural_language_without_lang_is_detected() -> None:
+    """The engine is reached with no parameter at all (the language is detected)."""
+    pytest.importorskip("dateparser")
+    assert run([["py", "parse_time", ""]], "24 septembre 2026") == Ok("2026-09-24 00:00:00")
+    assert run([["py", "parse_time", ""]], "24. September 2026") == Ok("2026-09-24 00:00:00")
 
 
 def test_parse_time_empty_text_is_missing() -> None:
@@ -407,10 +419,31 @@ def test_parse_time_non_text_input_is_type_failure() -> None:
     assert outcome.code == "UP2-E2002"
 
 
-def test_parse_time_invalid_format_directive_is_schema_error() -> None:
+@pytest.mark.parametrize("fmt", ["%Q", "%Y%Q", "%Q%Y"])
+def test_parse_time_invalid_format_is_schema_error(fmt: str) -> None:
+    """A directive `strptime` does not know is a compile-time schema error.
+
+    The check must not depend on the platform: glibc's `strftime` passes an unknown directive
+    through while the Windows CRT raises, so validating with `strftime` rejected the chain on
+    Windows and accepted it on Linux — this test runs on Linux in CI, where that was caught.
+
+    A stray `%` (`"%"`, `"100%"`) is deliberately not in this list: 3.12's `strptime` reads it as a
+    literal (measured) and 3.13 added the `stray % in format` error, so the verdict follows the
+    interpreter on purpose — the check asks the same `strptime` the operator runs.
+    """
     with pytest.raises(Up2Error) as info:
-        compile_field([["py", "parse_time", {"format": "%Q"}]])
+        compile_field([["py", "parse_time", {"format": fmt}]])
     assert info.value.diagnostic.code == "UP2-E1005"
+
+
+@pytest.mark.parametrize("fmt", ["%Y-%m-%d %H:%M:%S", "%d/%b/%Y:%H:%M:%S %z", "%%"])
+def test_parse_time_valid_format_still_compiles(fmt: str) -> None:
+    """The stricter probe must not reject a format `strptime` accepts.
+
+    Validating with `strftime` used to reject `%T` and `%-d` on Windows although `strptime` reads
+    them, so the probe now asks the parser instead of the formatter.
+    """
+    compile_field([["py", "parse_time", {"format": fmt}]])
 
 
 def test_parse_time_lang_with_machine_format_does_not_need_dateparser() -> None:
@@ -424,27 +457,82 @@ def test_parse_time_lang_with_machine_format_does_not_need_dateparser() -> None:
 def test_parse_time_natural_language_without_dateparser_is_e2008(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The missing engine is a coded error, with and without an explicit language."""
+
     def boom() -> Any:
         raise ImportError("no dateparser")
 
     monkeypatch.setattr(pyops, "_import_dateparser", boom)
-    outcome = run([["py", "parse_time", "en"]], "3pm the day before yesterday")
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2008"
-    assert "uniparser2[time]" in outcome.fix
+    for chain in ([["py", "parse_time", ""]], [["py", "parse_time", "en"]]):
+        outcome = run(chain, "3pm the day before yesterday")
+        assert isinstance(outcome, Failed)
+        assert outcome.code == "UP2-E2008"
+        assert "uniparser2[time]" in outcome.fix
 
 
-def test_parse_time_natural_language_with_dateparser_uses_it(
+def test_parse_time_detection_passes_the_documented_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def parse(text: str, languages: list[str] | None = None) -> datetime | None:
-        assert languages == ["en"]
+    """With no parameters the engine detects the language, and reads dates day first."""
+    seen: dict[str, Any] = {}
+
+    def parse(text: str, languages: Any = None, settings: Any = None) -> datetime | None:
+        seen["languages"] = languages
+        seen["settings"] = settings
         return datetime(2026, 9, 24, 15, 0, 0) if "day before yesterday" in text else None
+
+    monkeypatch.setattr(pyops, "_import_dateparser", lambda: parse)
+    assert run([["py", "parse_time", ""]], "3pm the day before yesterday") == Ok(
+        "2026-09-24 15:00:00"
+    )
+    assert seen["languages"] is None
+    assert seen["settings"] == {"DATE_ORDER": "DMY"}
+
+
+def test_parse_time_lang_restricts_the_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    def parse(text: str, languages: Any = None, settings: Any = None) -> datetime | None:
+        assert languages == ["en"]
+        return datetime(2026, 9, 24, 15, 0, 0)
 
     monkeypatch.setattr(pyops, "_import_dateparser", lambda: parse)
     assert run([["py", "parse_time", "en"]], "3pm the day before yesterday") == Ok(
         "2026-09-24 15:00:00"
     )
+
+
+def test_parse_time_date_order_reaches_the_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`date_order` is passed through, so a time-bearing ambiguous date follows the chain."""
+    seen: dict[str, Any] = {}
+
+    def parse(text: str, languages: Any = None, settings: Any = None) -> datetime | None:
+        seen["settings"] = settings
+        return datetime(2026, 3, 4, 15, 30, 0)
+
+    monkeypatch.setattr(pyops, "_import_dateparser", lambda: parse)
+    assert run([["py", "parse_time", {"date_order": "MDY"}]], "03/04/2026 15:30") == Ok(
+        "2026-03-04 15:30:00"
+    )
+    assert seen["settings"] == {"DATE_ORDER": "MDY"}
+
+
+def test_parse_time_now_pins_the_base_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`now` is handed to the engine as the relative base, as a literal or from the environment."""
+    seen: dict[str, Any] = {}
+
+    def parse(text: str, languages: Any = None, settings: Any = None) -> datetime | None:
+        seen["settings"] = settings
+        return datetime(2026, 1, 2, 12, 0, 0)
+
+    monkeypatch.setattr(pyops, "_import_dateparser", lambda: parse)
+    assert run([["py", "parse_time", {"now": "2026-01-01 12:00:00"}]], "tomorrow") == Ok(
+        "2026-01-02 12:00:00"
+    )
+    assert seen["settings"]["RELATIVE_BASE"] == datetime(2026, 1, 1, 12, 0, 0)
+
+    compiled = compile_field([["py", "parse_time", {"now": "$globals.now"}]])
+    outcome = eval_field(compiled, "tomorrow", scope=Scope(globals={"now": "2026-01-01 12:00:00"}))
+    assert outcome == Ok("2026-01-02 12:00:00")
+    assert seen["settings"]["RELATIVE_BASE"] == datetime(2026, 1, 1, 12, 0, 0)
 
 
 def test_parse_time_dateparser_returning_none_is_e2007(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -462,11 +550,135 @@ def test_parse_time_dateparser_raising_is_e2007(monkeypatch: pytest.MonkeyPatch)
     outcome = run([["py", "parse_time", "en"]], "3pm the day before yesterday")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2007"
+    # The engine's own failure carries a fix line too (it used to be empty).
+    assert outcome.fix
+
+
+@pytest.mark.parametrize(
+    ("params", "pointer"),
+    [
+        ({"format": "%Y-%m-%d", "lang": "en"}, "/0/2/lang"),
+        ({"date_order": "YDM"}, "/0/2/date_order"),
+        ({"now": "next tuesday"}, "/0/2/now"),
+    ],
+)
+def test_parse_time_compile_time_rejections(params: dict[str, Any], pointer: str) -> None:
+    """A combination or a value that cannot have the intended effect fails before the run."""
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "parse_time", params]])
+    assert info.value.diagnostic.code == "UP2-E1005"
+    assert info.value.diagnostic.pointer == pointer
+    assert info.value.diagnostic.fix
+
+
+@pytest.mark.parametrize(
+    ("order", "expected"),
+    [(None, "2026-04-03"), ("DMY", "2026-04-03"), ("MDY", "2026-03-04"), ("YMD", "2026-04-03")],
+)
+def test_parse_time_date_order_orders_the_table_pair(order: str | None, expected: str) -> None:
+    """A plain ambiguous date is decided by the table, in the requested order."""
+    if order is None:
+        chain: list[Any] = [["py", "parse_time", ""]]
+    else:
+        chain = [["py", "parse_time", {"date_order": order}]]
+    assert run(chain, "03/04/2026") == Ok(f"{expected} 00:00:00")
+
+
+def test_parse_time_plain_and_time_bearing_writings_agree() -> None:
+    """The same writing must not change meaning because a time part follows it (design D3).
+
+    The plain form is read by the table, the time-bearing one by the engine; both follow
+    ``date_order``, whose default is day first.
+    """
+    pytest.importorskip("dateparser")
+    assert run([["py", "parse_time", ""]], "03/04/2026") == Ok("2026-04-03 00:00:00")
+    assert run([["py", "parse_time", ""]], "03/04/2026 15:30") == Ok("2026-04-03 15:30:00")
+    assert run([["py", "parse_time", {"date_order": "MDY"}]], "03/04/2026") == Ok(
+        "2026-03-04 00:00:00"
+    )
+    assert run([["py", "parse_time", {"date_order": "MDY"}]], "03/04/2026 15:30") == Ok(
+        "2026-03-04 15:30:00"
+    )
 
 
 def test_real_dateparser_when_installed() -> None:
     pytest.importorskip("dateparser")
     assert run([["py", "parse_time", "en"]], "September 26, 2026") == Ok("2026-09-26 00:00:00")
+
+
+def test_strftime_renders_another_layout() -> None:
+    assert run([["py", "strftime", "%Y/%m/%d"]], "2026-09-24 15:30:00") == Ok("2026/09/24")
+    assert run([["py", "strftime", "%d.%m.%Y %H:%M"]], "2026-09-24 15:30:00") == Ok(
+        "24.09.2026 15:30"
+    )
+    assert run([["py", "strftime", "100%% done"]], "2026-09-24 15:30:00") == Ok("100% done")
+
+
+def test_strftime_requires_the_canonical_shape() -> None:
+    outcome = run([["py", "strftime", "%Y/%m/%d"]], "24 septembre 2026")
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2007"
+    assert "parse_time" in outcome.fix
+
+
+def test_strftime_non_text_receiver_is_type_failure() -> None:
+    outcome = run([["py", "strftime", "%Y/%m/%d"]], 20260924)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2002"
+
+
+@pytest.mark.parametrize(
+    "layout",
+    [
+        "%B",
+        "%a",
+        "%A",
+        "%b",
+        "%p",
+        "%c",
+        "%x",
+        "%X",
+        "%z",
+        "%Z",
+        "%e",
+        "%k",
+        "%l",
+        "%G",
+        "%V",
+        "%s",
+        "%Q",
+        "100%",
+    ],
+)
+def test_strftime_rejected_layouts(layout: str) -> None:
+    """Every rejected family is a compile-time schema error, with a reason in the fix line."""
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "strftime", layout]])
+    assert info.value.diagnostic.code == "UP2-E1005"
+    assert info.value.diagnostic.fix
+
+
+@pytest.mark.parametrize("layout", ["%Y/%m/%d", "%Y-W%W", "%H:%M:%S", "%Y%m%d%H%M%S", "100%%"])
+def test_strftime_accepted_layouts(layout: str) -> None:
+    compile_field([["py", "strftime", layout]])
+
+
+def test_strftime_rendering_ignores_the_locale() -> None:
+    """The allowlist has no locale-decided name, so the same layout renders the same text."""
+    import locale
+
+    saved = locale.setlocale(locale.LC_TIME)
+    try:
+        locale.setlocale(locale.LC_TIME, "C")
+        under_c = run([["py", "strftime", "%Y/%m/%d %H:%M:%S"]], "2026-09-24 15:30:00")
+        try:
+            locale.setlocale(locale.LC_TIME, "")
+        except locale.Error:
+            pytest.skip("the system locale is unavailable on this machine")
+        under_system = run([["py", "strftime", "%Y/%m/%d %H:%M:%S"]], "2026-09-24 15:30:00")
+    finally:
+        locale.setlocale(locale.LC_TIME, saved)
+    assert under_c == under_system == Ok("2026/09/24 15:30:00")
 
 
 def test_parse_time_output_constant_is_documented_format() -> None:

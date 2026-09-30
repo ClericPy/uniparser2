@@ -90,7 +90,7 @@ Python's `re` has **no** timeout parameter, so there is no runtime backstop — 
 
 ### `py` — the allowlist of pure functions (standard library)
 
-31 functions, JSON in and JSON out, no IO. A closed set: an unknown name is `UP2-E1003`.
+32 functions, JSON in and JSON out, no IO. A closed set: an unknown name is `UP2-E1003`.
 
 | Purpose | Functions |
 |---|---|
@@ -100,12 +100,20 @@ Python's `re` has **no** timeout parameter, so there is no runtime backstop — 
 | encoding / hash | `b64_encode` · `b64_decode` · `sha256` |
 | conversion | `str` · `int` · `float` · `bool` · `list` · `from_json` |
 | fallback | `default` — the only action that can swallow `Missing`; its value may be any JSON value, a container included |
-| formats | `parse_time` (`[time]`, natural language) · `html_to_markdown` (`[md]`) |
+| time (input) | `parse_time` — a time string → the canonical `%Y-%m-%d %H:%M:%S`, in the order **explicit `format`** → **built-in table** (no dependency) → **natural-language detection** (`[time]`); `lang` restricts the detection, `date_order` (`MDY`/`DMY`/`YMD`, default `DMY`) decides an ambiguous slash writing, `now` (e.g. `"$globals.now"`) pins the base clock of a relative expression |
+| time (output) | `strftime` — the canonical string → another layout (`%Y/%m/%d`), allowlisted to directives that no locale or platform decides |
+| formats | `html_to_markdown` (`[md]`) |
 
 The parameter slot is written bare for `urljoin` / `slice` / `getitem` / `get` / `join` / `urlsplit` /
-`default`, and as a named object for `split` / `replace` / `sort` / `parse_time`. A container where the
-function needs a scalar is a compile-time `UP2-E1005` (`urljoin.base`, `slice.spec`, `split.sep`,
-`split.maxsplit`, `getitem.index`, `get.key`, `replace.old`, `replace.new`, and an unknown `sort.key`).
+`default` / `strftime`, and as a named object for `split` / `replace` / `sort` / `parse_time`. A container
+where the function needs a scalar is a compile-time `UP2-E1005` (`urljoin.base`, `slice.spec`,
+`split.sep`, `split.maxsplit`, `getitem.index`, `get.key`, `replace.old`, `replace.new`,
+`strftime.layout`, and an unknown `sort.key`).
+
+`parse_time` reaches the optional engine only after the built-in table has failed, so a machine shape
+never loads it; without `uniparser2[time]` that path reports `UP2-E2008` and names the extra, while a
+table shape keeps working. An explicit `format` and a `lang` are alternatives (`UP2-E1005` together),
+because the format wins and the language could never take effect.
 
 ### `ctx` — the scope (standard library)
 
@@ -171,9 +179,17 @@ Each line below is a real run; the input is named in the note.
 [["xpath", "text", {"expr": "//dc:creator", "ns": {"dc": "http://purl.org/dc/elements/1.1/"}}]]
 // → Ok(['Jane Reporter'])
 
-// a feed timestamp → the canonical shape
-[["css1", "text", "time.pubdate"], ["py", "parse_time", ""]]
-// → Ok('2026-09-24 15:30:00')
+// a feed timestamp → the canonical shape → another layout (the output side)
+[["py", "parse_time", ""], ["py", "strftime", "%Y/%m/%d"]]
+// → Ok('2026/09/24')                            (input "Thu, 24 Sep 2026 15:30:00 +0800")
+
+// no format and no language: the engine detects it (needs uniparser2[time])
+[["py", "parse_time", ""]]
+// → Ok('2026-09-24 00:00:00')                   (input "24. September 2026")
+
+// a relative expression with a pinned base clock (scope: now = 2026-01-01 12:00:00)
+[["py", "parse_time", {"now": "$globals.now"}]]
+// → Ok('2026-01-02 12:00:00')                   (input "tomorrow")
 
 // a scope round trip
 [["ctx", "set", "locals.n"], ["ctx", "get", "locals.n"]]

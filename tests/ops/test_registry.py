@@ -41,8 +41,8 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
         "ctx",
         "code",
     }
-    assert len(pairs) == 59
-    assert len([pair for pair in pairs if pair[0] == "py"]) == 31
+    assert len(pairs) == 60
+    assert len([pair for pair in pairs if pair[0] == "py"]) == 32
     assert len([pair for pair in pairs if pair[0] == "css"]) == 7
     assert len([pair for pair in pairs if pair[0] == "css1"]) == 7
     assert len([pair for pair in pairs if pair[0] == "xpath"]) == 3
@@ -58,6 +58,7 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
     # The former ``time`` operator has been folded into ``py``; the old ``json.$get`` action slot is
     # gone together with the 2-slot operator.
     assert ("py", "parse_time") in pairs
+    assert ("py", "strftime") in pairs
     assert ("json", "get") in pairs
     # In-chain code has a single action ⇒ a 2-slot operator, so the action name never appears in a
     # chain.

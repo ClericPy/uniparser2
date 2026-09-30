@@ -12,6 +12,40 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Added
 
+- `py.parse_time` reaches the natural-language engine **without a parameter**: the decision order is now
+  an explicit `format` → the built-in table (which still loads nothing) → automatic language detection →
+  `UP2-E2007`, so a chain no longer has to name a language to read one. The engine stays an optional
+  extra: without `uniparser2[time]` that path reports `UP2-E2008` and names it, instead of returning a
+  different value. `lang` keeps its meaning and now only restricts the detection. Two optional
+  parameters arrive with it: `date_order` (`MDY` / `DMY` / `YMD`) and `now` (a `ref_or_literal`, e.g.
+  `"$globals.now"`) which pins the base clock of a relative expression (`yesterday`, `3 days ago`) that
+  otherwise follows the wall clock.
+- `py.strftime` renders the canonical time string in another layout
+  (`[["py","parse_time",""],["py","strftime","%Y/%m/%d"]]` → `2026/09/24`). It is a single-parameter
+  action, so it takes a plain value, and its layout is validated at compile time against an allowlist of
+  directives that no locale or platform decides (`%a`/`%A`/`%b`/`%B`/`%p`/`%c`/`%x`/`%X` are
+  locale-decided, `%z`/`%Z` are empty on a zone-less value, `%e`/`%k`/`%l`/`%G`/`%V` are
+  platform-dependent and `%s` would have to assume a zone). There is deliberately **no** `to_datetime`:
+  the canonical string is a lossless representation of a datetime, while an object inside a chain would
+  break the JSON value domain (the store, a UDF argument, and what `up2 trial` prints).
+
+### Changed
+
+- The ambiguous slash writings are decided by one documented knob. Measured before: `03/04/2026` gave
+  `2026-04-03` (the built-in table is day-first) while `03/04/2026 15:30` gave `2026-03-04` (the engine
+  defaulted to month-first) — the same writing meaning two dates. `date_order` now orders the table's
+  pair **and** the engine, its default is `DMY` (what the table always did), and the default is stated in
+  the notes and in the operator reference.
+- `format` and `lang` together are a compile-time `UP2-E1005`: the explicit format wins over the language
+  fallback, so the language could never have an effect. The `UP2-E2007` fix line no longer advises
+  "add lang" (the engine is reached by default now).
+- Version `0.1.0` → `0.2.0` (`005` §7: a new capability bumps the minor).
+
+### Fixed
+
+- The natural-language path's own parse failure (`dateparser` raised) reported `UP2-E2007` with an
+  **empty fix line**; it now names the text and the two remedies.
+
 - `up2 ops` states, per action, which writing slot 3 takes: `param_form` is `none` (no parameter),
   `value` (the value itself) or `named` (a named object), derived from the parameters the action still
   has to fill — a parameter the action slot itself provides does not count. Both the human view
@@ -30,6 +64,12 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Fixed
 
+- `parse_time.format` is validated without depending on the platform. The check probed the format
+  with `strftime`, whose strictness comes from the C library: glibc passes an unknown directive
+  through verbatim while the Windows CRT raises, so the same chain was rejected on Windows and
+  compiled on Linux (caught by CI on 3.12). It now asks `strptime`, whose directive table lives in
+  Python's `_strptime`, is identical across platforms and is what the operator actually runs — which
+  also stops rejecting `%T` / `%-d` on Windows, where `strptime` reads them.
 - Two report fixtures were wrong and are corrected, now guarded by the widened self-check (it covers
   the multi-stage compositions, not only the single-action cases): `["css", …, ["code", …]]` fed the
   sandbox a *list* (it needed a string), and the XPath namespace demo put the `{"expr", "ns"}` object

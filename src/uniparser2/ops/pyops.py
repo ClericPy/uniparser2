@@ -66,8 +66,9 @@ _TIME_FMTS: Final = (
     "%Y\u5e74%m\u6708%d\u65e5 %H:%M",
     "%Y\u5e74%m\u6708%d\u65e5",
     "%Y%m%d",
-    "%d/%m/%Y",
-    "%m/%d/%Y",
+    # The ambiguous ``dd/mm/yyyy`` / ``mm/dd/yyyy`` pair is not listed here: which one is tried
+    # first is decided by ``date_order`` (see ``_ambiguous_fmts``), so that a plain date and a
+    # date with a time part cannot disagree about the same writing.
     "%d %b %Y",
     "%b %d, %Y",
     # Zone-bearing shapes, so that the two canonical feed timestamps parse with no parameters:
@@ -539,21 +540,11 @@ def _py_parse_time(value: Any, params: Mapping[str, Any], scope: Scope) -> Outco
     fmt = params.get("format")
     if fmt:
         return _time_with_format(text, str(fmt))
-    parsed = _time_by_table(text)
+    order = params.get("date_order") or _TIME_DATE_ORDER_DEFAULT
+    parsed = _time_by_table(text, str(order))
     if parsed is not None:
         return Ok(parsed.strftime(TIME_FORMAT))
-
-    lang = params.get("lang")
-    if not lang:
-        return Failed(
-            code="UP2-E2007",
-            reason=f"the time string {text!r} matches none of the built-in formats",
-            fix=(
-                "extract the time fragment with re/py first, or add format; for a "
-                f"natural-language date, add lang and install {_TIME_EXTRA}"
-            ),
-        )
-    return _time_by_language(text, str(lang))
+    return _time_by_language(text, params, order=str(order))
 
 
 def _time_with_format(text: str, fmt: str) -> Outcome:
@@ -567,8 +558,14 @@ def _time_with_format(text: str, fmt: str) -> Outcome:
         )
 
 
-def _time_by_table(text: str) -> datetime | None:
-    for candidate in _TIME_FMTS:
+def _time_by_table(text: str, order: str) -> datetime | None:
+    """The built-in shapes, with the ambiguous slash pair tried in the requested order.
+
+    The pair is ordered rather than listed because a plain ``03/04/2026`` and a ``03/04/2026 15:30``
+    must not disagree: the table decides the first, the engine the second, and both are driven by
+    the same ``date_order`` value.
+    """
+    for candidate in (*_TIME_FMTS, *_ambiguous_fmts(order)):
         try:
             return datetime.strptime(text, candidate)
         except ValueError:
@@ -576,24 +573,50 @@ def _time_by_table(text: str) -> datetime | None:
     return None
 
 
-def _time_by_language(text: str, lang: str) -> Outcome:
+def _time_by_language(text: str, params: Mapping[str, Any], *, order: str) -> Outcome:
+    """The last resort: the optional engine, detecting the language unless ``lang`` restricts it.
+
+    ``lang`` no longer gates the engine (a chain should not have to name a language to read one), it
+    only narrows the detection. ``order`` and ``now`` are passed through as engine settings, so an
+    ambiguous numeric date and the base clock of a relative expression are the chain's decisions
+    rather than the library's. Without the extra the outcome is a coded error, never another value.
+    """
     try:
         parse = _import_dateparser()
     except ImportError as exc:
         return Failed(
             code="UP2-E2008",
             reason=f"natural-language dates need dateparser: {exc}",
-            fix=f"install the optional dependency: {_TIME_EXTRA}, or use format instead",
+            fix=f"install the optional dependency: {_TIME_EXTRA}",
         )
+    lang = params.get("lang")
+    settings: dict[str, Any] = {"DATE_ORDER": order}
+    now = params.get("now")
+    if now:
+        base = _parse_canonical(str(now))
+        if base is None:
+            return Failed(
+                code="UP2-E2007",
+                reason=f"now must be the canonical time {TIME_FORMAT}, got {now!r}",
+                fix='write the canonical shape, for example "2026-01-01 12:00:00"',
+            )
+        settings["RELATIVE_BASE"] = base
     try:
-        parsed = parse(text, languages=[lang])
+        parsed = parse(text, languages=[str(lang)] if lang else None, settings=settings or None)
     except Exception as exc:  # a third-party parse failure must become a coded Failed
-        return Failed(code="UP2-E2007", reason=f"dateparser failed to parse: {exc}")
+        return Failed(
+            code="UP2-E2007",
+            reason=f"dateparser failed to parse: {exc}",
+            fix="check the text, or restrict the language with lang",
+        )
     if parsed is None:
         return Failed(
             code="UP2-E2007",
-            reason=f"dateparser cannot parse {text!r} as a {lang} time",
-            fix="check lang against the language of the text, or use format instead",
+            reason=f"nothing could read the time string {text!r}",
+            fix=(
+                "extract the time fragment with re/py first, or give an explicit layout "
+                'such as {"format": "%Y-%m-%d"}'
+            ),
         )
     return Ok(parsed.strftime(TIME_FORMAT))
 
@@ -614,8 +637,19 @@ def _check_time_format(params: Mapping[str, Param], *, pointer: str = "") -> Non
             )
         )
     try:
-        datetime(2000, 1, 2, 3, 4, 5).strftime(fmt)
+        datetime.strptime("", fmt)
     except ValueError as exc:
+        # `_strptime` (pure Python, the same on every platform) reports a format it cannot use
+        # with a message ending in "in format '<fmt>'": "'Q' is a bad directive in format '%Q'"
+        # or "stray % in format '%'". Its other ValueError — "time data '' does not match
+        # format ..." — only says the probe text does not fit, not that the format is bad.
+        #
+        # Probing with `strftime` (what this check did before) is **platform-dependent**: glibc
+        # passes an unknown directive through verbatim while the Windows CRT raises, so the same
+        # chain compiled on Linux and was rejected on Windows. Asking `strptime` also matches
+        # what the operator does at parse time, so a format it accepts is never rejected here.
+        if " in format " not in str(exc):
+            return
         raise Up2Error(
             diag(
                 "UP2-E1005",
@@ -626,6 +660,191 @@ def _check_time_format(params: Mapping[str, Param], *, pointer: str = "") -> Non
         ) from exc
 
 
+_TIME_DATE_ORDER_DEFAULT: Final = "DMY"
+"""Day first, which is what the built-in table has always done for a plain ``03/04/2026``."""
+
+_AMBIGUOUS_ORDER: Final[Mapping[str, tuple[str, str]]] = {
+    "MDY": ("%m/%d/%Y", "%d/%m/%Y"),
+    "DMY": ("%d/%m/%Y", "%m/%d/%Y"),
+}
+"""The two writings of an ambiguous slash date, in the order the requested policy tries them."""
+
+
+def _ambiguous_fmts(order: str) -> tuple[str, ...]:
+    return _AMBIGUOUS_ORDER.get(order, _AMBIGUOUS_ORDER[_TIME_DATE_ORDER_DEFAULT])
+
+
+_TIME_DATE_ORDERS: Final = ("MDY", "DMY", "YMD")
+"""The numeric orders the engine understands (``settings["DATE_ORDER"]``)."""
+
+
+def _written(raw: Param | None) -> Any:
+    """The value as written in the chain (``Lit``), or the structure behind a reference."""
+    return raw.value if isinstance(raw, Lit) else raw
+
+
+def _check_time_params(params: Mapping[str, Param], *, pointer: str = "") -> None:
+    """The compile-time checks of ``py.parse_time``: layout, order, base clock, combination."""
+    _check_time_format(params, pointer=f"{pointer}/format")
+    fmt = _written(params.get("format"))
+    lang = _written(params.get("lang"))
+    if fmt and lang:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                "format and lang cannot be given together: the explicit format wins, so the "
+                "language would never have an effect",
+                fix=(
+                    'keep one of them — give "format" for an explicit layout, or drop it and let '
+                    "the language detection run"
+                ),
+                pointer=f"{pointer}/lang" if pointer else "/2/lang",
+            )
+        )
+    order = _written(params.get("date_order"))
+    if order is not None and order not in _TIME_DATE_ORDERS:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"date_order must be one of {_TIME_DATE_ORDERS}, got {order!r}",
+                fix='write "MDY" (month first), "DMY" (day first) or "YMD"',
+                pointer=f"{pointer}/date_order" if pointer else "/2/date_order",
+                allowed=_TIME_DATE_ORDERS,
+            )
+        )
+    now = _written(params.get("now"))
+    if isinstance(now, str) and now and _parse_canonical(now) is None:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"now must be the canonical time {TIME_FORMAT}, got {now!r}",
+                fix=(
+                    'write the canonical shape, for example "2026-01-01 12:00:00", or a '
+                    'reference such as "$globals.now"'
+                ),
+                pointer=f"{pointer}/now" if pointer else "/2/now",
+            )
+        )
+
+
+# ---------------------------------------------------------------- time rendering (output side)
+
+_STRFTIME_ALLOWED: Final = frozenset("YymdHMISfjUWwu")
+"""The directives whose rendering is locale-free and stable across platforms (design D6)."""
+
+_STRFTIME_REJECTED: Final[Mapping[str, str]] = {
+    "a": "the short weekday name is decided by the process locale",
+    "A": "the weekday name is decided by the process locale",
+    "b": "the short month name is decided by the process locale",
+    "B": "the month name is decided by the process locale",
+    "p": "the AM/PM marker is decided by the process locale",
+    "c": "the locale's date and time representation is decided by the process locale",
+    "x": "the locale's date representation is decided by the process locale",
+    "X": "the locale's time representation is decided by the process locale",
+    "z": "the canonical value carries no zone, so an offset would always render as empty",
+    "Z": "the canonical value carries no zone, so a zone name would always render as empty",
+    "e": "a platform-specific directive (glibc); it is not available everywhere",
+    "k": "a platform-specific directive (glibc); it is not available everywhere",
+    "l": "a platform-specific directive (glibc); it is not available everywhere",
+    "G": "the ISO year is platform-dependent and needs the ISO week and weekday together",
+    "V": "the ISO week is platform-dependent",
+    "s": "epoch seconds would have to assume a zone for a zone-less value",
+}
+
+_STRFTIME_FIX: Final = (
+    'use numeric directives such as "%Y-%m-%d" / "%H:%M:%S", or reshape the pieces with py.slice'
+)
+
+
+def _parse_canonical(text: str) -> datetime | None:
+    """Parse the canonical time shape, or report that the text is not one (strictly zero-padded)."""
+    try:
+        return datetime.strptime(text, TIME_FORMAT)
+    except ValueError:
+        return None
+
+
+def _py_strftime(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    del scope
+    if not isinstance(value, str):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"py.strftime needs the canonical time string, got {type_name(value)}",
+            fix="produce it first with py.parse_time",
+        )
+    parsed = _parse_canonical(value)
+    if parsed is None:
+        return Failed(
+            code="UP2-E2007",
+            reason=f"{value!r} is not the canonical time shape {TIME_FORMAT}",
+            fix="normalise the value first with py.parse_time",
+        )
+    return Ok(parsed.strftime(str(params["layout"])))
+
+
+def _layout_directives(layout: str) -> list[str]:
+    """Every directive character, with ``""`` for a trailing ``%`` and ``"%"`` for ``%%``."""
+    found: list[str] = []
+    index = 0
+    while index < len(layout):
+        if layout[index] != "%":
+            index += 1
+            continue
+        if index + 1 >= len(layout):
+            found.append("")
+            break
+        found.append(layout[index + 1])
+        index += 2
+    return found
+
+
+def _check_strftime_layout(params: Mapping[str, Param], *, pointer: str = "") -> None:
+    """Reject a layout that cannot render identically on every platform and locale (design D6)."""
+    target = pointer or "/2/layout"
+    layout = _written(params.get("layout"))
+    if not isinstance(layout, str) or not layout:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"layout must be a non-empty string, got {layout!r}",
+                fix=_STRFTIME_FIX,
+                pointer=target,
+            )
+        )
+    for directive in _layout_directives(layout):
+        if directive == "%":
+            continue
+        if directive == "":
+            raise Up2Error(
+                diag(
+                    "UP2-E1005",
+                    f"layout {layout!r} ends with a stray %",
+                    fix='write "%%" for a literal percent sign',
+                    pointer=target,
+                )
+            )
+        reason = _STRFTIME_REJECTED.get(directive)
+        if reason:
+            raise Up2Error(
+                diag(
+                    "UP2-E1005",
+                    f"%{directive} cannot be rendered: {reason}",
+                    fix=_STRFTIME_FIX,
+                    pointer=target,
+                )
+            )
+        if directive not in _STRFTIME_ALLOWED:
+            raise Up2Error(
+                diag(
+                    "UP2-E1005",
+                    f"unknown directive %{directive} in the layout",
+                    fix=_STRFTIME_FIX,
+                    pointer=target,
+                    allowed=tuple(sorted(_STRFTIME_ALLOWED)),
+                )
+            )
+
+
 _SCALAR_PARAMS: Final[Mapping[str, Mapping[str, str]]] = {
     "urljoin": {"base": "a string"},
     "slice": {"spec": "a string"},
@@ -633,6 +852,7 @@ _SCALAR_PARAMS: Final[Mapping[str, Mapping[str, str]]] = {
     "getitem": {"index": "an integer"},
     "get": {"key": "a string"},
     "replace": {"old": "a string", "new": "a string"},
+    "strftime": {"layout": "a string"},
 }
 """Parameters whose runtime path needs a scalar (design D3 of ``add-parameter-shape-contract``).
 
@@ -771,12 +991,21 @@ _TABLE: Final[tuple[_Entry, ...]] = (
     _Entry("sha256", "hexadecimal digest", _py_sha256),
     _Entry(
         "parse_time",
-        "parse a time string into the canonical format (default %Y-%m-%d %H:%M:%S)",
+        "parse a time string into the canonical format %Y-%m-%d %H:%M:%S (explicit format, the "
+        "built-in table, then natural-language detection)",
         _py_parse_time,
         (
             ParamSpec("lang", Kind.LITERAL, required=False, default=None),
             ParamSpec("format", Kind.LITERAL, required=False, default=None),
+            ParamSpec("date_order", Kind.LITERAL, required=False, default=None),
+            ParamSpec("now", Kind.REF_OR_LITERAL, required=False, default=None),
         ),
+    ),
+    _Entry(
+        "strftime",
+        "render the canonical time string in another layout (%Y-%m-%d %H:%M:%S → %Y/%m/%d)",
+        _py_strftime,
+        (ParamSpec("layout", Kind.LITERAL),),
     ),
     _Entry("str", "convert to a string (former cast str)", _py_str),
     _Entry("int", "convert to an integer (former cast int)", _py_int),
@@ -802,7 +1031,7 @@ _ACTIONS: Final[Mapping[str, ActionSpec]] = {
 
 @op("py", aliases=("python",))
 class Py(Op):
-    """The allowlist function set (31 functions, closed)."""
+    """The allowlist function set (32 functions, closed)."""
 
     summary = "Python built-in allowlist functions"
     slot_roles = ("function", "params")
@@ -828,7 +1057,9 @@ class Py(Op):
         elif action == "urlsplit":
             _check_url_part(params, pointer=f"{pointer}/part")
         elif action == "parse_time":
-            _check_time_format(params, pointer=f"{pointer}/format")
+            _check_time_params(params, pointer=pointer)
+        elif action == "strftime":
+            _check_strftime_layout(params, pointer=pointer)
         return None
 
     def evaluate(self, call: Call) -> Outcome:

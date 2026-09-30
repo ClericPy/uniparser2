@@ -6,7 +6,7 @@
 由人或 LLM 离线生成，运行时只做确定性求值。
 
 > **状态**：`0.1.0`，L1（DSL 算子层）已完成。已实现 **10 个算子**：`css` / `css1`（HTML 选择器，前者取全部、
-> 后者只取首个，selectolax）、`xpath`（XML，lxml）、`json`（jmespath）、`re`、`py`（31 个白名单函数）、
+> 后者只取首个，selectolax）、`xpath`（XML，lxml）、`json`（jmespath）、`re`、`py`（32 个白名单函数）、
 > `udf`（宿主注册，链里不含代码）、`code`（链内代码，语言级沙箱，**默认不存在**，见「安全提示」），
 > 外加作用域算子 `ctx` 与积木 `const`，
 > 共 59 对 `(算子, 动作)`。链级结构（`seed`/`parse`/`emit`、`select` 扇出、`result` 装配）与就地验证台属 L2。
@@ -39,7 +39,7 @@
 | `xpath` | lxml（`[xml]`） | `text` · `self` · `nodes`（XML；XPath 是 lxml 原生能力） |
 | `json` | jmespath（`[json]`） | `get`——jmespath 表达式，留空表示根 |
 | `re` | 标准库 | `search` · `group` · `findall` |
-| `py` | 标准库；`parse_time` 需 `[time]`，`html_to_markdown` 需 `[md]` | 31 个白名单纯函数：`int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `get` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` `parse_time` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` |
+| `py` | 标准库；`parse_time` 的自然语言路径需 `[time]`，`html_to_markdown` 需 `[md]` | 32 个白名单纯函数：`int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `get` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` |
 | `ctx` | 标准库 | `get` · `set` · `del` · `map`（作用域读写） |
 | `udf` | 宿主注册 | 宿主事先注册的任意函数；链里只带名字 |
 | `code` | pydantic-monty（`[code]`，刻意不在 `[all]` 里） | `run`——链内代码，跑在语言级沙箱里（见「安全提示」） |

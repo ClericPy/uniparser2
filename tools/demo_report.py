@@ -292,7 +292,7 @@ def coverage_cases() -> list[Case]:
 
 
 def _py_cases() -> list[Case]:
-    """`py`  has 31 allowlisted functions, tiered by commonness (module docstring)."""
+    """`py`  has 32 allowlisted functions, tiered by commonness (module docstring)."""
     spec: list[tuple[str, int, str, Any, Any, str]] = [
         ("Core", 1, "strip", "  text  ", "", "strip leading/trailing whitespace"),
         ("Core", 2, "normalize_space", "a   b\n c", "", "collapse consecutive whitespace"),
@@ -333,13 +333,21 @@ def _py_cases() -> list[Case]:
         (
             "Common",
             8,
+            "strftime",
+            "2026-09-24 15:30:00",
+            "%Y/%m/%d",
+            "render the canonical time in another layout (output side)",
+        ),
+        (
+            "Common",
+            9,
             "html_to_markdown",
             "<h1>Heading</h1><p>a <b>b</b></p>",
             "",
             "optional dependency [md]",
         ),
-        ("Common", 9, "int", "42", "", "type conversion (formerly cast int)"),
-        ("Common", 10, "str", 42, "", "type conversion (formerly cast str)"),
+        ("Common", 10, "int", "42", "", "type conversion (formerly cast int)"),
+        ("Common", 11, "str", 42, "", "type conversion (formerly cast str)"),
         ("Advanced", 1, "upper", "abc", "", "uppercase"),
         ("Advanced", 2, "lower", "ABC", "", "lowercase"),
         ("Advanced", 3, "flatten", [[1, 2], [3]], "", "flatten one level"),
@@ -370,6 +378,13 @@ def _py_cases() -> list[Case]:
 def chain_cases() -> list[Case]:
     """Multi-stage chains (attributed to the operator section they **start with**)."""
     return [
+        Case(
+            "py",
+            "composition",
+            [["py", "parse_time", ""], ["py", "strftime", "%Y/%m/%d"]],
+            "2026-09-24 15:30:00",
+            note="normalize to the canonical time → render another layout (the output side)",
+        ),
         Case(
             "css1",
             "composition",

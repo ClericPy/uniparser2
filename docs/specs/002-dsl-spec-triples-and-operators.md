@@ -324,13 +324,18 @@ scalar rejects a JSON container before the chain runs, because the function's ow
 | `replace` | `old` / `new` | strings | `isinstance(..., str)` guard ⇒ `UP2-E2002` |
 | `sort` | `key` | `""` / `"str"` / `"int"` / `"float"` | enum check ⇒ `UP2-E2005` |
 | `urlsplit` | `part` | the URL-part enum | enum check, already at compile time |
-| `parse_time` | `format` | a non-empty string | strptime format check, already at compile time |
+| `parse_time` | `format` | a non-empty string | a `strptime` directive check, already at compile time (`UP2-E1005`) |
+| `parse_time` | `date_order` | `"MDY"` / `"DMY"` / `"YMD"` | enum check (`UP2-E1005`), and it may not be combined with `format` + `lang` |
+| `parse_time` | `now` | the canonical time `%Y-%m-%d %H:%M:%S` | shape check (`UP2-E1005`); a reference is resolved at run time |
+| `strftime` | `layout` | a non-empty string | directive allowlist (locale-free and platform-stable, `UP2-E1005`) |
 
 **Deliberately not checked**, because a container is either a legal value or coerced by the operator: `default.value` (any JSON value — `["py","default",{"a":1}]`
 returns `{"a":1}`), `join.sep` and `parse_time.lang` (both `str()`-coerced). A **single-parameter** function written with the named-object form
 (`["py","urljoin",{"base": …}]`) is a compile-time `UP2-E1005`: the object is the *value* of `base`, see §4.
 
-**Function table (31 functions, a closed set; anything outside the table is `UP2-E1003`)**:
+The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser's directive table lives in Python's `_strptime` and is the same on every platform, while `strftime` delegates unknown directives to the C library — glibc passes `%Q` through verbatim and the Windows CRT raises, so a `strftime` probe gave the same chain two verdicts on two operating systems. Asking the parser also means the verdict matches what the operator does at run time: the set therefore follows the interpreter (measured on 3.12.11 / 3.13.12 / 3.14.3, `%T` / `%e` / `%-d` are accepted from 3.13 on, and a stray `%` is read as a literal by 3.12 but rejected by 3.13+).
+
+**Function table (32 functions, a closed set; anything outside the table is `UP2-E1003`)**:
 
 > **Dependencies are declared per action** (a convergence made while implementing L1): `requires` can hang not only off an operator but also off a **single
 > action** — `html_to_markdown` needs `html-to-markdown`, whereas `strip` in the same operator needs nothing at all. When a dependency is missing, that
@@ -363,7 +368,8 @@ returns `{"a":1}`), `join.sep` and `parse_time.lang` (both `str()`-coerced). A *
 | Fallback | `default` | the fallback value | empty string/`null`/`Missing` → the fallback value | `essence` §B6 |
 | Encoding | `b64_encode` / `b64_decode` | — | Base64 | `essence` §3.4 |
 | Encoding | `sha256` | — | hexadecimal digest (idempotency key/fingerprint) | new |
-| Time | `parse_time` | `{"lang"?, "format"?}` | a time string → the canonical format `%Y-%m-%d %H:%M:%S`; the built-in table reads zone-less calendar shapes **and the two canonical feed timestamps** (RFC 822 `pubDate`, zone-bearing ISO 8601 `updated`) (**no required dependency**; `dateparser` is used only when `lang` is given, and its absence reports `UP2-E2008`) | the former `time` operator (D-02-14) |
+| Time | `parse_time` | `{"lang"?, "format"?, "date_order"?, "now"?}` | a time string → the canonical format `%Y-%m-%d %H:%M:%S`, in the order **explicit `format`** → **built-in table** (`dateparser` is never loaded) → **natural-language detection** → `UP2-E2007`; the table reads zone-less calendar shapes, **the two canonical feed timestamps** (RFC 822 `pubDate`, zone-bearing ISO 8601 `updated`) and the CJK patterns, so the machine path still has **no required dependency**; the engine is optional and its absence at that point reports `UP2-E2008`; `lang` restricts the detection instead of enabling it, `date_order` (`MDY`/`DMY`/`YMD`, default **`DMY`**) decides the ambiguous slash writings in the table **and** in the engine, and `now` (`ref_or_literal`, e.g. `"$globals.now"`) pins the base clock of a relative expression (without it the wall clock is used) | the former `time` operator (D-02-14) |
+| Time | `strftime` | `layout` | the canonical time string → another layout (`%Y/%m/%d`); the allowlist is locale-free and platform-stable (`%a`/`%A`/`%b`/`%B`/`%p`/`%c`/`%x`/`%X` are locale-decided, `%z`/`%Z` are empty on a zone-less value, `%e`/`%k`/`%l`/`%G`/`%V` are platform-dependent and `%s` would have to assume a zone, so each is `UP2-E1005` at compile time) | new (the output side of time handling) |
 | Conversion | `str` / `int` / `float` / `bool` | — | type conversion (cannot convert ⇒ `UP2-E2005`) | the former `cast` operator (D-02-14) |
 | Conversion | `list` | — | JSON array text → `list`; if it is already a `list`, unchanged | the former `cast` operator |
 | Conversion | `from_json` | — | JSON text → JSON tree | the former `cast json` (**it cannot be called `json`**: that would share a name with the `json` operator while meaning something different) |
@@ -376,13 +382,22 @@ returns `{"a":1}`), `join.sep` and `parse_time.lang` (both `str()`-coerced). A *
 | `getattr` | the old v3 used it to fetch a node's `attributes` dict; the new value domain has no attribute object, and the `@attr` accessor takes attributes directly |
 
 > **The output of `parse_time` is not a `datetime`**: the value domain is a JSON tree and a `datetime` cannot leave the chain (the exit rejects it), so the
-> product is a normalised **string**; for another format use `{"format": "%Y-%m-%d"}`. `format` is validated at compile time (an illegal strptime directive ⇒
-> `UP2-E1005`).
+> product is a normalised **string**; for another layout use `py.strftime` in the next stage, which re-parses that canonical string
+> (`["py","strftime","%Y/%m/%d"]`) — a `to_datetime` action is deliberately absent, because the canonical string is a lossless representation of the value
+> while an object inside the chain would break the JSON value domain (the store, a UDF argument, and what `up2 trial` prints). `format` is validated at compile
+> time (an illegal strptime directive ⇒ `UP2-E1005`).
 >
 > **A zone in the input is consumed, not applied**: `Z`, `+0800`, `+08:00` (ISO) and `GMT`/`UTC` (RFC 822) are read so that the string parses, and the
 > rendered result stays the wall clock — `2026-09-24T15:30:00Z` and `2026-09-24T15:30:00+08:00` both give `2026-09-24 15:30:00`, never a shift to UTC.
 > The accepted shapes are the zone-less calendar formats, RFC 822, and ISO 8601 with a zone and optional fractional seconds; anything else still reports
-> `UP2-E2007` (add `format` or `lang` for the rest).
+> `UP2-E2007` (give an explicit `format`, or install `[time]` for the natural-language path).
+>
+> **An ambiguous numeric writing has one documented default**: `03/04/2026` (and the same date with a time part) follows `date_order`, whose default is
+> **`DMY`** — what the built-in table has always done for the plain shape; `MDY` turns both writings month-first. `format` and `lang` together are
+> `UP2-E1005`: the explicit format wins, so the language could never have an effect.
+>
+> **A relative expression is clock-dependent unless `now` is given**: `yesterday` / `3 days ago` resolve against the wall clock, and `{"now": "$globals.now"}`
+> pins that base so a pipeline is reproducible.
 
 **Side by side with `udf` / `code`** (the same call convention, different trust levels):
 
@@ -417,9 +432,12 @@ structure is not copied** (it is treated as immutable and must not be modified i
 **This section is obsolete** (D-02-14): time parsing no longer has an operator of its own; it becomes `py`'s `parse_time`, see §6.4.
 
 ```jsonc
-["py", "parse_time", "zh"]                              // Chinese natural language (needs dateparser)
-["py", "parse_time", ""]                                // go through the standard-library format table (0 dependencies)
-["py", "parse_time", {"format": "%Y-%m-%d %H:%M:%S"}]   // an explicit format
+["py", "parse_time", ""]                                // the built-in table, then natural-language detection (no parameter needed)
+["py", "parse_time", {"lang": "zh"}]                    // restrict the detection to one language (needs dateparser)
+["py", "parse_time", {"format": "%Y-%m-%d %H:%M:%S"}]   // an explicit layout (takes precedence)
+["py", "parse_time", {"date_order": "MDY"}]             // read the ambiguous slash writings month first
+["py", "parse_time", {"now": "$globals.now"}]           // pin the base clock of a relative expression
+["py", "strftime", "%Y/%m/%d"]                          // render the canonical string in another layout
 ```
 
 - The output-format constant is `TIME_FORMAT = "%Y-%m-%d %H:%M:%S"` (the same as the old v3's `TIME_OUTPUT`, which makes behaviour dictionaries easy to compare
@@ -693,7 +711,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2004` | the lazy import of an operator's optional dependency failed | give the install command |
 | `UP2-E2005` | value conversion failed | give the source type, the target type and a preview of the source value |
 | `UP2-E2007` | `time` parsing failed | give the input string and the list of formats that were tried |
-| `UP2-E2008` | `py.parse_time` needs a natural-language date but `dateparser` is not installed | give the install command |
+| `UP2-E2008` | `py.parse_time` reached the natural-language path but `dateparser` is not installed | give the install command |
 | `UP2-E2009` | the operator returned a non-serialisable value | the return value must be inside the JSON value domain (`str`/`int`/`float`/`bool`/`None`/`list`/`dict`) |
 | `UP2-E2010` | `produces="request"` but `url` is missing | give `url` in `result` |
 | `UP2-E2011` | `output="single"` but several products or several terminals exist | change `output` to `auto` / `list` |

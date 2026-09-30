@@ -68,8 +68,9 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   is simply the input value of every field chain — which also removed the `UP2-E1006` "deferred root"
   branch that existed only to explain `$item`, so the reserved roots are now `globals` / `locals` /
   `fields`. Lint L20 is retired (there is no container left to reference itself). Per-item structure is
-  therefore assembled in `fields`, and an `emit` node exports it with `{"produces": "flat", "field":
-  "rows"}`. None of this changes implemented behavior: `select` / `callback` / `presets` / `$map` were
+  therefore assembled in `fields`, and an `emit` node has to name the field it exports — the exact key
+  and its placement are left open for the node-layer change (`07` §4 question `i`). None of this
+  changes implemented behavior: `select` / `callback` / `presets` / `$map` were
   never implemented, so the retirement is a design-level one.
 
 ### Fixed

@@ -7,6 +7,8 @@
 
 ## 1. Rulings on each source material
 
+> **Later supersession (iteration only)**: the iteration items ruled on in this chapter — `callback` with its `presets` container, the node-level `select` fan-out, the `$map` template directive and the `item` root — were replaced by the single operator **`each`** (change `l2-chain-structure-and-each`, `02` §6.9 / `03` §4.1). The rows below are kept as the record of what was decided then and are not re-edited; the note under the L2 roadmap (§3) records what actually landed.
+
 ### 1.1 The `04` parser-syntax draft (the new template engine's DSL finalization) — the internal source material, not shipped in this repository
 
 **Overall ruling**: **the main trunk is adopted**. The triples, the full operator set, the action-slot encoding, `callback` iteration, and the division of labour between `time`/`ctx` are all kept.
@@ -255,6 +257,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | **f** | whether an integrated orchestration of "collection chain → parse chain" (`run_pipeline`) is needed | `03` §8.3 currently loops in the caller | not recommended: the kernel keeps "one `run`, one chain"; integrated orchestration belongs to the host |
 | **g** | whether `variants` should be brought forward | `03` §12 | keep it at `L4`; first validate the cost of "splitting chains" on real sites |
 | **h** | the own restricted Schema language vs adopting JSON Schema directly | `01` §6.1 | the own vocabulary is recommended (both the LLM generation cost and the error-message quality are better); if integration with external tooling is needed later, add a JSON Schema converter |
+| **i** | how an `emit` node with `produces: "flat"` names the field it exports (a `field` key of `emit.config`, a `flat_field` beside `route_field`, or a top-level `field`), now that a per-item list is a named field rather than the node's whole product | `03` §5.1; the node-layer change | the *shape* is settled (an explicit name, no implicit "the single key is the export"); the key and its placement are left to the node-layer change, which is where `flat` gets implemented |
 
 **Resolutions** (settled with the project owner; this list is what allowed the design notes to be
 migrated into `docs/specs/`, per `05` §5.4):
@@ -269,6 +272,7 @@ migrated into `docs/specs/`, per `05` §5.4):
 | **f** | **settled** — no integrated orchestration for now; keeping "one `run`, one chain` stands, and turning a chain's output into a `request` structure before sending it remains a host concern to be thought through later. |
 | **g** | **settled** — `variants` stays reserved at `L4`; revisit once real sites show that splitting chains costs too much. |
 | **h** | **deferred by choice** — the parameter Schema language will be reconsidered later (candidates named: `pydantic` / `msgspec`); until then the own restricted vocabulary stands. |
+| **i** | **deferred by choice** — the node-layer change decides the key and its placement (it is also where `produces: "flat"` gets implemented); the shape — an explicit field name, never an implicit single-key rule — is settled. |
 
 ---
 

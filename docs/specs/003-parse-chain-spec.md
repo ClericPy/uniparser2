@@ -122,7 +122,7 @@ The layer is back as **one operator inside a field chain** (`02` §6.9), not as 
 | `each` in a field chain | its input must be a list (here: the node set the stage above produced); the result is one dictionary per element, so that field holds `list[dict]` |
 | Truncation/sorting | ordinary stages **before** `each` (`["py","slice",":20"]` above); limiting how many elements become records is a plain list operation |
 | Empty collection | `each` on an empty list yields an empty `list` (not `Missing`) — an empty list page is a normal result |
-| Exporting the list | the list is a **named field**, so `emit` names it: `{"produces": "flat", "field": "rows"}` (§5.1) |
+| Exporting the list | the list is a **named field**, so `emit` has to name it — how that name is written is still open (§5.1) |
 
 The nested `each` (a field map inside a field map) is legal up to `MAX_EACH_DEPTH`, and the whole field-map argument is compiled recursively, so a mistake inside it is reported at compile time with a pointer that reaches the offending stage.
 
@@ -175,7 +175,7 @@ Preset chains existed only to give `callback` a name to call. With `each` the fi
   "key": "emit-0001", "type": "emit",
   "config": {
     "produces": "record",                 // record (default) | flat | request
-    "field": "rows",                      // only with produces=flat: which field's value is the export
+    "field": "rows",                      // only with produces=flat; the KEY AND PLACEMENT are still open (§5.1)
     "schema": "$article",                 // optional; a named schema or an inline description
     "result": { /* the §6 assembly template */ },  // omitted when produces=flat
     "policy": { "on_missing": "drop" }
@@ -186,14 +186,14 @@ Preset chains existed only to give `callback` a name to call. With `each` the fi
 | `produces` | Semantics | `result` |
 |---|---|---|
 | `record` (default) | assembles one structured product with the `result` template | required |
-| `flat` | no assembly; the upstream visible fields are the product directly (the "fall back to flattening the loose fields" of Q36 in draft `01`). With `field`, that one field **is** the export — the shape a per-item list needs, since `each` puts the list under a name (§4.1) | must be omitted |
+| `flat` | no assembly; the upstream visible fields are the product directly (the "fall back to flattening the loose fields" of Q36 in draft `01`). A per-item list, which `each` puts under a name (§4.1), needs the node to say **which** field is the export — the exact key is still open (§5.1) | must be omitted |
 | `request` | assembles per the built-in request structure and **fills in defaults automatically** | optional (when omitted, keys are taken by name directly) |
 
 ### 5.1 The place of `flat`
 
 `flat` is the "default stated plainly": drafts `01`/`04` already settled on "fall back to flattening the loose fields when there is no `result`" (Q36), and this design keeps it as an explicit shape. But it carries **no** `dict[str,str]` typing promise — `int`/`list`/`null` in the value domain leave as they are (see `00` §2.1).
 
-**`flat` + `field` is the export of a list**: `{"produces": "flat", "field": "rows"}` exports the value of `$parse-0001.rows`, which is exactly what `each` produced — one record per item. There is deliberately no "the single key is the export" rule: which field is the product is written down, in the same spirit as `route_field`.
+**The export of a per-item list is an open detail.** Removing `select` (§4.1) makes a list of records a **named field**, so `flat` can no longer mean "the fields themselves": the node has to say **which** field is the export. What the redesign settles is the *shape* of that answer — an explicit name, never an implicit "the single key is the export" rule (that is exactly the kind of convention this change removed elsewhere). **Where the name is written is deliberately left to the node-layer change**: the candidates are a `field` key of `emit.config` (how the example above writes it), a `flat_field` beside the existing `route_field`, or a top-level `field` of the `emit` node. It is recorded as open question `i` in `07` §4.
 
 ### 5.2 The built-in structure of `request`
 
@@ -421,7 +421,7 @@ Material: the legacy rule of §1 in draft `01` (1 list rule + 2 detail rules, wi
       "next": "emit-0001" },
 
     { "key": "emit-0001", "type": "emit",
-      "config": { "produces": "flat", "field": "rows" } }
+      "config": { "produces": "flat", "field": "rows" } }   // `field` is provisional (§5.1)
   ]
 }
 ```

@@ -77,6 +77,7 @@ _OUTER: Final = "outer"
 _SELF: Final = "self"
 _REMOVE: Final = "remove"
 _NODES: Final = "nodes"
+_EXISTS: Final = "exists"
 _ATTR: Final = "@<attribute>"
 _SELECTOLAX: Final = "selectolax"
 _HTML_EXTRA: Final = "html"
@@ -89,6 +90,7 @@ _ACTIONS: Final[Mapping[str, ActionSpec]] = {
     _OUTER: ActionSpec(_OUTER, "outer HTML", (_SELECTOR,)),
     _SELF: ActionSpec(_SELF, "the node handle itself", (_SELECTOR,)),
     _NODES: ActionSpec(_NODES, "the set of matching nodes", (_SELECTOR,)),
+    _EXISTS: ActionSpec(_EXISTS, "whether the selector matches at least one node", (_SELECTOR,)),
     _REMOVE: ActionSpec(_REMOVE, "a copy with the matching nodes pruned", (_SELECTOR,)),
     _ATTR: ActionSpec(_ATTR, "attribute value", (ParamSpec("attr", Kind.LITERAL), _SELECTOR)),
 }
@@ -250,6 +252,10 @@ class _SelectorOp(Op):
         if call.action == _REMOVE:
             return _prune(active, context, selector, first_only=self.first_only)
         matched = _select(active, raw, selector, first_only=self.first_only)
+        if call.action == _EXISTS:
+            # A boolean, never `Missing`: `nodes` reports a missing value when nothing matches, and
+            # the missing policy would then decide the answer, which no predicate can rely on.
+            return Ok(bool(matched))
         if call.action in (_SELF, _NODES):
             return _node_result(call.action, matched)
         return _value_result(active, call, matched, first_only=self.first_only)

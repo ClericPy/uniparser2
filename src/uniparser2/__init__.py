@@ -39,7 +39,7 @@ from .core import (
 from .core.udfs import get_udf, register_udf, udf_names, unregister_udf
 from .host import load_entry_point_udfs
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 """The single source of the version: ``[tool.hatch.version]`` in ``pyproject.toml`` reads it."""
 
 logger = logging.getLogger("uniparser2")

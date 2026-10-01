@@ -1,4 +1,4 @@
-"""``py`` operator: 31 allowlist functions (design doc 02 §6.4).
+"""``py`` operator: 41 allowlist functions (design doc 02 §6.4).
 
 **Slots** (see ``02`` §1): ``["py", function name, parameters]`` — the function name is in slot 2
 and its parameters in slot 3.
@@ -846,6 +846,127 @@ def _check_strftime_layout(params: Mapping[str, Param], *, pointer: str = "") ->
             )
 
 
+# ---- predicates (the chain layer's boolean vocabulary) ----
+
+
+def _comparable(value: Any, other: Any, who: str) -> Failed | None:
+    """``lt``/``le``/``gt``/``ge`` take two numbers or two strings, and nothing else.
+
+    Checking here keeps a Python ``TypeError`` (``1 < "a"``) from escaping as ``UP2-E2099``, which
+    would tell the chain author nothing about which operand was wrong.
+    """
+    numbers = all(
+        isinstance(item, (int, float)) and not isinstance(item, bool) for item in (value, other)
+    )
+    if numbers or (isinstance(value, str) and isinstance(other, str)):
+        return None
+    return Failed(
+        code="UP2-E2002",
+        reason=f"py.{who} cannot compare {type_name(value)} with {type_name(other)}",
+        fix='compare two numbers or two strings, e.g. ["py","<",10] on an int',
+    )
+
+
+def _py_eq(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    return Ok(value == params.get("to"))
+
+
+def _py_ne(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    return Ok(value != params.get("to"))
+
+
+def _py_lt(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    other = params.get("to")
+    problem = _comparable(value, other, "<")
+    return problem if problem is not None else Ok(value < other)
+
+
+def _py_le(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    other = params.get("to")
+    problem = _comparable(value, other, "<=")
+    return problem if problem is not None else Ok(value <= other)
+
+
+def _py_gt(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    other = params.get("to")
+    problem = _comparable(value, other, ">")
+    return problem if problem is not None else Ok(value > other)
+
+
+def _py_ge(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    other = params.get("to")
+    problem = _comparable(value, other, ">=")
+    return problem if problem is not None else Ok(value >= other)
+
+
+def _py_in(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Python's ``in``: the parameter is the **container**, the upstream value is looked up in it.
+
+    ``["py","in",[200,301,302]]`` asks whether the value is one of those. To ask whether the value
+    *contains* something, put the element in front —
+    ``[["const","/public/"],["py","in","$locals.url"]]`` — the operands keep Python's order.
+    """
+    container = params.get("container")
+    if isinstance(container, str):
+        if not isinstance(value, str):
+            return Failed(
+                code="UP2-E2002",
+                reason=f"py.in needs a str on the left, got {type_name(value)}",
+                fix='look a substring up with [["const","/public/"],["py","in","$locals.url"]]',
+            )
+        return Ok(value in container)
+    if isinstance(container, list):
+        return Ok(value in container)
+    if isinstance(container, Mapping):
+        return Ok(isinstance(value, str) and value in container)
+    return Failed(
+        code="UP2-E2002",
+        reason=f"py.in needs a str, a list or a dict to look in, got {type_name(container)}",
+        fix='write the container as the parameter: ["py","in",[200,301,302]]',
+    )
+
+
+def _operands(raw: Any, who: str) -> list[Any] | Failed:
+    """The operand of ``and``/``or``: the values to choose among, in evaluation order."""
+    if not isinstance(raw, list):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"py.{who} needs an array of operands, got {type_name(raw)}",
+            fix='write the operands as references: ["py","or",["$locals._a","$locals._b"]]',
+        )
+    return raw
+
+
+def _py_or(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Python's ``or``: the first truthy operand, otherwise the last one (``false`` when empty).
+
+    This is the "take A, else B, else C" shape, so the answer is an **operand**, not a boolean —
+    which is why it is not spelled ``any``.
+    """
+    items = _operands(params.get("operands"), "or")
+    if isinstance(items, Failed):
+        return items
+    if not items:
+        return Ok(False)
+    for item in items:
+        if item:
+            return Ok(item)
+    return Ok(items[-1])
+
+
+def _py_and(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Python's ``and``: the first falsy operand, otherwise the last one (``true`` when empty)."""
+    items = _operands(params.get("operands"), "and")
+    if isinstance(items, Failed):
+        return items
+    if not items:
+        return Ok(True)
+    for item in items:
+        if not item:
+            return Ok(item)
+    return Ok(items[-1])
+
+
 _SCALAR_PARAMS: Final[Mapping[str, Mapping[str, str]]] = {
     "urljoin": {"base": "a string"},
     "slice": {"spec": "a string"},
@@ -1014,6 +1135,60 @@ _TABLE: Final[tuple[_Entry, ...]] = (
     _Entry("bool", "convert to a boolean (former cast bool)", _py_bool),
     _Entry("list", "convert to a list (JSON array text or as-is)", _py_list),
     _Entry("from_json", "JSON text → JSON tree (former cast json)", _py_from_json),
+    _Entry(
+        "==",
+        "equal to the parameter (no type coercion)",
+        _py_eq,
+        (ParamSpec("to", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
+        "!=",
+        "not equal to the parameter",
+        _py_ne,
+        (ParamSpec("to", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
+        "<",
+        "less than the parameter (two numbers or two strings)",
+        _py_lt,
+        (ParamSpec("to", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
+        "<=",
+        "less than or equal to the parameter",
+        _py_le,
+        (ParamSpec("to", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
+        ">",
+        "greater than the parameter",
+        _py_gt,
+        (ParamSpec("to", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
+        ">=",
+        "greater than or equal to the parameter",
+        _py_ge,
+        (ParamSpec("to", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
+        "in",
+        "is the value in the parameter (Python's in: the parameter is the container)",
+        _py_in,
+        (ParamSpec("container", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
+        "or",
+        "the first truthy operand, else the last (Python's or; answers with the operand)",
+        _py_or,
+        (ParamSpec("operands", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
+        "and",
+        "the first falsy operand, else the last (Python's and)",
+        _py_and,
+        (ParamSpec("operands", Kind.REF_OR_LITERAL),),
+    ),
 )
 
 _FUNCS: Final[Mapping[str, _Fn]] = {entry.name: entry.fn for entry in _TABLE}
@@ -1032,7 +1207,7 @@ _ACTIONS: Final[Mapping[str, ActionSpec]] = {
 
 @op("py", aliases=("python",))
 class Py(Op):
-    """The allowlist function set (32 functions, closed)."""
+    """The allowlist function set (41 functions, closed)."""
 
     summary = "Python built-in allowlist functions"
     slot_roles = ("function", "params")

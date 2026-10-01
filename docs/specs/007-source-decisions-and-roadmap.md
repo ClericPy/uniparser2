@@ -249,6 +249,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | Item | Trigger condition |
 |---|---|
 | ~~`variants` (multi-shape field variants)~~ | **dissolved**: the host picks which story to run and dispatches on the product's type name (`03` §1), so in-story branching is not needed; revisit only if a real case cannot be expressed that way |
+| **Automatic pagination** (the advanced version; raised with the first artifact) | the site updates **faster than the caller's request schedule**, so a run must walk pages forward — but must **not** walk to the last page: the tail is unbounded and already-archived items would be re-scraped. What is missing is the **stopping rule** (a horizon: a watermark date, or a known item id), plus a page budget; the mechanism itself is already there (a `TaskList` step fans pages out one by one) |
 | the full TUI form | the real usage frequency of the trial bench proves it worth the investment |
 | the surface sugar of `dsl-design` (text pipeline / output template) | the input cost of hand-written JSON becomes a bottleneck; and it must be a 1:1 compilation of triples that introduces no second semantics |
 | batch trial runs (a thread pool wrapping `run()`) | N samples need to be validated in one go |

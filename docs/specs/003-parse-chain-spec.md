@@ -81,7 +81,7 @@ deleted the old `outputs` declaration for this reason: a second source of truth 
 | `key` | the step's name, used by backward references (`$reqs.items`). Whether it is required is open (§13) |
 | `parse` **or** `call` | what the step does — mutually exclusive, told apart by shape and by keyword |
 | `out` | the **type name** of the product (§3) |
-| `then` | only on a step that produces tasks: the **default continuation chain key** for the tasks it produces (§4.1); a single task item may carry its own `then` and override it |
+| `then` | on a step that produces a request or tasks (`out: "Request"` / `"TaskList"`): the **default continuation chain key**; a task item may carry its own `then` and override it (§4.1) |
 | `with` | only with `call`: the arguments handed to the host function |
 
 **A story is one layer.** Because a request's response is handled by the chain its task names (`then`), the
@@ -118,7 +118,7 @@ runs the map once per element of a list; a step runs it once for its whole input
 | Source | Names | How the name is obtained |
 |---|---|---|
 | the JSON value domain | `null` / `bool` / `str` / `int` / `float` / `list` / `dict` | from the value itself (`01` §2's type-name table) |
-| built-in **effect** types | `Request`, `TaskList` | `Request` is what a task carries; producing a `TaskList` hands the tasks to the host and **ends the run** (§4) |
+| built-in **effect** types | `Request`, `TaskList` | `Request` = one request; `TaskList` = a batch of tasks (`items`). Producing either hands the work to the host and **ends the run** (§4) |
 | built-in **data** types | `Response` | declared with `out`; validated like any other product |
 | host-registered types | `NoticeList`, `Article`, … | declared with `out`; the host registers name → constructor |
 
@@ -163,13 +163,20 @@ over a description and waits.
 
 | The step produces | The host does | What happens next |
 |---|---|---|
-| `out: "TaskList"` — items of `{ "request": Request, "then": "<chain key>" }`, one task or many | sends each `request` (concurrently, at its own pace) and, per response, starts the chain named by that task's `then` | the response becomes **that chain's input**; the run that produced the tasks is already over |
+| `out: "Request"` — one request, written as the map's own keys (`{"url": …, "method": …}`), plus the step's `then` | sends it and starts the chain `then` names with the response | the response becomes **that chain's input**; this run is over |
+| `out: "TaskList"` — `items` are tasks, each a Request plus an optional `then` | sends each task as a request (ignoring `then`) and, per response, starts the chain that task's `then` names — falling back to the step's `then` when the task has none | the response becomes **that chain's input**; the run that produced the tasks is already over |
 
-A request is therefore a **hand-off, not a suspension**: a step whose `out` is `TaskList` is the last step
-of its run, and its product is the work to be done. The step's own `then` is the default for every task it
-produces, and a task item that carries its own `then` overrides it — that is how one batch fans out to
-different parsers: which parser suits a response is the host's dispatch (`§1`), and here the dispatch key
-travels **in the data**, per task.
+A request is therefore a **hand-off, not a suspension**: a step whose `out` is `Request` or `TaskList` is
+the last step of its run, and its product is the work to be done. The step's own `then` is the default for
+every task it produces, and a task item that carries its own `then` overrides it — that is how one batch
+fans out to different parsers: which parser suits a response is the host's dispatch (`§1`), and here the
+dispatch key travels **in the data**, per task.
+
+**`then` is not part of the request structure**, so a task is a Request with exactly one extra key: the
+HTTP fields sit at the item's top level and `then` rides beside them. That flatness is not cosmetic — a
+field map's value must be a chain, so a nested `{"request": {…}}` item is `UP2-E1004` (measured) and would
+force the link through a `_url` local plus `ctx.map`. Flat keeps the common case one key longer than the
+request it describes.
 
 The `Request` structure is v0.1's built-in, unchanged:
 
@@ -488,7 +495,7 @@ that queue. No story knows a domain, a site or a business key — only the host 
   "steps": [
     { "key": "start",
       "parse": { "url": [ ["py","str",""] ] },   // only the URL; method/headers/timeout are defaults
-      "out": "TaskList",
+      "out": "Request",
       "then": "list_page" }
   ]
 }
@@ -507,9 +514,8 @@ that queue. No story knows a domain, a site or a business key — only the host 
           ["css","nodes","a[href*='/public/1681/']"],    // what is selected is `self`: node handles
           ["py","slice",":20"],
           ["each", {                                     // the second round of `css1`, per node
-              "_url":    [ ["css1","@href",""], ["py","urljoin","$globals.base_url"] ],
-              "request": [ ["ctx","map", {"url": "locals._url"}] ],   // → {"url": …}
-              "then":    [ ["const","article"] ]         // this task's own continuation chain
+              "url":  [ ["css1","@href",""], ["py","urljoin","$globals.base_url"] ],
+              "then": [ ["const","article"] ]            // this task's own continuation chain
           }] ] },
       "out": "TaskList" }
   ]
@@ -566,10 +572,9 @@ step — the same semantics): the list page's map gives
 - **A `Response` must be taken apart first.** `css` consumes text or a node, so every chain that parses a
   response starts with `["py","get","text"]` (§4.1); resolving a relative link against the final URL uses
   `["py","get","url"]`.
-- **Every value of a field map is a chain**, so a task item is assembled with `ctx.map`: `_url` computes the
-  link and `"request": [["ctx","map",{"url":"locals._url"}]]` turns it into the request dictionary. A
-  nested object literal there is `UP2-E1004` (measured); a local plus `ctx.map` is how a nested product is
-  built.
+- **A task is a Request with one extra key**, `then`, so a fan-out item needs no nesting: the HTTP fields
+  sit at the item's top level and `then` rides beside them. (A nested object *literal* inside a field map is
+  not a chain — `UP2-E1004`, measured — which is exactly why the flat shape is the one to use.)
 
 `["py","str",""]` in the seed step is the "read my own input" workaround of §13 O5: it is the identity on a
 string, but a real identity action would read better.
@@ -669,7 +674,7 @@ each one rejected:
 | R11 | `call` may have side effects but must return a serializable receipt | a callback returning nothing: it would break the single exit and make a run unreplayable |
 | R12 | built-in types are exactly `Request` and `Response` | a larger built-in vocabulary (`Url`, `Page`, `Json`): business meaning in the engine |
 | R13 | one batched effect carries a fan-out; concurrency is the host's | forking a run per item as the only way to fan out: it makes concurrency a host convention instead of a first-class effect |
-| R14 | a request is a **hand-off**, not a suspension: the step produces a `TaskList` and its run ends; each task carries `{request, then}` and the response becomes the input of the chain `then` names | resuming the same run with the response: it makes "which parser for this response" an implicit consequence of one story's shape, while the key is exactly what must travel per response |
+| R14 | a request is a **hand-off**, not a suspension: the step produces a `TaskList` and its run ends; each task is a Request plus a `then`, and the response becomes the input of the chain `then` names | resuming the same run with the response: it makes "which parser for this response" an implicit consequence of one story's shape, while the key is exactly what must travel per response |
 | R15 | the default unit is **one story per layer**, joined by tasks | keeping the whole flow in one story: it forces one run to span several network boundaries whose answers belong to *different* parsers |
 
 ### 12.2 `D-03-2` — materialization is on demand (unchanged from v0.1)
@@ -698,4 +703,5 @@ argument shape of `each`.
 | O4 | may a step override the chain-level `policy`? | open |
 | O5 | an explicit "return the input unchanged" action: a step that reads its own input (the seed step, whose `url` *is* the run's input) has no clean spelling today — `["py","str",""]` is the identity on a string (measured, used in §11.1) and `["ctx","set","locals._u"]` passes any value through (measured) but reads as a side effect | open, small |
 | O6 | how far the trace goes (`06` §5.1's structure) and whether a recorded run is the replay format | open, belongs with the trial UI |
-| O7 | the **name of the task product type**: `TaskList` (used throughout this note, since its items are `{request, then}` and not bare requests) versus keeping the v0.1 name `RequestBatch` | open, naming |
+| O7 | the **name of the task batch product type**: `TaskList` (used throughout this note, since its items are requests plus a `then`) versus keeping the v0.1 name `RequestBatch` | open, naming |
+| O8 | how a task's `then` is chosen when it **varies per item**: a constant works, and a chain can compute one from the item's own data, but "route by a lookup" (this URL shape → that parser) needs a mechanism or it stays a host table | open, raised by the first artifact |

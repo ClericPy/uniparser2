@@ -49,7 +49,7 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 │ ① Input                │ ② Chain editor                 │ ③ Output                         │
 │                        │                                │                                  │
 │ ○ Sample file          │ {                              │ ── exit product ──               │
-│ ○ Paste text           │   "dsl_version": 1,            │ {                                │
+│ ○ Paste text           │   "policy": { … },             │ {                                │
 │ ○ Load file...         │   "globals": { … },            │   "url": "https://...",          │
 │                        │   "steps": [ ... ]             │   "title": "..."                 │
 │ ┌───────────────────┐  │                                │ }                                │

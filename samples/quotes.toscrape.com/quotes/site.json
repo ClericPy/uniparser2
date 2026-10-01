@@ -1,0 +1,63 @@
+{
+  "globals": {
+    "base_url": "https://quotes.toscrape.com"
+  },
+  "policy": {
+    "on_missing": "drop",
+    "on_error": "raise"
+  },
+  "chains": {
+    "list": [["py", "get", "text"], ["css", "@href", "div.quote a[href^='/author/']"]]
+  },
+  "steps": [
+    {
+      "key": "start",
+      "parse": {
+        "url": [["py", "str", ""]]
+      },
+      "out": "Request",
+      "chain": "list"
+    },
+    {
+      "key": "authors",
+      "parse": {
+        "items": [
+          ["py", "uniq", ""],
+          [
+            "each",
+            {
+              "url": [["py", "str", ""], ["py", "urljoin", "$globals.base_url"]]
+            }
+          ]
+        ]
+      },
+      "out": "RequestBatch"
+    },
+    {
+      "key": "records",
+      "parse": {
+        "items": [
+          [
+            "each",
+            {
+              "url": [["py", "get", "url"]],
+              "name": [["py", "get", "text"], ["css1", "text", "h3.author-title"], ["py", "normalize_space", ""]],
+              "born_date": [["py", "get", "text"], ["css1", "text", "span.author-born-date"], ["py", "strip", ""]],
+              "born_location": [
+                ["py", "get", "text"],
+                ["css1", "text", "span.author-born-location"],
+                ["py", "strip", ""]
+              ],
+              "description": [
+                ["py", "get", "text"],
+                ["css1", "text", "div.author-description"],
+                ["py", "normalize_space", ""]
+              ]
+            }
+          ]
+        ]
+      },
+      "out": "AuthorList"
+    }
+  ]
+}

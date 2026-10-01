@@ -87,7 +87,7 @@
 | **V** | the article row's `list_title` was already lost at `doc_register` | **valid, dissolved**: there is no `doc`/`doc_register`; a field is either in the chain or in `inputs` | `03` §8.3 |
 | **W** | the relation between field error policies and the two business gates was undefined | **partially valid, re-attributed**: the kernel produces only the tri-state (`02` §5); "is the trio complete" is a **host** gate, not part of the kernel | `02` §5, `03` §11.2 |
 
-**Summary**: of the 18, **16 are dissolved or corrected at the chain-spec level**, 1 (**M**) is left to `variants` in **L4**, and 1 (**W**) is judged a host concern and explicitly demarcated.
+**Summary**: of the 18, **17 are dissolved or corrected at the chain-spec level** (item **M** moved from "left to `variants` in L4" to "the host picks the story", `03` §1), and 1 (**W**) is judged a host concern and explicitly demarcated.
 
 **One further finding beyond the 18**: in §5 of draft `02` the first row of the table is "walkthrough placeholder: all three sections are filled, this row does not exist", and rows 16–19 are **repeated three times** — the blocker summary table of the original has copy-paste residue. This design takes the 18 blockers marked with ⚠ in the body text as authoritative (A–G, M–S, T–W) and ignores the row numbers of the summary table.
 
@@ -190,29 +190,38 @@ This round started from "build the scaffold + the conformance mechanism first, a
 
 | Deliverable | Content |
 |---|---|
-| Field-chain orchestration | multi-field sequential evaluation, cross-field `locals` references, chain-level/node-level/field-level overrides of `on_missing`/`on_error` |
-| **Lists and nesting** | `each` iteration (one dictionary per element, with the per-element scope), `result` templates, `$lit` escaping, arbitrarily deep nested `dict`/`list` |
-| Chains and the export | the three node types, the executor, `routes` dispatch, `emit`'s `flat` / `record` and **per-item products**, the built-in `$request` structure (assembled only, never sent) |
-| schema | the own restricted Schema validator + `register_schema` |
+| Field-map orchestration | multi-field evaluation over one input, cross-field `locals` references, chain-level / step-level / field-level overrides of `on_missing` / `on_error` |
+| **Lists and nesting** | `each` iteration (one dictionary per element, with the per-element scope), `$lit` escaping, arbitrarily deep nested `dict`/`list` |
+| **The story** | the linear step sequence (`parse` = a chain or a field map / `call` = a host function, plus `out`), the type registry and the step-boundary validation, the executor and the run loop (`start` / `next` / `send`) |
+| Effects | `Request` / `RequestBatch` → `Response` (`03` §4.1); `call` → a serializable receipt; trace versus suspension |
+| materialization | the run-scoped, byte-capped cache (`03` §6) — load-bearing for acceptance item 7 |
 | lint | every live rule of `03` §10, each with at least one test (L20 is retired with `presets`) |
 | trace | `up2 trial --trace --json` (the data structure of `06` §5.1) |
 | trial bench | `up2 studio` (pywebview three-column + trace + save as a snapshot), with TUI/CLI fallback |
-| cases | the two `ah.gov.cn` chains (`03` §11) + samples + snapshots; a set of "pure structure" chains (multi-level nesting, a list of lists, a list turned into a dict) |
+| cases | the two `ah.gov.cn` flows as **stories** (`03` §11) + samples + snapshots; a set of "pure structure" stories (multi-level nesting, a list of lists, a list turned into a dict) |
 
-> **Iteration redesign (change `l2-chain-structure-and-each`, landed in the operator layer)**: the `select` fan-out, the `callback` operator with its `presets` container, the `$map` template directive and the `item` scope root were **retired in favour of one operator, `each`** (`02` §6.9, `03` §4.1). It takes the list the stage above produced plus an **inline field map** (`field name → chain`, the same shape a node's `fields` has) and yields one dictionary per element; a `_`-prefixed field name is a local of that element, and every element is evaluated in its own child scope. `$item` is gone because the element is simply the input value of each field chain, and lint L20 is retired with the container. Implemented in the operator layer: 61 `(operator, action)` pairs, 26 error codes, `MAX_EACH_DEPTH` / `MAX_EACH_ITER` / `MAX_FIELDS_PER_MAP` (`01` §9).
+> **Story supersession (design note `03` v0.2, design notes only)**: the L2 structure layer is a **story** —
+> a linear sequence of typed steps — instead of the v0.1 node graph. `seed` / `parse` / `emit`, `entry`,
+> `nodes`, `next` / `routes` / `default_route`, the `emit` export shapes (`record` / `flat` / `request`),
+> the `result` template and the graph lints are all retired; `03` §12.1 records the rulings and the
+> alternatives each one rejected. Dispatch by the product's type name lives in the **host**, and a step
+> whose `out` is `Request` suspends the run so the host can send it. The `03` section numbers cited inside
+> §2 below refer to `03` v0.1's numbering, which no longer matches the rewritten note.
 
-> **Input materialization ruling (change `l2-input-materialization-ruling`, design notes only)**: `input_format` / `parse.format` are **deleted** — the format is decided by the operator that consumes the value (`css`/`css1` → HTML, `json` → JSON text, `xpath` → XML), and a **run-scoped, byte-capped cache** (`MAX_MATERIALIZE_BYTES`, 64 MiB by default, `01` §9) keeps it to one parse per document (`03` §3.1). The cache is **load-bearing, not an optimization**: acceptance item 7 below ("a chain of 500 items × 20 fields within 3 s") depends on it, so it needs its own tests (hit-vs-miss equality, eviction, release at the end of a run). Measured on this commit: one parse costs 48.0 ms at 2 MB and 109.6 ms at 5 MB, the tree is ≈24× the text in memory, and 20 fields that each re-parse take 748.8 ms / 1976.7 ms against 16.5 ms / 48.6 ms when one parse serves all 20. `globals` stays a read-only chain-level constant and cross-node sharing stays with node products (`03` §3, §8); `bytes` never enters a chain, so decoding is the caller's job.
+> **Iteration redesign (change `l2-chain-structure-and-each`, landed in the operator layer)**: the `select` fan-out, the `callback` operator with its `presets` container, the `$map` template directive and the `item` scope root were **retired in favour of one operator, `each`** (`02` §6.9, `03` §7). It takes the list the stage above produced plus an **inline field map** (`field name → chain`, the same shape a step's field map has) and yields one dictionary per element; a `_`-prefixed field name is a local of that element, and every element is evaluated in its own child scope. `$item` is gone because the element is simply the input value of each field chain, and lint L20 is retired with the container. Implemented in the operator layer: 72 `(operator, action)` pairs, 26 error codes, `MAX_EACH_DEPTH` / `MAX_EACH_ITER` / `MAX_FIELDS_PER_MAP` (`01` §9).
+
+> **Input materialization ruling (change `l2-input-materialization-ruling`, design notes only)**: `input_format` / `parse.format` are **deleted** — the format is decided by the operator that consumes the value (`css`/`css1` → HTML, `json` → JSON text, `xpath` → XML), and a **run-scoped, byte-capped cache** (`MAX_MATERIALIZE_BYTES`, 64 MiB by default, `01` §9) keeps it to one parse per document (`03` §6). The cache is **load-bearing, not an optimization**: acceptance item 7 below ("a chain of 500 items × 20 fields within 3 s") depends on it, so it needs its own tests (hit-vs-miss equality, eviction, release at the end of a run). Measured on this commit: one parse costs 48.0 ms at 2 MB and 109.6 ms at 5 MB, the tree is ≈24× the text in memory, and 20 fields that each re-parse take 748.8 ms / 1976.7 ms against 16.5 ms / 48.6 ms when one parse serves all 20. `globals` stays a read-only chain-level constant and cross-step sharing stays with step products (`03` §2, §8); `bytes` never enters a chain, so decoding is the caller's job.
 
 **Acceptance**
 
-1. It can produce and snapshot: `list[dict]` (a list page with 20 items), a `dict` containing a `list[dict]` (two or more levels of nesting), a list turned into a `dict` (`ctx.map`), and the `request` structure (`produces:"request"`).
-2. The `ah.gov.cn` collection chain produces 20 items on a real page fragment; the parse chain produces a single record conforming to `$article`.
+1. It can produce and snapshot: `list[dict]` (a list page with 20 items), a `dict` containing a `list[dict]` (two or more levels of nesting), a list turned into a `dict` (`ctx.map`), and a `Request` product (assembled only; handed to the host as an effect).
+2. The `ah.gov.cn` collection **story** produces 20 items on a real page fragment, crossing the network boundary through one `RequestBatch` effect; the detail story produces a single record of the registered `Article` type.
 3. Each "fixed" blocker among the 18 of draft `02` has a corresponding test (**named item by item**, see §2).
 4. All 22 behavior tests of the old v3's `test_parsers.py` pass in the form of a "behavior dictionary" (API compatibility is not required).
 5. Each live lint rule of `03` §10 has a positive and a negative case (L20 is retired).
 6. All 7 UI acceptance items of `06` §10 pass, among which "works with the network down" must be tested under a real network disconnection.
-7. A chain of 500 items × 20 fields finishes within 3 s (`05` §4.4).
-8. **Disproof**: no domain name or business key appears as an **engine concept** in any L1/L2 case (it appears only as an ordinary value of the caller's `inputs`).
+7. A story of 500 items × 20 fields finishes within 3 s (`05` §4.4).
+8. **Disproof**: no domain name or business key appears as an **engine concept** in any L1/L2 case (it appears only as an ordinary value of the run's input).
 
 ---
 
@@ -223,7 +232,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | Store | the `TemplateStore` protocol + `FileStore` + `SqliteStore` + fingerprints + auditing; `root_domain` / `tpl_key` are introduced for the first time |
 | publish gate | G1 mandatory lint, G2 snapshot regression, G3 coverage confirmation, no-op detection, `--skip-tests` leaving a trace |
 | SOP | `up2 snapshot` / `up2 test` / `up2 get` / `up2 list` / `up2 audit` / `up2 doctor`; `04` §7 written as an executable document |
-| host seam | a "consume the request dict" example (`emit.produces="request"` → the host HTTP layer); a "host implements TemplateStore (MySQL) + dispatches by key" example |
+| host seam | a "consume the request dict" example (a step whose `out` is `Request` → the host HTTP layer, `03` §4.1); a "host implements TemplateStore (MySQL) + dispatches by key" example |
 
 **Acceptance**
 
@@ -239,11 +248,11 @@ This round started from "build the scaffold + the conformance mechanism first, a
 
 | Item | Trigger condition |
 |---|---|
-| `variants` (multi-shape field variants) | the maintenance cost of "splitting into multiple chains" on real sites proves too high |
+| ~~`variants` (multi-shape field variants)~~ | **dissolved**: the host picks which story to run and dispatches on the product's type name (`03` §1), so in-story branching is not needed; revisit only if a real case cannot be expressed that way |
 | the full TUI form | the real usage frequency of the trial bench proves it worth the investment |
 | the surface sugar of `dsl-design` (text pipeline / output template) | the input cost of hand-written JSON becomes a bottleneck; and it must be a 1:1 compilation of triples that introduces no second semantics |
 | batch trial runs (a thread pool wrapping `run()`) | N samples need to be validated in one go |
-| an adapter layer that issues requests itself | when the user explicitly wants `uniparser2` to issue requests itself (currently a deliberate break point, see `03` §5.2) |
+| an adapter layer that issues requests itself | when the user explicitly wants `uniparser2` to issue requests itself (currently a deliberate break point: a story hands a `Request` to the host, `03` §4.1) |
 
 ---
 
@@ -256,11 +265,11 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | **c** | whether the trial bench also implements a TUI | `06` §7, `L2` effort | it is recommended to build only pywebview + CLI first and leave the TUI until a real need appears |
 | **d** | when to initialize OpenSpec | `05` §5.2 | it is recommended to **init at the very start of `L1`** (changes and capabilities aligned from the operator layer on) rather than waiting for the scaffold to be complete |
 | **e** | whether the import name and the old `uniparser` need to coexist in the same environment | `01` §1.2 | coexistence is not recommended; if it is unavoidable, `uniparser2` and `uniparser` have no naming conflict (different top-level packages), so no special handling is needed |
-| **f** | whether an integrated orchestration of "collection chain → parse chain" (`run_pipeline`) is needed | `03` §8.3 currently loops in the caller | not recommended: the kernel keeps "one `run`, one chain"; integrated orchestration belongs to the host |
-| **g** | whether `variants` should be brought forward | `03` §12 | keep it at `L4`; first validate the cost of "splitting chains" on real sites |
+| **f** | whether an integrated orchestration of "collection story → detail story" (`run_pipeline`) is needed | `03` §8.3 currently loops in the caller | not recommended: the kernel keeps "one run, one story"; integrated orchestration belongs to the host (and a story may already fetch for itself through a `Request` effect) |
+| ~~**g**~~ | ~~whether `variants` should be brought forward~~ | — | **dissolved**: dispatch by product type name lives in the host (`03` §1) |
 | **h** | the own restricted Schema language vs adopting JSON Schema directly | `01` §6.1 | the own vocabulary is recommended (both the LLM generation cost and the error-message quality are better); if integration with external tooling is needed later, add a JSON Schema converter |
-| **i** | how an `emit` node with `produces: "flat"` names the field it exports (a `field` key of `emit.config`, a `flat_field` beside `route_field`, or a top-level `field`), now that a per-item list is a named field rather than the node's whole product | `03` §5.1; the node-layer change | the *shape* is settled (an explicit name, no implicit "the single key is the export"); the key and its placement are left to the node-layer change, which is where `flat` gets implemented |
-| **j** | whether a `_` name reused at two nesting levels should be a compile-time error instead of an authoring rule (the read fallback is **by name**, so the inner name simply wins) | `03` §4.2; the node-layer change | defer it to the node layer: one check there sees a node's `fields` names as well, so it covers every level instead of only `each` inside `each`; the alternative — a strictly local `$locals` plus explicit outer references (`locals.__parent__…`, `$loop.parent…`) — was rejected because every cross-layer read would then have to count nesting levels |
+| ~~**i**~~ | ~~how an `emit` node with `produces: "flat"` names the field it exports~~ | — | **dissolved**: there is no `emit` and no `flat`; a collection is a named field of a step's product and `out` names its type (`03` §9) |
+| **j** | whether a `_` name reused at two nesting levels should be a compile-time error instead of an authoring rule (the read fallback is **by name**, so the inner name simply wins) | `03` §7; the story layer | defer it to the story layer: one check there sees a step's field-map names as well, so it covers every level instead of only `each` inside `each`; the alternative — a strictly local `$locals` plus explicit outer references (`locals.__parent__…`, `$loop.parent…`) — was rejected because every cross-layer read would then have to count nesting levels |
 
 **Resolutions** (settled with the project owner; this list is what allowed the design notes to be
 migrated into `docs/specs/`, per `05` §5.4):
@@ -273,10 +282,10 @@ migrated into `docs/specs/`, per `05` §5.4):
 | **d** | **settled** — OpenSpec is initialized in this repository (`openspec/config.yaml`); the change `add-code-sandbox-operator` has been archived (`openspec/changes/archive/2026-09-29-add-code-sandbox-operator/`) and its `code-execution` capability merged into `openspec/specs/code-execution/spec.md`. |
 | **e** | **settled** — coexistence with the old `uniparser` is not needed (the two projects are essentially unrelated). |
 | **f** | **settled** — no integrated orchestration for now; keeping "one `run`, one chain` stands, and turning a chain's output into a `request` structure before sending it remains a host concern to be thought through later. |
-| **g** | **settled** — `variants` stays reserved at `L4`; revisit once real sites show that splitting chains costs too much. |
+| **g** | **settled** — `variants` is **dissolved**: the host picks which story to run and dispatches on the product's type name (`03` §1); revisit only if a real case cannot be expressed that way. |
 | **h** | **deferred by choice** — the parameter Schema language will be reconsidered later (candidates named: `pydantic` / `msgspec`); until then the own restricted vocabulary stands. |
-| **i** | **deferred by choice** — the node-layer change decides the key and its placement (it is also where `produces: "flat"` gets implemented); the shape — an explicit field name, never an implicit single-key rule — is settled. |
-| **j** | **deferred by choice** — the scope rule is stated as implemented (the fallback is by name, so the current scope's name wins outright); the collision check lands with the node layer, where the same compilation site sees a node's `fields` names too. |
+| **i** | **dissolved** — there is no `emit` and no `flat` any more (`03` §12.1): a collection is a named field of a step's product and `out` names its type. |
+| **j** | **deferred by choice** — the scope rule is stated as implemented (the fallback is by name, so the current scope's name wins outright); the collision check lands with the story layer, where the same compilation site sees a step's field-map names too. |
 
 ---
 

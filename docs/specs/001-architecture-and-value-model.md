@@ -15,7 +15,7 @@ callers (host / CLI)            │  cli/      command entry (lint / trial / …
                                 └────────────────────────┬─────────────────────────────────────┘
                                                          │ depends only on the public interface of core / chain
                                 ┌────────────────────────▼─────────────────────────────────────┐
-chain (specs & orchestration)   │  graph/    node model · sequential executor · lint           │
+chain (specs & orchestration)   │  story/    step model · the run loop · lint                 │
                                 │  sop/      SOP orchestration (validate, trial run, publish)  │
                                 └────────────────────────┬─────────────────────────────────────┘
                                                          │ depends only on the public interface of core
@@ -39,7 +39,7 @@ ops (each lazy-imports)         │  html(css/css1) · xml(xpath) · json · re 
 | I3 | **exactly one function** may produce the final product (`core.export.pack`); `N5` is guaranteed in exactly one place | the export type guarantee fails (R5 of the old v3) |
 | I4 | **the compile product and the chain data are separate**: `compile()` returns a standalone object, and never hangs the compile result on a `str` subclass or on the chain dict | the dual payload of the old v3's `CompiledString` (R3) |
 | I5 | operators are **without side effects, without IO, without global state**; the write surface of `ctx` is limited to `locals` | `N1` fails and the chain is not replayable |
-| I6 | control flow **may only appear in the form of fields** (`each` / `routes` / `on_missing`), and there are no reserved keys in the result namespace | the old v3's protocol-like keys such as `__object__` (R2) |
+| I6 | control flow **may only appear in the form of fields** (`each` / the policy), and branching **never appears inside a story** — the host picks the story and dispatches on the product's type name (`03` §1); there are no reserved keys in the result namespace | the old v3's protocol-like keys such as `__object__` (R2) |
 | I7 | third-party engines may only be **lazily imported**; at import time only `find_spec` probing is allowed | a missing dependency makes the import fail and the whole package unusable (R7) |
 | I8 | any chain that reaches the runtime has **already passed every lint**; the runtime performs no structural validation | `N3` fails and a bad chain blows up halfway |
 
@@ -51,12 +51,12 @@ src/uniparser2/
     values.py     value-domain types + Opaque handles + type decisions + canonicalize
     errors.py     tri-state (Ok/Missing/Failed) + error codes + exception hierarchy
     limits.py     resource limit constants (the single source)
-    ast.py        the normalized model of stages / fields / nodes / chains (compile-time input)
+    ast.py        the normalized model of stages / fields / steps / stories (compile-time input)
     registry.py   operator registry (@op decorator + optional dependency probing)
     compile.py    chain → CompiledGraph: lint + Schema validation + expression pre-compile + fingerprint
-    evaluator.py  stage evaluation + field-chain evaluation + node advance
+    evaluator.py  stage evaluation + field-chain evaluation + step advance
     export.py     export packing (the single product point) + built-in schema validation
-    refs.py       reference syntax parsing and evaluation (`$<scope|node>.<path>`)
+    refs.py       reference syntax parsing and evaluation (`$<scope|step>.<path>`)
   ops/
     htmldom.py    css / css1 (one shared action table + the first_only flag, engine selectolax)
     xmlxpath.py   xpath (lxml)
@@ -67,7 +67,7 @@ src/uniparser2/
     ctx.py        ctx (get/set/del/map)
     udf.py        udf (host-registered functions)
   graph/
-    model.py      node TypedDict / dataclass
+    model.py      step TypedDict / dataclass
     executor.py   sequential executor (no DAG, no join)
     lint.py       the lint checklist (`03` §10)
   store/
@@ -123,7 +123,7 @@ Value     = JsonValue | Opaque
 | **Do not adopt the D1-b Row model** | it would promote the special case of "a list page" to a global model, wrapping scalar scenarios in containers |
 | **Do not adopt the D1-d stream model** | the export needs a fold to finish, the mental burden is permanent, and low-code users cannot follow it |
 | **`Opaque` is an explicit type** | `self` / `nodes` produce node handles; **the export packing layer rejects `Opaque`** (`N5`), so a value must pass through a serializing action such as `text` / `html` / `@attr` before it can leave the chain |
-| **`bytes` never enters the value domain** | the caller decodes (`run(chain, inputs)` and the CLI's `--input K=@file` hand over text); a tree is built on demand by the operator that consumes the value, under a run-scoped cache (`03` §3.1) |
+| **`bytes` never enters the value domain** | the caller decodes (`start(story, value)` and the CLI's `--input K=@file` hand over text); a tree is built on demand by the operator that consumes the value, under a run-scoped cache (`03` §6) |
 
 **Lessons from v3**: the `_RECURSION_LIST` boolean flag let every operator decide on its own "whether to expand a list element by element", scattering the behavior across 14 classes (the internal source material, not shipped in this repository, `uniparser-essence.md` §5-R). This design **does not have that flag**: a list is produced by an ordinary operator (`css nodes` / `xpath nodes` / `re findall` / `json`) and expanded in exactly one place — an explicit `each` stage whose field map says what one element becomes — and the behavior of any operator on a `list` input must be written down explicitly in its own Schema.
 
@@ -164,11 +164,11 @@ A policy may be declared at **three levels**, with the nearest one overriding:
 |---|---|---|
 | chain level | `graph.policy.on_missing` / `graph.policy.on_error` | `empty` / `raise` |
 | field level | the object form of a field definition `{"chain": [...], "on_missing": "drop"}` | inherits the chain level |
-| node level | `node.config.policy` | inherits the chain level |
+| step level | `step.policy` | inherits the chain level |
 
 > L1 implements only the **chain level**: the caller passes one `Policy` to `eval_field` (the CLI exposes
-> it as `--on-missing` / `--on-error`). Field- and node-level declarations belong to the L2 chain format
-> (`03` §4.2); L2 merges the three levels into that single `Policy`, so the kernel API stays unchanged.
+> it as `--on-missing` / `--on-error`). Field- and step-level declarations belong to the L2 story format
+> (`03` §7); L2 merges the three levels into that single `Policy`, so the kernel API stays unchanged.
 
 Policy vocabulary (the tri-state × policy settlement table):
 
@@ -205,7 +205,7 @@ def compile(chain: Chain) -> CompiledGraph: ...
 
 | Phase | What it does | What it must not do |
 |---|---|---|
-| **Compile time** | full lint (`03` §10); Schema validation of every operator's arguments; action legality validation; reference resolution and the "may only point backward" check; pre-compilation of CSS selectors / regexes / jmespath expressions; `result` template validation; schema name resolution; fingerprint computation | any IO, any evaluation, any network |
+| **Compile time** | full lint (`03` §10); Schema validation of every operator's arguments; action legality validation; reference resolution and the "may only point backward" check; pre-compilation of CSS selectors / regexes / jmespath expressions; `out` type resolution; fingerprint computation | any IO, any evaluation, any network |
 | **Runtime** | pure evaluation: execute the stages according to the compile product, produce the value-domain tree, pack the export | structural validation, string parsing, any reflection other than looking an operator up by name |
 
 Key points:
@@ -248,7 +248,7 @@ The export structure is limited and must be friendly to LLM generation, so a **r
 | the `?` suffix | optional (`null` and a missing key are both legal) |
 | `[...]` | a list whose elements are described by the inner description |
 | `{...}` | a nested object |
-| built-in named schemas | `$request` (structure in `03` §5.2), `$article`, `$file` (host-registered, `04` §7) |
+| built-in types | `Request` / `Response` (structures in `03` §4.1), plus host-registered types (`Article`, `NoticeList`, …; `03` §3) |
 
 **Reason**: JSON Schema's expressive power is excessive for this scenario, and an LLM's error rate and token cost when generating JSON Schema are both significantly higher; the restricted vocabulary covers 100% of this engine's export shapes, and error messages can be precise down to "which key of which list element".
 
@@ -280,11 +280,11 @@ class CssOp: ...
 |---|---|
 | **Code execution** | `core/` contains no `eval`/`exec`/`compile`/`__import__`, and a rule cannot reach host code: `udf` only looks a name up in the host registry, and an unregistered name is a compile-time error (`UP2-E1010`). The **one exception** is the opt-in `code` sandbox (`02` §6.12): measured there, `compile`/`__import__` do not exist and file/environment/network/process reach **fails** (absent or blocked, per surface), while the language features `eval`/`exec` do exist and grant no capability of their own (`04` §11.3) |
 | **IO** | the kernel does no network or file work; `store/` is the only layer that touches disk, and it stores only chains and audits (it does not store input or output content unless `--save-sample` is explicit) |
-| **SSRF / fetching surface** | the kernel issues no requests, so this surface does not exist; the request dict is consumed by the host, and the host does its own URL allowlisting (this design only declares the structure, in `03` §5.2) |
+| **SSRF / fetching surface** | the kernel issues no requests, so this surface does not exist; the request dict is consumed by the host, and the host does its own URL allowlisting (this design only declares the structure, in `03` §4.1) |
 | **Regex backtracking (ReDoS)** | at compile time a **nested-quantifier check** is run on regexes and reports `UP2-E1013`. **Measured correction**: Python 3.13/3.14 `re` **has no `timeout` argument**, so **there is no timeout backstop at runtime** — static detection catches only the most classic shape (`(a+)+`), and missed shapes such as overlapping alternations are a recorded gap (`02` §6.3) |
 | **Resource exhaustion** | see §9 limits: the shape of a chain is validated entirely at compile time, and the iteration count is validated at runtime |
-| **Reference out of bounds** | a reference may only point at a **declared** scope and the **declared product keys** of preceding nodes; a `_`-prefixed key referenced **across nodes** is rejected (`UP2-E1014`), while within its own node it is legal |
-| **Cycles** | chains are acyclic (`UP2-E1104`); `each` field-map nesting depth is limited; the path list of `ctx.map` cannot reference itself |
+| **Reference out of bounds** | a reference may only point at a **declared** scope and the **declared product keys** of preceding steps; a `_`-prefixed key referenced **across steps** is rejected (`UP2-E1014`), while within its own step it is legal |
+| **Cycles** | a story is a linear sequence, so a cycle cannot be expressed at all (the v0.1 graph and its `UP2-E1104` check are retired, `03` §12.1); `each` field-map nesting depth is limited; the path list of `ctx.map` cannot reference itself |
 | **Deserialization** | chains are read from JSON only, never with `pickle`/`yaml.load` (unsafe loaders are never used); after a Store reads a chain back it **must `compile()` again**, and the compile product in storage is never trusted |
 
 ---
@@ -298,16 +298,16 @@ The limit constants are centralized in one place, taken from there by both compi
 | Constant | Value | Applied at | Landing layer |
 |---|---|---|---|
 | `MAX_STEPS_PER_FIELD` | 32 | cap on the number of stages per field (compile time, exceeding it gives `UP2-E1012`) | **L1 (implemented)** |
-| `MAX_NODES` | 64 | cap on the number of nodes in a chain (compile time) | L2 |
-| `MAX_FIELDS_PER_NODE` | 128 | cap on the number of fields per node (compile time) | L2 |
+| `MAX_NODES` | 64 | cap on the number of **steps** in a story (compile time) | L2 |
+| `MAX_FIELDS_PER_NODE` | 128 | cap on the number of fields per **step** (compile time) | L2 |
 | `MAX_EACH_DEPTH` | 3 | `each` field-map nesting depth (compile time, exceeding it gives `UP2-E1012`) | **L1 (implemented)** |
 | `MAX_EACH_ITER` | 10_000 | number of elements a single `each` iterates (turned into `Failed` at runtime, `UP2-E2012`) | **L1 (implemented)** |
 | `MAX_FIELDS_PER_MAP` | 256 | cap on the fields of **one field map** (compile time, exceeding it gives `UP2-E1012`) | **L1 (implemented)** |
 | `MAX_TEXT_BYTES` | 16 MiB | byte cap on an accepted input (turned into `Failed` when the input is accepted, before any operator sees it) | L2 |
-| `MAX_MATERIALIZE_BYTES` | 64 MiB | cap on the run-scoped materialization cache, accounted in **materialized** bytes (`03` §3.1); LRU, and one artifact may exceed it while it is in use | L2 |
-| `MAX_MATERIALIZE_ITEMS` | 8 | how many materialized artifacts one run keeps (`03` §3.1) | L2 |
+| `MAX_MATERIALIZE_BYTES` | 64 MiB | cap on the run-scoped materialization cache, accounted in **materialized** bytes (`03` §6); LRU, and one artifact may exceed it while it is in use | L2 |
+| `MAX_MATERIALIZE_ITEMS` | 8 | how many materialized artifacts one run keeps (`03` §6) | L2 |
 
-> **`MAX_FIELDS_PER_MAP` and `MAX_FIELDS_PER_NODE`**: a field map is the shape both `each` and an L2 node's `fields` block use, so the per-map cap is checked on every map, and the compilation cost it guards is per map. When the node layer lands, `MAX_FIELDS_PER_NODE` (128) becomes the tighter per-node cap on top of it.
+> **`MAX_FIELDS_PER_MAP` and `MAX_FIELDS_PER_NODE`**: a field map is the shape both `each` and a step's field map use, so the per-map cap is checked on every map, and the compilation cost it guards is per map. When the story layer lands, `MAX_FIELDS_PER_NODE` (128) becomes the tighter per-step cap on top of it.
 
 > **Deleted constant**: `REGEX_TIMEOUT_S`. It originally corresponded to `UP2-E2006` "regex execution timeout", but Python's `re` has no `timeout` argument (measured), so this constant has no real point of application. The constant and its error code are removed rather than leaving a false promise.
 
@@ -321,9 +321,9 @@ Absorbing the old v3's "library logging conventions": in `__init__.py`, `logger 
 
 | Event | Level | Payload |
 |---|---|---|
-| compile ok | `DEBUG` | `chain_id` / `tpl_key` / fingerprint / node count / elapsed time |
-| stage evaluation | `DEBUG` | node key / field name / stage index / action / elapsed time / tri-state (**off by default**; the trial bench's trace does not depend on logs) |
-| a tri-state of `Failed` | `WARNING` | error code + one-sentence reason + node/field location |
+| compile ok | `DEBUG` | `chain_id` / `tpl_key` / fingerprint / step count / elapsed time |
+| stage evaluation | `DEBUG` | step key / field name / stage index / action / elapsed time / tri-state (**off by default**; the trial bench's trace does not depend on logs) |
+| a tri-state of `Failed` | `WARNING` | error code + one-sentence reason + step/field location |
 | export packing failure | `WARNING` | error code + JSON Pointer + expected type vs actual type |
 | missing operator dependency | `INFO` (on the first `up2 ops`) | operator name + missing dependency + install command |
 

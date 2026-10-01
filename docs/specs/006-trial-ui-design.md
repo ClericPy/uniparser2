@@ -48,10 +48,10 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 ├────────────────────────┬────────────────────────────────┬──────────────────────────────────┤
 │ ① Input                │ ② Chain editor                 │ ③ Output                         │
 │                        │                                │                                  │
-│ ○ Sample file          │ {                              │ ── export JSON ──                │
+│ ○ Sample file          │ {                              │ ── exit product ──               │
 │ ○ Paste text           │   "dsl_version": 1,            │ {                                │
-│ ○ Load file...         │   "entry": "seed-0001",        │   "url": "https://...",          │
-│                        │   "nodes": [ ...               │   "title": "..."                 │
+│ ○ Load file...         │   "globals": { … },            │   "url": "https://...",          │
+│                        │   "steps": [ ... ]             │   "title": "..."                 │
 │ ┌───────────────────┐  │                                │ }                                │
 │ │ text/HTML preview │  │ (inline error highlight +      │                                  │
 │ │                   │  │ explanation on the right)      │ ── this run ──                   │
@@ -62,13 +62,15 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 ├────────────────────────────────────────────────────────────────────────────────────────────┤
 │ ④ Single-step trace                                                                        │
 │ ┌────────────────────────────────────────────────────────────────────────────────────────┐ │
-│ │ #  Node        Field      Stage                       Input        Output       State  │ │
-│ │ 1  seed-0001   —          (inject text 186 KB)        —            Opaque       Ok     │ │
-│ │ 2  parse-0001  —          select nodes → 20 items     Opaque       20 items     Ok     │ │
-│ │ 3  parse-0001  url        [css @href ""]              <a>          "/p/1"       Ok     │ │
-│ │ 4  parse-0001  url        [py urljoin base]           "/p/1"       https...     Ok     │ │
-│ │ 5  parse-0001  pub_time   [css @content meta]         <meta>       Missing      ·      │ │
-│ │ 6  emit-0001   —          produces=record → 20 copies —            20 dict      Ok     │ │
+│ │ #  Step        Field      Do                            Input        Output       State  │ │
+│ │ 1  (input)     —          —                             text 186 KB  —            ·      │ │
+│ │ 2  reqs        —          parse: nodes → 20 items       text         20 items     Ok     │ │
+│ │ 3  reqs        url        [css @href ""]                <a>          "/p/1"       Ok     │ │
+│ │ 4  reqs        url        [py urljoin base]             "/p/1"       https...     Ok     │ │
+│ │ 5  reqs        —          effect: request × 20          RequestBatch —            ⇢      │ │
+│ │ 6  rows        pub_time   [css @content meta]           <meta>       Missing      ·      │ │
+│ │ 7  rows        —          parse: 20 dicts               20 Responses NoticeList   Ok     │ │
+│ │ 8  store       —          call: host.store_notices      NoticeList   receipt      Ok     │ │
 │ └────────────────────────────────────────────────────────────────────────────────────────┘ │
 │  [Missing only] [Failed only] [Expand the full value of the selected step]                 │
 └────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -78,9 +80,9 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 
 | Column | Responsibility | Key interaction |
 |---|---|---|
-| ① Input | Provides `inputs` (`text` is the primary input slot, `03` §3) | Pick from the sample directory, paste, load a file; show the auto-sniffed format (html/xml/json/text) |
+| ① Input | Provides the **run's input** (the first step's input; `03` §2) | Pick from the sample directory, paste, load a file; show the auto-sniffed format (html/xml/json/text) |
 | ② Chain editor | Edit the chain JSON, lint in real time | Inline highlighting of errors; the right-hand side lists the **error code + `fix` + the enumeration of allowed values** (the same source as `04` §8) |
-| ③ Output | Shows the export of `run()` and a summary of this run | Collapsible tree of the export JSON; highlight built-in defaults in the `request` form; "Save as snapshot" |
+| ③ Output | Shows the run's **exit product** (`03` §9) and a summary of this run | Collapsible tree of the product JSON; highlight the built-in `Request` / `Response` fields; "Save as snapshot" |
 | ④ Single-step trace | Shows the evaluation step by step | Filter `Missing`/`Failed`; click any step to expand its full input and output values |
 
 **Layout principle**: the trace fills the lower half of the screen instead of being squeezed into a popup — it is the reason this tool exists.
@@ -126,7 +128,7 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 | `list_samples(domain, tpl_key)` | — | the list of case names |
 | `load_sample(domain, tpl_key, case)` | — | sample text + sniffed format |
 | `lint(text)` | chain text | `{errors: Diagnostic[], warnings: Diagnostic[]}` |
-| `run(text, inputs, trace: bool)` | chain text, `inputs` | `{state, value, diagnostics, trace: TraceEvent[]}` |
+| `start(text, value, trace: bool)` | chain text, the run's input | a **resumable run** (`03` §5): the UI answers the effects itself (the trial bench plays the host) and collects `TraceEvent[]` |
 | `snapshot(text, domain, tpl_key, case)` | — | `{ok, path}` |
 
 `Diagnostic` (exactly the same as `04` §8; the UI and the CLI share this one data structure):
@@ -135,7 +137,7 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 {
   "code": "UP2-E1002",              // a deterministic error code
   "severity": "error",
-  "pointer": "/nodes/1/config/fields/title/0/1",   // JSON Pointer (unknown action = slot 2)
+  "pointer": "/steps/1/parse/title/0/1",   // JSON Pointer (unknown action = slot 2)
   "message": "unknown action `innerHTML`",
   "fix": "use `html` (inner HTML) or `outer` (including its own tag)",
   "allowed": ["text", "html", "outer", "self", "@<attribute name>", "nodes", "remove"]
@@ -147,16 +149,16 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 ```jsonc
 {
   "seq": 4,
-  "node": "parse-0001",
+  "step": "reqs",            // the step key (`03` §2.1)
   "item": 0,                 // which result when fanning out (null when there is no fan-out)
   "field": "url",
-  "step": 1,
+  "stage": 1,                // the index of the stage inside its chain
   "op": "py",
   "action": "urljoin",
   "params": {"arg": {"kind": "ref", "target": "globals.base_url"}},
   "input":  {"type": "str", "preview": "\"/public/1681/1.html\"", "size": 21},
   "output": {"type": "str", "preview": "\"https://www.ah.gov.cn/public/1681/1.html\"", "size": 44},
-  "state": "Ok",             // Ok | Missing | Failed
+  "state": "Ok",             // Ok | Missing | Failed; an effect event carries "effect": "request"|"call"
   "detail": null,            // carries code/reason when Failed
   "ms": 0.31
 }
@@ -167,7 +169,7 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 | **Values are not sent back in full** | A large value (an HTML document, a long body) returns only `type` / `preview` (the first 200 characters) / `size`; expanding it calls `get_value(seq)` for the whole thing on demand |
 | **Parameters are already compiled** | `params` are the **compiled** named parameters (the named AST of `02`), so the UI shows "what the engine actually understands" rather than the chain author's original wording — **this is the only effective way to investigate "what I wrote is not what it understood"** |
 | **Fan-out is visible** | The `item` field makes a problem such as "the title of the 3rd result is missing" locatable |
-| **`Missing` has a starting point** | Within one trace it is obvious from which step a field starts to be `Missing` (the acceptance of `04` §7-S3 depends on it) |
+| **`Missing` has a starting point** | Within one trace it is obvious from which **stage** a field starts to be `Missing` (the acceptance of `04` §7-S3 depends on it) |
 
 ---
 

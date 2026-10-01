@@ -95,18 +95,21 @@ $<root>[.<segment>][.<segment>]…
 
 | root | Meaning | Writable | Readable |
 |---|---|---|---|
-| `globals` | the chain-level environment (`graph.globals` + `seed` injection), consistent across nodes | only the `seed` node | all nodes |
-| `locals` | this node's locals (`_`-prefixed fields + `ctx.set locals.*`) | this node | only this node |
-| `fields` | shorthand for this node's `fields` product (equivalent to `$<this node's key>.fields`) | — | only this node |
-| `<node key>` | the product of an earlier node | — | only its **later** nodes |
+| `globals` | the chain-level environment (the story's `globals`), consistent across steps | — | all steps |
+| `locals` | this step's locals (`_`-prefixed fields + `ctx.set locals.*`) | this step | only this step |
+| `fields` | shorthand for this step's field-map product | — | only this step |
+| `<step key>` | the product of an earlier step | — | only its **later** steps |
+
+**The run's input value has no root**: it is the first stage's input, and a step that wants its own input
+reads it as the chain's first stage (`03` §2).
 
 - **Only dotted paths are supported, not array indices** (settled by Q24 in `01`). To take an index, use the explicit operator `["py","getitem",0]`.
-- **Multi-level dotted paths** are supported (`$seed-0001.meta.url`) — Q24 in `01` already settled that dotted paths are supported.
-- **References can only point backwards**: `$<node key>` must be a node preceding the current one, otherwise `UP2-E1006` (a direct consequence of the
+- **Multi-level dotted paths** are supported (`$article.meta.url`) — Q24 in `01` already settled that dotted paths are supported.
+- **References can only point backwards**: `$<step key>` must be a step preceding the current one, otherwise `UP2-E1006` (a direct consequence of the
   sequential-execution semantics of `N7`).
-- **Referencing the current node's own key is forbidden**: inside this node use `$fields.<key>` (this is exactly what the hint attached to `UP2-E1006` says).
-- A `_`-prefixed key is a **local of this node**: **it may be referenced inside this node, but downstream nodes are forbidden to reference it** (`UP2-E1014`) —
-  the semantics of a local value is precisely "it does not leave this node".
+- **Referencing the current step's own key is forbidden**: inside this step use `$fields.<key>` (this is exactly what the hint attached to `UP2-E1006` says).
+- A `_`-prefixed key is a **local of this step**: **it may be referenced inside this step, but later steps are forbidden to reference it** (`UP2-E1014`) —
+  the semantics of a local value is precisely "it does not leave this step".
 - **There is no iteration variable**: inside `each`'s field map the current element is the **input value** of every field chain (§6.9), and each element is
   evaluated in its own child scope — `$locals.*` falls back outward **by name** (the innermost scope holding the path's first segment resolves the whole path,
   so a name the element wrote is never read from the calling scope), while a write stays in the element.
@@ -135,7 +138,7 @@ To write "a literal that starts with `$`" in a `ref_or_literal` position, use a 
 ```
 
 **This is a direct answer to blocker R in the `02` worked-example draft** (the internal source material, not shipped in this repository): §7 of the `04`
-parser-syntax draft mentioned `$get` without ever defining it, and the three reference forms in `result` (`$fields.*` / `$seed-0001.<multi-level path>` / a
+parser-syntax draft mentioned `$get` without ever defining it, and the reference forms it used (`$fields.*` / a dotted path / a
 plain literal) were all guesswork. This design's rule can be stated in one sentence:
 
 > **A leading `$` ⇒ a reference; a literal starting with `$` uses `{"$lit": …}`; everything else is a literal.**
@@ -197,7 +200,7 @@ Evaluation rules:
 | `Missing` | **short-circuit this field** (later stages do not run) and land a value according to the effective `on_missing` |
 | `Failed` | according to the effective `on_error`: with `raise` the whole `run()` fails; when degraded, short-circuit and land a value according to the policy |
 
-- The first stage's input = the field's `input` (the node's `input` by default; inside `each`'s field map it is the current element, §6.9).
+- The first stage's input = the field's `input` (the step's input by default; inside `each`'s field map it is the current element, §6.9).
 - Fields are evaluated in **declaration order** (a JSON object preserves order), so a later field can reference the `_` local values produced by an earlier one.
 - **The number of stages is a hard stability boundary**: exceeding `MAX_STEPS_PER_FIELD` is a compile error (`01` §9).
 
@@ -420,7 +423,7 @@ The relationship among the three is covered in §6.10 (`udf`, including the unif
 
 ### 6.5 `const` — literal
 
-`["const", <arbitrary JSON value>]` (2 elements). Used for `route` labels and fixed source identifiers (`channel` / `source` / `region`, see `03` §8). **The
+`["const", <arbitrary JSON value>]` (2 elements). Used for fixed source identifiers (`channel` / `source` / `region`, see `03` §8.1) and for any constant a step needs. **The
 structure is not copied** (it is treated as immutable and must not be modified in place at runtime).
 
 ### 6.6 ~~`cast`~~ — merged into `py`
@@ -494,7 +497,7 @@ structure is not copied** (it is treated as immutable and must not be modified i
 ```
 
 `each` is a 2-slot operator with a single action, so the stage is `["each", <field map>]` and slot 2 carries the whole argument. The **field map** is an object
-mapping a field name to a chain — exactly the shape a `parse` node's `fields` block has (`03` §4.2), one level down.
+mapping a field name to a chain — exactly the shape a step's field map has (`03` §7), one level down.
 
 | Position | Meaning |
 |---|---|
@@ -610,7 +613,7 @@ is likewise `UP2-E1005` (Pointer `/0/1/src`). `inputs` is optional; writing an e
 
 ```jsonc
 ["code", {"src": "len(obj)"}]                            // minimal form: only obj and the allowlisted functions
-["code", {"src": "ctx.locals.n + 1"}]                    // read this node's temporary variable (locals.n = 41 ⇒ 42)
+["code", {"src": "ctx.locals.n + 1"}]                    // read this step's temporary variable (locals.n = 41 ⇒ 42)
 ["code", {"src": "ctx.globals.base_url"}]                // read the chain-level environment
 ["code", {"src": "x + 1", "inputs": {"x": "$locals.n"}}] // named input: one extra compile-time reference check
 ```
@@ -623,8 +626,8 @@ dict), used attribute-wise:
 
 | Form | Meaning |
 |---|---|
-| `ctx.locals.<name>` | this node's locals: **every temporary variable produced by any parsing behaviour in the current node** is automatically here |
-| `ctx.globals.<name>` | the story/environment-level environment (consistent across nodes) |
+| `ctx.locals.<name>` | this step's locals: **every temporary variable produced by any parsing behaviour in the current step** is automatically here |
+| `ctx.globals.<name>` | the story-level environment (consistent across steps) |
 
 If the attribute does not exist ⇒ an observable failure (`AttributeError` ⇒ `UP2-E2017`); it does not silently return an empty value.
 
@@ -705,23 +708,17 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E1003` | the `py` function is not in the allowlist | list the allowlisted function names |
 | `UP2-E1004` | stage length/arity mismatch | give the legal forms of that operator |
 | `UP2-E1005` | parameter Schema validation failure (type/required/unknown parameter) | give the parameter name + the expected type + the actual type |
-| `UP2-E1006` | the reference points at a later node or at an undeclared path | give the available node order and the list of available keys |
+| `UP2-E1006` | the reference points at a later step or at an undeclared path | give the available step order and the list of available keys |
 | `UP2-E1007` | a literal was written in a `ref` position | hint that the position must be a `$…` reference |
-| `UP2-E1009` | a node key is a reserved name or is duplicated | list the reserved names (`globals`/`locals`/`fields`/`entry`) |
+| `UP2-E1009` | a step key is a reserved name or is duplicated | list the reserved names (`globals`/`locals`/`fields`) |
 | `UP2-E1010` | the `udf` is not registered | hint at `register_udf` or the `entry_points` group name |
-| `UP2-E1011` | the schema name is not registered | list the registered schema names |
+| `UP2-E1011` | the type name declared by a step's `out` is not registered | list the registered type names (`03` §3) |
 | `UP2-E1012` | a resource limit is exceeded (`01` §9) | give the constant name that was hit and the limit value |
 | `UP2-E1013` | the regex contains a nested quantifier (ReDoS risk) | hint at rewriting it or switching to non-greedy |
-| `UP2-E1014` | a `_`-prefixed local key was referenced **across nodes** | hint that a local value does not leave its node; inside the same node use `$fields.<key>` |
+| `UP2-E1014` | a `_`-prefixed local key was referenced **across steps** | hint that a local value does not leave its step; inside the same step use `$fields.<key>` |
 | `UP2-E1015` | `ctx.set`/`del` wrote a path outside `locals.` | hint that the write surface is limited to `locals` |
-| `UP2-E1101` | `next` and `routes` appear together | the two are mutually exclusive |
-| `UP2-E1102` | `routes` exists but `default_route` is missing | hint at adding the default branch |
-| `UP2-E1103` | the target node does not exist / there is an orphan node / it is unreachable from `entry` | give the reachable set and the orphan list |
-| `UP2-E1104` | the chain contains a cycle | give the travel path |
-| `UP2-E1105` | `route_field` is not a key of the node's field map, or `routes` has no `default_route` | see `03` §10 (L14) |
-| `UP2-E1106` | a `result` template reference cannot be resolved | give the set of available references |
+| ~~`UP2-E1101`~~ … ~~`UP2-E1106`~~, ~~`UP2-E1108`~~ | **retired with the v0.1 node model** (`03` §12.1) | they policed a graph that no longer exists (`next`/`routes`/`default_route`, node existence, reachability, cycles, in-degree > 1, `route_field`, the `result` template). The numbers are **retired, not reused**, so older references keep pointing at the same rule |
 | `UP2-E1107` | an operator's optional dependency is missing | give the install command (e.g. `uv add selectolax`) |
-| `UP2-E1108` | some node has an in-degree > 1 (an attempt to merge two products) | the kernel does not join; split into two chains, or keep the upstream paths independent (`03` §9.1) |
 
 ### 7.1 Runtime error codes (`UP2-E2xxx`)
 
@@ -735,7 +732,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2007` | `time` parsing failed | give the input string and the list of formats that were tried |
 | `UP2-E2008` | `py.parse_time` reached the natural-language path but `dateparser` is not installed | give the install command |
 | `UP2-E2009` | the operator returned a non-serialisable value | the return value must be inside the JSON value domain (`str`/`int`/`float`/`bool`/`None`/`list`/`dict`) |
-| `UP2-E2010` | `produces="request"` but `url` is missing | give `url` in `result` |
+| `UP2-E2010` | a `Request` product carries no `url` | give `url` in the field map of the step whose `out` is `Request` (`03` §4.1) |
 | `UP2-E2011` | `output="single"` but several products or several terminals exist | change `output` to `auto` / `list` |
 | `UP2-E2012` | the list given to `each` is longer than `MAX_EACH_ITER` | truncate it first with `["py","slice",":100"]` |
 | `UP2-E2013` | the input text exceeds `MAX_TEXT_BYTES` | truncate in the outer layer first, or switch to a streaming upstream |

@@ -171,7 +171,7 @@ uniparser2/
 | **Compile-time error codes** | `tests/compile/` | At least one case for every `UP2-E1xxx` of `02` §7 (table-driven: bad chain → expected code + expected `fix` keyword) | ~30 entries | L1 |
 | **Runtime error codes** | `tests/runtime/` | At least one case for every `UP2-E2xxx` of `02` §7.1 (build an input that can trigger it → expected code) | ~15 entries | L1 |
 | **Store error codes** | `tests/store/` | At least one case for every `UP2-E3xxx` of `04` §5.1 (including `--skip-tests` without `--note`, and an inconsistent chain audit) | ~5 entries | L3 |
-| **Chain level** | `tests/chains/` | The three node types, `each` iteration (including the per-element scope), `routes` dispatch, `result` assembly, scope visibility | ~40 entries | L2 |
+| **Chain (story) level** | `tests/chains/` | The linear step sequence, `parse` / `call`, `each` iteration (including the per-element scope), the two effects (`Request` → `Response`, `call` → receipt), the suspend/resume run loop, scope visibility | ~40 entries | L2 |
 | **Snapshots** | `tests/snapshots/` | The expected output of a chain × a sample (`04` §7-S4/S5); **structural comparison**, and a failure prints the JSON Pointer difference | ≥ 1 per chain | L2 |
 | **Serialization, character by character** | `tests/serialization/` | A **character-for-character** assertion of `dumps(loads(x)) == dumps(x)`; plus fingerprint stability assertions | ~10 entries | L1 |
 | **CLI end to end** | `tests/cli/` | `lint` / `trial` / `snapshot` / `publish` / `get` / `audit` / `doctor`, using `tmp_path` as `UP2_HOME` | ~20 entries | L2 (the last three are L3) |
@@ -284,8 +284,7 @@ openspec list --specs
 | `02` DSL specification | `dsl-triples` + `dsl-operators` | `add-dsl-triples` (L1) |
 | the operator set of `02` §6 (§6.1–§6.5, §6.8, §6.10, §6.11; `code` is the next row) | `operator-conformance` | `add-conformance-suite` (L1) |
 | the `code` operator of `02` §6.12 (sandboxed execution of in-chain code) | `code-execution` | `add-code-sandbox-operator` (an L1 addition; archived 2026-09-29) |
-| `03` parse chain specification | `chain-graph` | `add-chain-graph` (L2) |
-| `03` §6 assembly template | `result-assembly` | `add-result-assembly` (L2) |
+| `03` story specification | `story-chain` | `add-story-chain` (L2) |
 | `06` trial UI | `studio-ui` | `add-studio-ui` (L2) |
 | `04` persistence | `template-store` | `add-template-store` (L3) |
 | `04` §7 SOP process | `publish-sop` | `add-publish-sop` (L3) |

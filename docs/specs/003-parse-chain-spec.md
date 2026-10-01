@@ -48,7 +48,7 @@ Two consequences are the point of the whole design:
   "globals": { "base_url": "https://www.ah.gov.cn" },   // chain-level, read-only constants
   "policy":   { "on_missing": "drop", "on_error": "raise" },
   "steps": [
-    { "key": "reqs",  "parse": { "items": [ /* … */ ] }, "out": "RequestBatch" },
+    { "key": "reqs",  "parse": { "items": [ /* … */ ] }, "out": "TaskList", "then": "article" },
     { "key": "rows",  "parse": { "items": [ /* … */ ] }, "out": "NoticeList" },
     { "key": "store", "call": "host.store_notices", "with": { "table": "notices" }, "out": "dict" }
   ]
@@ -81,7 +81,14 @@ deleted the old `outputs` declaration for this reason: a second source of truth 
 | `key` | the step's name, used by backward references (`$reqs.items`). Whether it is required is open (§13) |
 | `parse` **or** `call` | what the step does — mutually exclusive, told apart by shape and by keyword |
 | `out` | the **type name** of the product (§3) |
+| `then` | only on a step that produces tasks: the **default continuation chain key** for the tasks it produces (§4.1); a single task item may carry its own `then` and override it |
 | `with` | only with `call`: the arguments handed to the host function |
+
+**A story is one layer.** Because a request's response is handled by the chain its task names (`then`), the
+natural unit is **one story per layer**: the seed story makes the first request, the list-page story turns
+that response into tasks, the article story turns one response into one record (§11). Nothing forces that
+split — a story may have several steps, and a step may hand off more than once — but the flow between
+layers travels as **tasks**, not as one long run.
 
 **`parse`** takes one of two shapes:
 
@@ -111,7 +118,7 @@ runs the map once per element of a list; a step runs it once for its whole input
 | Source | Names | How the name is obtained |
 |---|---|---|
 | the JSON value domain | `null` / `bool` / `str` / `int` / `float` / `list` / `dict` | from the value itself (`01` §2's type-name table) |
-| built-in **effect** types | `Request`, `RequestBatch` | declared with `out`; producing one suspends the run (§4) |
+| built-in **effect** types | `Request`, `TaskList` | `Request` is what a task carries; producing a `TaskList` hands the tasks to the host and **ends the run** (§4) |
 | built-in **data** types | `Response` | declared with `out`; validated like any other product |
 | host-registered types | `NoticeList`, `Article`, … | declared with `out`; the host registers name → constructor |
 
@@ -126,7 +133,7 @@ zero-coupling criterion; acceptance item 8 there).
 | a dictionary | `Cls(**payload)` |
 | a list | `Cls(*items)` |
 
-So a collection carries a type of its own (`NoticeList(*items)`, `RequestBatch(*requests)`) instead of
+So a collection carries a type of its own (`NoticeList(*items)`, `TaskList(*tasks)`) instead of
 degrading to the built-in `list`; the built-in `list` name is left for collections that need no meaning.
 
 ### 3.3 Where validation happens
@@ -143,21 +150,26 @@ one. `out` names a type; it never means "the chain is carrying a Python object".
 
 ---
 
-## 4. Effects: the only suspension
+## 4. Effects: `call` suspends, a request hands off
 
 An **effect** is a step whose product must be produced by the host. The kernel never performs it: it hands
 over a description and waits.
 
-### 4.1 `Request` — one request, or a batch
+### 4.1 `Request` — the task hand-off
 
 ```jsonc
-{ "key": "reqs", "parse": { "items": [ /* … */ ] }, "out": "RequestBatch" }
+{ "key": "reqs", "parse": { "items": [ /* … */ ] }, "out": "TaskList" }
 ```
 
-| Handed to the host | The host answers with | Which becomes |
+| The step produces | The host does | What happens next |
 |---|---|---|
-| `{"effect": "request", "request": Request}` | a `Response` | the next step's input |
-| `{"effect": "request", "requests": [Request, …]}` | `[Response, …]` (validated element by element) | the next step's input |
+| `out: "TaskList"` — items of `{ "request": Request, "then": "<chain key>" }`, one task or many | sends each `request` (concurrently, at its own pace) and, per response, starts the chain named by that task's `then` | the response becomes **that chain's input**; the run that produced the tasks is already over |
+
+A request is therefore a **hand-off, not a suspension**: a step whose `out` is `TaskList` is the last step
+of its run, and its product is the work to be done. The step's own `then` is the default for every task it
+produces, and a task item that carries its own `then` overrides it — that is how one batch fans out to
+different parsers: which parser suits a response is the host's dispatch (`§1`), and here the dispatch key
+travels **in the data**, per task.
 
 The `Request` structure is v0.1's built-in, unchanged:
 
@@ -198,54 +210,59 @@ kernel stays pure, and the receipt keeps the single exit. How `with` is written 
 
 ### 4.3 Effects are station-level only
 
-An effect is written on a **step**, never inside a chain or inside an `each` field map. The executor
-therefore needs **flat** suspension (one suspension point at a time).
+Both `call` and a task-producing step are written at the **step** level, never inside a chain or inside an
+`each` field map. `call` suspends a run that continues afterwards (one suspension at a time, so the
+executor needs only **flat** suspension); a task-producing step **ends** its run.
 
-- A story **can** cross the network boundary in the middle; a fan-out is expressed as **one batched effect**
-  (`RequestBatch`), not as N effects inside `each`.
-- **Concurrency is the host's**, exercised on a batch it already holds — it may send 50 requests in parallel
-  because the effect handed it 50 at once. It may also run several stories in parallel; the kernel neither
-  knows nor cares.
-- A nested effect (a `Request` inside `each`) would have forced nested suspension and still produced serial
-  requests. Ruled out (`D-03-3`).
+- A fan-out is one `TaskList` product, not N effects inside `each`.
+- **Concurrency is the host's**, exercised on the task list it already holds: it may send 50 requests in
+  parallel because the step handed it 50 tasks.
+- A nested effect (a request decided inside `each`, say) would have forced nested suspension and still
+  produced serial requests. Ruled out (`D-03-3`).
 
-### 4.4 Trace versus suspension
+### 4.4 Trace, suspension and hand-off
 
 | | What it carries | Who consumes it |
 |---|---|---|
 | **trace event** | one per **step**: its key, its product type, a product summary, timing | audit, the trial UI (`06`), debugging, `up2 trial --trace` |
-| **suspension** | only effects (`request` / `call`) | the host, which must answer before the run continues |
+| **suspension** | a `call` — the run continues with the receipt | the host, which must answer before the run continues |
+| **hand-off** | a task-producing step's `TaskList` | the host, which sends the tasks and starts the chains they name; that run is over |
 
-The host sees every step's product but only has to **answer** at effects. With the answers recorded, a run
-replays deterministically: the kernel never performs IO, so replayability (`01` §1) is kept.
+The host sees every step's product, and it only has to **answer** at a `call`. With the answers (and the
+tasks it sent) recorded, a flow replays deterministically: the kernel never performs IO, so replayability
+(`01` §1) is kept.
 
 ---
 
 ## 5. The run loop
 
 ```text
-start(story, value) -> run                    # compile, then run to the first suspension
-run.next()   -> {effect:"request", …} | {effect:"call", …} | {effect:"done", product: …}
-run.send(answer) -> the next effect / done    # the answer becomes the next step's input
+start(story, value) -> run                    # compile, then run to the end or to the first `call`
+run.next()   -> {effect:"call", …} | {effect:"done", product: …}
+run.send(receipt) -> the next effect / done    # only `call` is answered
 ```
 
-The kernel side keeps its invariants: no IO, no threads, one exit. The host side is ordinary code:
+A task-producing step does not appear here: it simply ends the run, and its `TaskList` product is the
+host's to-do list. The kernel side keeps its invariants (no IO, no threads, one exit); the host side is
+ordinary code:
 
 ```python
-run = up2.start(story, index_text)                      # the caller's value is the first step's input
-while True:
-    effect = run.next()
-    if effect.kind == "done":
-        final = effect.product
-        break
-    if effect.kind == "request":
-        run.send(fetch_all(effect.requests, concurrency=5))   # concurrency, politeness, retries: host
-    elif effect.kind == "call":
-        run.send(handlers[effect.name](**effect.with))        # receipt
+queue: list[tuple[str, object]] = [("seed", seed_url)]      # (chain key, that chain's input)
+while queue:
+    key, value = queue.pop()
+    run = up2.start(chains[key], value)
+    while True:
+        effect = run.next()
+        if effect.kind == "done":
+            product = effect.product
+            break
+        run.send(handlers[effect.name](**effect.with))       # `call` → receipt
+    for task in tasks_of(product):                           # `TaskList` → one entry per task
+        queue.append((task.then, fetch(task.request)))        # the host owns the network
 ```
 
-A host that would rather not answer effects itself can register handlers for both kinds and use a driver;
-that driver is **not** part of this note, and it belongs to the host side, not to L2.
+A host that would rather not write that loop can register handlers for both kinds and use a driver; that
+driver is **not** part of this note, and it belongs to the host side, not to L2.
 
 ---
 
@@ -407,8 +424,8 @@ for item in rows:
 
 This is the **explicit** version of what draft `01` expressed with a `doc` table + `referer_info` +
 `tpl:` dispatch: cross-story passing is visible in the data flow. Note that a story may also fetch for
-itself (§4.1), so **splitting at the network boundary is a choice, not a requirement**: one story can run
-the whole flow, and the split is worth it when the host wants its own concurrency, retries or caching
+itself (§4.1), so **a request ends its story**: the layer that sends hands its tasks to the layer that
+parses, and the split is what lets the host own its concurrency, retries and caching
 policy around a boundary. If a host genuinely needs the `doc` table and `tpl:` dispatch, it can build them
 on top of its store and the caller; the kernel need not know.
 
@@ -439,7 +456,7 @@ on top of its store and the caller; the kernel need not know.
 | L6 | a cross-step referenced key carries no `_` prefix | existing (`UP2-E1014`) |
 | L7 | every stage (including the sub-chains of an `each` field map) passes operator validation | existing (`UP2-E1001`…`E1005`) |
 | L8 | `out` names a built-in type or a registered type | new |
-| L9 | an effect type (`Request` / `RequestBatch`) is produced on a step that has a successor; an effect is never written inside a chain or an `each` field map | new |
+| L9 | a `TaskList`-producing step is not the last step of its story (a request ends the run and hands off); a request is never written inside a chain or an `each` field map | new |
 | L10 | no resource limit is exceeded (`01` §9) | existing (`UP2-E1012`) |
 | L11 | an operator's optional dependency is installed | existing (`UP2-E1107`) |
 | ~~L20~~ | **withdrawn** with `presets` (`02` §6.9); the number stays retired rather than reused | — |
@@ -455,87 +472,93 @@ in-degree ≤ 1, terminal count, `route_field`, `seed.inject` coverage, the `res
 ## 11. A complete walkthrough: ah.gov.cn
 
 Material: the legacy rule of §1 in draft `01` (1 list rule + 2 detail rules, with `url_patterns`
-completely identical, told apart by order). The whole flow is **one story**, from the seed URL to the
-articles: it crosses the network boundary twice, and each crossing is an **effect** the host answers.
+completely identical, told apart by order). The flow is now **three stories** — the seed, the list page and
+the article — joined by the tasks each one produces: the seed URL goes out as a request, the list page's
+response becomes twenty tasks, and each task names the chain that parses its response.
 
-### 11.1 The story: seed URL → 20 requests → 20 articles
+### 11.1 Three stories: the seed, the list page, the article
+
+Each layer is a **story of its own**, joined to the next by the tasks it produces (§4.1); the host walks
+that queue. No story knows a domain, a site or a business key — only the host does.
 
 ```jsonc
+// 1) "seed": the seed URL becomes the first request; its response goes to "list_page"
+{
+  "dsl_version": 1,
+  "steps": [
+    { "key": "start",
+      "parse": { "url": [ ["py","str",""] ] },   // only the URL; method/headers/timeout are defaults
+      "out": "TaskList",
+      "then": "list_page" }
+  ]
+}
+```
+
+```jsonc
+// 2) "list_page": the list page's response becomes 20 tasks, each naming its own parser
 {
   "dsl_version": 1,
   "globals": { "base_url": "https://www.ah.gov.cn" },
   "policy": { "on_missing": "drop", "on_error": "raise" },
   "steps": [
-    // 1. the seed URL becomes the first request
-    { "key": "start",
-      "parse": { "url":    [ ["py","str",""] ],          // this step's input is the URL itself
-                 "method": [ ["const","GET"] ] },
-      "out": "Request" },
-
-    // 2. the list page's response becomes twenty requests (one batch)
-    { "key": "batch",
+    { "key": "items",
       "parse": { "items": [
           ["py","get","text"],                           // the Response is a dict; take the body first
-          ["css","nodes","a[href*='/public/1681/']"],
+          ["css","nodes","a[href*='/public/1681/']"],    // what is selected is `self`: node handles
           ["py","slice",":20"],
-          ["each", { "url":    [ ["css1","@href",""], ["py","urljoin","$globals.base_url"] ],
-                     "method": [ ["const","GET"] ] }] ] },
-      "out": "RequestBatch" },
-
-    // 3. twenty responses become twenty articles
-    { "key": "articles",
-      "parse": { "items": [
-          ["each", {
-              "_text":    [ ["py","get","text"] ],
-              "url":      [ ["py","get","url"] ],
-              "title":    [ ["ctx","get","locals._text"], ["css1","text","h1"],
-                            ["py","normalize_space",""] ],
-              "pub_time": [ ["ctx","get","locals._text"],
-                            ["css1","@content","meta[name=\"PubDate\"]"],
-                            ["py","strip",""], ["py","parse_time","zh"] ],
-              "content":  [ ["ctx","get","locals._text"],
-                            ["css","remove","script,style,noscript"],
-                            ["css1","html","div.j-fontContent"],
-                            ["py","html_to_markdown",""] ],
-              "channel":  [ ["const","\u653f\u5e9c\u6587\u4ef6"] ],
-              "source":   [ ["const","\u5b89\u5fbd\u7701\u4eba\u6c11\u653f\u5e9c"] ],
-              "region":   [ ["const","\u5b89\u5fbd\u7701"] ]
+          ["each", {                                     // the second round of `css1`, per node
+              "_url":    [ ["css1","@href",""], ["py","urljoin","$globals.base_url"] ],
+              "request": [ ["ctx","map", {"url": "locals._url"}] ],   // → {"url": …}
+              "then":    [ ["const","article"] ]         // this task's own continuation chain
           }] ] },
-      "out": "ArticleList" }
+      "out": "TaskList" }
   ]
 }
 ```
 
-The host side is the whole integration: it owns the network, the concurrency and the retries.
+```jsonc
+// 3) "article": one article's response becomes one record
+{
+  "dsl_version": 1,
+  "policy": { "on_missing": "drop" },
+  "steps": [
+    { "key": "article",
+      "parse": {
+        "url":      [ ["py","get","url"] ],
+        "title":    [ ["py","get","text"], ["css1","text","h1"], ["py","normalize_space",""] ],
+        "pub_time": [ ["py","get","text"],
+                      ["css1","@content","meta[name=\"PubDate\"]"], ["py","strip",""],
+                      ["py","parse_time","zh"] ],
+        "content":  [ ["py","get","text"], ["css","remove","script,style,noscript"],
+                      ["css1","html","div.j-fontContent"], ["py","html_to_markdown",""] ]
+      },
+      "out": "Article" }
+  ]
+}
+```
+
+**The host walks the queue** (it owns the network, the concurrency and the retries):
 
 ```python
-run = up2.start(story, "https://www.ah.gov.cn/public/1681/list.html")   # the input is the seed URL
-while True:
-    effect = run.next()
-    if effect.kind == "done":
-        articles = effect.product            # ArticleList — the articles are in hand
-        break
-    if effect.kind == "request":
-        if "requests" in effect:             # a batch: send them concurrently
-            run.send(fetch_all(effect.requests, concurrency=5))
-        else:                                # a single request
-            run.send(fetch_one(effect.request))
+queue = [("seed", "https://www.ah.gov.cn/public/1681/list.html")]
+while queue:
+    key, value = queue.pop()
+    product = run_chain(key, value)                       # compile + run, answering `call`s
+    for task in tasks_of(product):                        # TaskList: {request, then}
+        queue.append((task.then, fetch(task.request)))    # send now, parse by that task's key
 ```
 
 ```text
-start(story, the seed URL)
- 1 start     input = URL         → Request            ⇢ one fetch → Response
- 2 batch     input = Response    → RequestBatch(20)   ⇢ twenty fetches → [Response × 20]
- 3 articles  input = [Response]  → ArticleList        → done
+seed(the seed URL)  → TaskList[1]   ⇢ one fetch → list_page(Response)
+list_page(Response) → TaskList[20]  ⇢ twenty fetches (host concurrency) → article(Response) × 20
+article(Response)   → Article       → one record
 ```
 
-**Measured on the current commit** (the three field maps, with `each` over a one-element list standing in
-for a step — the same semantics): step 1 gives
-`{'url': 'https://www.ah.gov.cn/list.html', 'method': 'GET'}`; step 2 gives
-`{'items': [{'url': '…/public/1681/1.html', 'method': 'GET'}, …]}`; step 3 gives
+**Measured on the current commit** (the field maps, with `each` over a one-element list standing in for a
+step — the same semantics): the list page's map gives
+`{'items': [{'request': {'url': '…/public/1681/1.html'}, 'then': 'article'}, …]}`; the article map gives
 `{'url': '…/1.html', 'title': 'Notice on Issuing the List', 'pub_time': '2026-09-24',
-'content': 'Body line one.\n'}`. **Two traps were found by running them**, and both are documented above
-rather than only here:
+'content': 'Body line one.\n'}`. **Three constraints were found by running them:**
 
 - **`css` is not `css1` per item.** `["css","@href",""]` yields a **list** (every match), so the following
   `py.urljoin` fails with `UP2-E2002`; a per-item read must be `css1`. (The v0.1 walkthrough wrote `css`
@@ -543,26 +566,32 @@ rather than only here:
 - **A `Response` must be taken apart first.** `css` consumes text or a node, so every chain that parses a
   response starts with `["py","get","text"]` (§4.1); resolving a relative link against the final URL uses
   `["py","get","url"]`.
+- **Every value of a field map is a chain**, so a task item is assembled with `ctx.map`: `_url` computes the
+  link and `"request": [["ctx","map",{"url":"locals._url"}]]` turns it into the request dictionary. A
+  nested object literal there is `UP2-E1004` (measured); a local plus `ctx.map` is how a nested product is
+  built.
 
-`["py","str",""]` in step 1 is the "read my own input" workaround of §13 O5: it is the identity on a
+`["py","str",""]` in the seed step is the "read my own input" workaround of §13 O5: it is the identity on a
 string, but a real identity action would read better.
 
 ### 11.2 The fields it extracts, and the registered types
 
-`ArticleList` and `Article` are host-registered types: the list product is built as
-`ArticleList(*articles)` and each article as `Article(**fields)` (§3.2), which is where the shape is
-validated — a misshapen record is reported at step 3, not at the end of the run.
+`Article` is a host-registered type: the article story ends with `Article(**fields)`, which is where the
+shape is validated — a misshapen record is reported in the article story, while that response is being
+parsed, and not at the end of the flow. The **collection** of articles is what the host accumulates: it
+runs the article story once per task, so N responses give N `Article` products (the host may then build a
+`ArticleList(*articles)` if its own API wants one).
 
-Handing the list to the business is one more step, left out above so the story ends where the articles
-are in hand:
+Handing each record to the business is the host's step; a story can also do it with a `call` appended to
+the article story:
 
 ```jsonc
 { "key": "store", "call": "host.store_articles", "with": { "table": "articles" }, "out": "dict" }
 ```
 
 Two of the old flow's needs disappear here: `channel` / `source` / `region` are ordinary `["const", …]`
-fields of step 3 (§8.1), and "which of the two detail rules applies" is the **host's** question (§11.3,
-item M) — the story never guesses.
+fields of the article story (§8.1), and "which of the two detail rules applies" is the **host's** question
+(§11.3, item M) — the story never guesses.
 
 `$article`'s old schema description survives as `Article`'s fields:
 
@@ -602,7 +631,7 @@ item M) — the story never guesses.
 | Legacy element | New landing place |
 |---|---|
 | `task_name` / `channel` / `region` | a `["const", …]` field inside a step, or the caller's input |
-| `request` / `request.url` | a step whose `out` is `Request` / `RequestBatch` (§4.1), or the host's own request layer |
+| `request` / `request.url` | a task's `request` (§4.1), or the host's own request layer |
 | `input_format` | deleted: the consuming operator decides the format, under the run-scoped cache (§6) |
 | `nodes` (splitting + truncation) | one chain: `["css","nodes",…]` → `["py","slice",":20"]` → `["each", {…}]` |
 | `fields` | a step's field map (semantics unchanged) |
@@ -640,6 +669,8 @@ each one rejected:
 | R11 | `call` may have side effects but must return a serializable receipt | a callback returning nothing: it would break the single exit and make a run unreplayable |
 | R12 | built-in types are exactly `Request` and `Response` | a larger built-in vocabulary (`Url`, `Page`, `Json`): business meaning in the engine |
 | R13 | one batched effect carries a fan-out; concurrency is the host's | forking a run per item as the only way to fan out: it makes concurrency a host convention instead of a first-class effect |
+| R14 | a request is a **hand-off**, not a suspension: the step produces a `TaskList` and its run ends; each task carries `{request, then}` and the response becomes the input of the chain `then` names | resuming the same run with the response: it makes "which parser for this response" an implicit consequence of one story's shape, while the key is exactly what must travel per response |
+| R15 | the default unit is **one story per layer**, joined by tasks | keeping the whole flow in one story: it forces one run to span several network boundaries whose answers belong to *different* parsers |
 
 ### 12.2 `D-03-2` — materialization is on demand (unchanged from v0.1)
 
@@ -665,5 +696,6 @@ argument shape of `each`.
 | O2 | how `call`'s arguments are written (`with` on the step; bound at registration; or both with the step overriding) | open |
 | O3 | is `key` required on every step, or only when something references it? | open |
 | O4 | may a step override the chain-level `policy`? | open |
-| O5 | an explicit "return the input unchanged" action: a step-level object that wants to read its own input (a `Request` whose `url` *is* the input) has no clean spelling today — `["ctx","set","locals._u"]` passes the value through (measured, works for `str` and `dict`) but reads as a side effect | open, small |
+| O5 | an explicit "return the input unchanged" action: a step that reads its own input (the seed step, whose `url` *is* the run's input) has no clean spelling today — `["py","str",""]` is the identity on a string (measured, used in §11.1) and `["ctx","set","locals._u"]` passes any value through (measured) but reads as a side effect | open, small |
 | O6 | how far the trace goes (`06` §5.1's structure) and whether a recorded run is the replay format | open, belongs with the trial UI |
+| O7 | the **name of the task product type**: `TaskList` (used throughout this note, since its items are `{request, then}` and not bare requests) versus keeping the v0.1 name `RequestBatch` | open, naming |

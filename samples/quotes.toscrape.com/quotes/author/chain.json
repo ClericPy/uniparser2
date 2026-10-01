@@ -1,0 +1,28 @@
+{
+  "dsl_version": 1,
+  "policy": {
+    "on_missing": "drop",
+    "on_error": "raise"
+  },
+  "steps": [
+    {
+      "key": "author",
+      "parse": {
+        "url": [["py", "get", "url"]],
+        "name": [["py", "get", "text"], ["css1", "text", "h3.author-title"], ["py", "normalize_space", ""]],
+        "born_date": [["py", "get", "text"], ["css1", "text", "span.author-born-date"], ["py", "strip", ""]],
+        "born_location": [
+          ["py", "get", "text"],
+          ["css1", "text", "span.author-born-location"],
+          ["py", "strip", ""]
+        ],
+        "description": [
+          ["py", "get", "text"],
+          ["css1", "text", "div.author-description"],
+          ["py", "normalize_space", ""]
+        ]
+      },
+      "out": "Author"
+    }
+  ]
+}

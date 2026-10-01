@@ -1,0 +1,13 @@
+{
+  "dsl_version": 1,
+  "steps": [
+    {
+      "key": "start",
+      "parse": {
+        "url": [["py", "str", ""]]
+      },
+      "out": "Request",
+      "then": "authors"
+    }
+  ]
+}

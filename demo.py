@@ -348,7 +348,7 @@ def section_regex() -> None:
 
 
 def section_python() -> None:
-    show_source("5. `py` — the 31-function allowlist (no extra needed)", SAMPLE_TEXT)
+    show_source("5. `py` — the 41-function allowlist (no extra needed)", SAMPLE_TEXT)
     one(
         "default() catches a Missing upstream",
         [["re", "search", r"\d+"], ["py", "default", "none"]],
@@ -362,6 +362,11 @@ def section_python() -> None:
     one("split() + first()", [["py", "split", ","], ["py", "first", ""]], "a,b,c")
     one("replace()", [["py", "replace", {"old": "b22", "new": "B"}]], SAMPLE_TEXT)
     one("parse_time()", [["py", "parse_time", ""]], "2026-09-24 15:30:00")
+    one(
+        "in() — a predicate, spelled the way Python spells it",
+        [["py", "in", [200, 301, 302]]],
+        301,
+    )
 
 
 def section_scope() -> None:

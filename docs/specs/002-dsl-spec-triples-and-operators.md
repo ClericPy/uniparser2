@@ -237,6 +237,7 @@ short-circuiting.
 | `nodes` | selector | `list[Opaque]` (all matches; empty ⇒ `Missing`) | `list[Opaque]` (0 or 1) |
 | `self` | selector | `Opaque` (first match; use `nodes` for all) | `Opaque` |
 | `remove` | selector | a **copy** with **all** matches pruned (a pure function, see D-02-3) | a copy with the **first** match pruned |
+| `exists` | selector | `bool`: true when at least one node matches, **never** `Missing` | `bool` (the first-match flag does not change existence) |
 
 - **`text` excludes the text of `script`/`style`/`noscript`** (the noise tags are pruned on the copy before the text is taken); it does not normalise whitespace
   (use `py.normalize_space`).
@@ -339,7 +340,7 @@ returns `{"a":1}`), `join.sep` and `parse_time.lang` (both `str()`-coerced). A *
 
 The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser's directive table lives in Python's `_strptime` and is the same on every platform, while `strftime` delegates unknown directives to the C library — glibc passes `%Q` through verbatim and the Windows CRT raises, so a `strftime` probe gave the same chain two verdicts on two operating systems. Asking the parser also means the verdict matches what the operator does at run time: the set therefore follows the interpreter (measured on 3.12.11 / 3.13.12 / 3.14.3, `%T` / `%e` / `%-d` are accepted from 3.13 on, and a stray `%` is read as a literal by 3.12 but rejected by 3.13+).
 
-**Function table (32 functions, a closed set; anything outside the table is `UP2-E1003`)**:
+**Function table (41 functions, a closed set; anything outside the table is `UP2-E1003`)**:
 
 > **Dependencies are declared per action** (a convergence made while implementing L1): `requires` can hang not only off an operator but also off a **single
 > action** — `html_to_markdown` needs `html-to-markdown`, whereas `strip` in the same operator needs nothing at all. When a dependency is missing, that
@@ -377,6 +378,10 @@ The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser'
 | Conversion | `str` / `int` / `float` / `bool` | — | type conversion (cannot convert ⇒ `UP2-E2005`) | the former `cast` operator (D-02-14) |
 | Conversion | `list` | — | JSON array text → `list`; if it is already a `list`, unchanged | the former `cast` operator |
 | Conversion | `from_json` | — | JSON text → JSON tree | the former `cast json` (**it cannot be called `json`**: that would share a name with the `json` operator while meaning something different) |
+| Predicate | `==` / `!=` | `to` (`ref_or_literal`) | equality / inequality with the parameter; **no type coercion** (`200` is not `"200"`), containers compare deeply | new (the chain layer's predicates) |
+| Predicate | `<` / `<=` / `>` / `>=` | `to` (`ref_or_literal`) | ordering; a **comparable pair only** (two numbers or two strings), any other pair is `UP2-E2002` naming both types — a Python `TypeError` never escapes as `UP2-E2099` | new |
+| Predicate | `in` | `container` (`ref_or_literal`) | Python's `in`: the **parameter is the container** (a `str` substring, a `list` member, a `dict` key); to ask whether the value contains something, write the element in front (`[["const","/public/"],["py","in","$locals.url"]]`) | new |
+| Predicate | `or` / `and` | `operands` (`ref_or_literal`, an **array**) | Python's `or`/`and` over operands that were **already computed** (typically `_` locals): `or` answers with the first truthy operand, else the last, `and` with the first falsy, else the last; an empty array is `false` / `true`. Truthiness is Python's, so the answer is an operand rather than a boolean | new (the L2 `match` needs these) |
 
 **Functions removed from the `04` parser-syntax draft and the reasons**:
 
@@ -407,7 +412,7 @@ The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser'
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (31 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -555,7 +560,7 @@ is in §6.12).
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (31 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -681,7 +686,7 @@ falsely reject legal constructs that the sandbox does not support anyway. The au
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (31 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 

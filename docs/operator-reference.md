@@ -54,10 +54,16 @@ and a JSON Pointer. `uv run up2 lint <chain.json>` performs exactly that check.
 | `remove` | a copy of the node with the matching nodes pruned |
 | `self` | the node handle itself (for a later stage) |
 | `nodes` | the set of matching nodes |
+| `exists` | `true` / `false`: does the selector match at least one node (**never** `Missing`) |
 
 `css` yields **every** match (a list), `css1` only the first (a scalar) — the cardinality is explicit
 rather than a switch, because a silent truncation is worse than a longer name. An empty selector means
 "the node itself".
+
+Use `exists` rather than `nodes` when the chain only needs to branch: `["css","nodes",S]` reports
+`Missing` when nothing matches, so the missing-value policy decides the answer (`""` under the default,
+`Missing` under `drop`, a failure under `raise`), while `["css","exists",S]` answers `false` under all
+of them.
 
 ### `xpath` — XPath on XML (engine: lxml, extra `[xml]`)
 
@@ -90,7 +96,8 @@ Python's `re` has **no** timeout parameter, so there is no runtime backstop — 
 
 ### `py` — the allowlist of pure functions (standard library)
 
-32 functions, JSON in and JSON out, no IO. A closed set: an unknown name is `UP2-E1003`.
+41 functions, JSON in and JSON out, no IO. A closed set: an unknown name is `UP2-E1003`. The predicate
+actions use Python's own spellings, so a chain reads like the expression it means.
 
 | Purpose | Functions |
 |---|---|
@@ -99,13 +106,36 @@ Python's `re` has **no** timeout parameter, so there is no runtime backstop — 
 | URL | `urljoin` · `urlsplit` |
 | encoding / hash | `b64_encode` · `b64_decode` · `sha256` |
 | conversion | `str` · `int` · `float` · `bool` · `list` · `from_json` |
+| predicate | `==` · `!=` · `<` · `<=` · `>` · `>=` · `in` (one parameter each; `["py","==",200]`) |
+| selection | `or` · `and` (Python's, over an **array** of already-computed operands: `["py","or",["$locals._a","fallback"]]`) |
 | fallback | `default` — the only action that can swallow `Missing`; its value may be any JSON value, a container included |
 | time (input) | `parse_time` — a time string → the canonical `%Y-%m-%d %H:%M:%S`, in the order **explicit `format`** → **built-in table** (no dependency) → **natural-language detection** (`[time]`); `lang` restricts the detection, `date_order` (`MDY`/`DMY`/`YMD`, default `DMY`) decides an ambiguous slash writing, `now` (e.g. `"$globals.now"`) pins the base clock of a relative expression |
 | time (output) | `strftime` — the canonical string → another layout (`%Y/%m/%d`), allowlisted to directives that no locale or platform decides |
 | formats | `html_to_markdown` (`[md]`) |
 
+The comparisons follow Python: `==` / `!=` compare any two JSON values with Python's own equality — deep
+equality for containers, no string coercion (`200` is not `"200"`), and `1` **is** equal to `true`
+(`bool` is an `int`). The four orderings take a **comparable pair only** (two numbers or two strings), and
+a boolean is not a number here, so `["py","<",2]` on `true` is `UP2-E2002` — the one place where the two
+families disagree. A **bare `null`** cannot be written as the parameter at all: `["py","==",null]` is
+`UP2-E1005` ("missing required parameter"), because the machinery cannot tell a written `null` from an
+omitted one — true of every scalar parameter in the DSL, not just these actions. A null test is written
+`["py","in",[null]]`.
+
+`in` keeps Python's operand order — the parameter is the container: `["py","in",[200,301,302]]` asks
+whether the value is one of those, and "the URL contains `/public/`" puts the element in front:
+`[["const","/public/"],["py","in","$locals.url"]]`.
+
+`or` / `and` answer with an **operand**, not a boolean (`or` over `["", 0]` answers `0`, which is
+Python's answer), so they serve both selection and judgement. Their operands have to **exist**: a missing
+reference short-circuits the whole stage before the action runs — every operator's parameters behave that
+way — so "take A, else B" covers candidates that are present but empty, and one that may be absent is made
+present first (`[["css1","text","h1"],["py","default",""]]`). To negate a boolean, compare it:
+`["py","!=",true]`; there is deliberately no `not` action.
+
 The parameter slot is written bare for `urljoin` / `slice` / `getitem` / `get` / `join` / `urlsplit` /
-`default` / `strftime`, and as a named object for `split` / `replace` / `sort` / `parse_time`. A container
+`default` / `strftime` / `==` / `!=` / `<` / `<=` / `>` / `>=` / `in` / `or` / `and`, and as a named
+object for `split` / `replace` / `sort` / `parse_time`. A container
 where the function needs a scalar is a compile-time `UP2-E1005` (`urljoin.base`, `slice.spec`,
 `split.sep`, `split.maxsplit`, `getitem.index`, `get.key`, `replace.old`, `replace.new`,
 `strftime.layout`, and an unknown `sort.key`).
@@ -175,6 +205,11 @@ is absent from a default install and from `uniparser2[all]`, and without the ext
 time with `UP2-E1107`. Host-configured limits (64 MB, 0.5 s per evaluation by default) and a
 deterministic clock/sleep/random policy apply, and the chain cannot loosen them. What the sandbox does
 and does not expose is listed surface by surface in `specs/004` §11.3.
+
+The sandbox mounts the `py` allowlist **by name**, so the predicate actions are mounted too — but a
+snippet cannot call them by bare name: `in`, `or` and `and` are Python keywords and `==`, `!=`, `<`, `<=`,
+`>`, `>=` are not identifiers. Inside `code`, write the language's own operators (`a == b`, `x in y`,
+`a or b`) instead; the named form matters for chains, where the action name is data.
 
 ## Worked examples
 

@@ -6,12 +6,12 @@ A declarative, deterministic, serializable **text parsing engine**: it turns the
 input text to a specified structure into JSON data (a **parse chain**), generated offline by a human
 or an LLM, with nothing but deterministic evaluation at runtime.
 
-> **Status**: `0.3.0`, L1 (the DSL operator layer) is complete. **11 operators** are implemented:
+> **Status**: `0.4.0`, L1 (the DSL operator layer) is complete. **11 operators** are implemented:
 > `css` / `css1` (HTML selectors — all matches vs. first match only, selectolax), `xpath` (XML, lxml),
-> `json` (jmespath), `re`, `py` (32 allowlist functions), `udf` (host-registered, no code in the
+> `json` (jmespath), `re`, `py` (41 allowlist functions), `udf` (host-registered, no code in the
 > chain), `code` (in-chain code, language-level sandbox, **not present by default** — see the
 > security note), plus the scoping operator `ctx`, the building block `const` and the iteration
-> operator `each` — 61 `(operator, action)` pairs in total. The chain-level structure
+> operator `each` — 72 `(operator, action)` pairs in total. The chain-level structure
 > (`seed`/`parse`/`emit`, `result` assembly) and the in-place trial UI are L2. For progress and
 > acceptance criteria see the roadmap in the design notes; to see it run right now, in a source
 > checkout: `uv run python demo.py` — one walkthrough that exercises all 11 operators, the tri-state
@@ -46,7 +46,7 @@ each asserted by a test.
 | `xpath` | lxml (`[xml]`) | `text` · `self` · `nodes` (XML; XPath is lxml-native) |
 | `json` | jmespath (`[json]`) | `get` — a jmespath expression, empty means the root |
 | `re` | stdlib | `search` · `group` · `findall` |
-| `py` | stdlib; the natural-language path of `parse_time` needs `[time]`, `html_to_markdown` needs `[md]` | 32 allowlisted pure functions: `int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `get` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` |
+| `py` | stdlib; the natural-language path of `parse_time` needs `[time]`, `html_to_markdown` needs `[md]` | 41 allowlisted pure functions: `int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `get` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` · `==` `!=` `<` `<=` `>` `>=` `in` `or` `and` (predicates, Python's spellings) |
 | `ctx` | stdlib | `get` · `set` · `del` · `map` (scope reads and writes) |
 | `udf` | host-registered | any function the host registered beforehand; the chain carries only a name |
 | `code` | pydantic-monty (`[code]`, deliberately not in `[all]`) | `run` — in-chain code in a language-level sandbox (see the security note) |

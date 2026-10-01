@@ -377,7 +377,7 @@ boundary as four layers: **the first three are the three sources of code capabil
 
 A chain is JSON, and `core/` contains no `eval` / `exec` / `__import__` (`N6`). **A default installation (including `uniparser2[all]`) installs
 no code-execution capability at all**: a chain can only call operators and actions already declared in the registry. This layer is statically decidable — read the chain and read
-the output of `up2 ops` and you can enumerate everything it can do; the 32 allowlisted `py` functions are pure functions that ship with the engine (JSON in, JSON out, no IO) and belong to this layer.
+the output of `up2 ops` and you can enumerate everything it can do; the 41 allowlisted `py` functions are pure functions that ship with the engine (JSON in, JSON out, no IO) and belong to this layer.
 
 ### 11.2 Layer two: `udf` = host-registered functions (the chain holds only a name)
 

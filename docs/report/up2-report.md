@@ -2,19 +2,19 @@
 
 Input → triple chain → output repr: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `--md --check` fails when it is stale. The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
 
-Generated from `uniparser2` 0.3.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
+Generated from `uniparser2` 0.4.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
 
 ## Coverage check
 
 - **Coverage check passed**: every declared pair has a case and every behavior case ran `Ok`.
-- the registry declares **61** pairs = **61** pairs covered by cases
-- states across every run: `Failed` 5, `Missing` 2, `Ok` 89
+- the registry declares **72** pairs = **72** pairs covered by cases
+- states across every run: `Failed` 5, `Missing` 2, `Ok` 100
 
 | operator | arity | slots | summary | actions |
 |---|---|---|---|---|
-| `css` | 3 | accessor / selector | CSS selector (all matches) | 7 |
-| `css1` | 3 | accessor / selector | CSS selector (first match only) | 7 |
-| `py` | 3 | function / params | Python built-in allowlist functions | 32 |
+| `css` | 3 | accessor / selector | CSS selector (all matches) | 8 |
+| `css1` | 3 | accessor / selector | CSS selector (first match only) | 8 |
+| `py` | 3 | function / params | Python built-in allowlist functions | 41 |
 | `xpath` | 3 | accessor / XPath | XPath query (XML; lxml) | 3 |
 | `json` | 2 | jmespath path | JSON dot-path query (jmespath) | 1 |
 | `re` | 3 | mode / pattern | Regex matching (search / group / findall) | 3 |
@@ -39,7 +39,7 @@ Commonness is a **design judgement**, not telemetry: the tiers follow the "stand
 
 ## `css` — CSS selector (all matches)
 
-arity 3 · slot 2=accessor / slot 3=selector · dependencies: `selectolax` · 7 actions (Core, Common, Advanced)
+arity 3 · slot 2=accessor / slot 3=selector · dependencies: `selectolax` · 8 actions (Core, Common, Advanced)
 
 Shared input for this section:
 
@@ -83,6 +83,13 @@ Shared input for this section:
 - chain: `[["css", "nodes", "ul.rel a"]]`
 - input: the shared sample above
 - output: `Ok(value=[<DomNode Node>, <DomNode Node>])` (Ok)
+
+#### `exists` — whether the selector matches at least one node
+- tier ★★ Common · parameter slot: the value itself · `selector: literal`
+- note: boolean: does the selector match
+- chain: `[["css", "exists", "ul.rel a"]]`
+- input: the shared sample above
+- output: `Ok(value=True)` (Ok)
 
 #### `outer` — outer HTML
 - tier ★ Advanced · parameter slot: the value itself · `selector: literal`
@@ -147,7 +154,7 @@ Shared input for this section:
 
 ## `css1` — CSS selector (first match only)
 
-arity 3 · slot 2=accessor / slot 3=selector · dependencies: `selectolax` · 7 actions (Core, Common, Advanced)
+arity 3 · slot 2=accessor / slot 3=selector · dependencies: `selectolax` · 8 actions (Core, Common, Advanced)
 
 Shared input for this section:
 
@@ -191,6 +198,13 @@ Shared input for this section:
 - chain: `[["css1", "nodes", "ul.rel a"]]`
 - input: the shared sample above
 - output: `Ok(value=[<DomNode Node>])` (Ok)
+
+#### `exists` — whether the selector matches at least one node
+- tier ★★ Common · parameter slot: the value itself · `selector: literal`
+- note: boolean: does the selector match
+- chain: `[["css1", "exists", "ul.rel a"]]`
+- input: the shared sample above
+- output: `Ok(value=True)` (Ok)
 
 #### `outer` — outer HTML
 - tier ★ Advanced · parameter slot: the value itself · `selector: literal`
@@ -238,7 +252,7 @@ Shared input for this section:
 
 ## `py` — Python built-in allowlist functions
 
-arity 3 · slot 2=function / slot 3=params · dependencies: none · 32 actions (Core, Common, Advanced, Rare)
+arity 3 · slot 2=function / slot 3=params · dependencies: none · 41 actions (Core, Common, Advanced, Rare)
 
 Shared input for this section:
 
@@ -381,6 +395,41 @@ Shared input for this section:
 - input: `42`
 - output: `Ok(value='42')` (Ok)
 
+#### `==` — equal to the parameter (no type coercion)
+- tier ★★ Common · parameter slot: the value itself · `to: ref_or_literal`
+- note: equality with the parameter (no type coercion)
+- chain: `[["py", "==", 200]]`
+- input: `200`
+- output: `Ok(value=True)` (Ok)
+
+#### `!=` — not equal to the parameter
+- tier ★★ Common · parameter slot: the value itself · `to: ref_or_literal`
+- note: inequality (also negates a boolean: ['!=', true])
+- chain: `[["py", "!=", 200]]`
+- input: `'200'`
+- output: `Ok(value=True)` (Ok)
+
+#### `in` — is the value in the parameter (Python's in: the parameter is the container)
+- tier ★★ Common · parameter slot: the value itself · `container: ref_or_literal`
+- note: Python's in: the parameter is the container
+- chain: `[["py", "in", [200, 301, 302]]]`
+- input: `301`
+- output: `Ok(value=True)` (Ok)
+
+#### `or` — the first truthy operand, else the last (Python's or; answers with the operand)
+- tier ★★ Common · parameter slot: the value itself · `operands: ref_or_literal`
+- note: Python's or: first truthy, else the last
+- chain: `[["py", "or", ["", "fallback"]]]`
+- input: `'in'`
+- output: `Ok(value='fallback')` (Ok)
+
+#### `and` — the first falsy operand, else the last (Python's and)
+- tier ★★ Common · parameter slot: the value itself · `operands: ref_or_literal`
+- note: Python's and: first falsy, else the last
+- chain: `[["py", "and", [{"a": 1}, ""]]]`
+- input: `'in'`
+- output: `Ok(value='')` (Ok)
+
 #### `upper` — convert to uppercase
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: uppercase
@@ -464,6 +513,34 @@ Shared input for this section:
 - chain: `[["py", "list", ""]]`
 - input: `'["a","b"]'`
 - output: `Ok(value=['a', 'b'])` (Ok)
+
+#### `<` — less than the parameter (two numbers or two strings)
+- tier ★ Advanced · parameter slot: the value itself · `to: ref_or_literal`
+- note: ordering: two numbers or two strings only
+- chain: `[["py", "<", 10]]`
+- input: `5`
+- output: `Ok(value=True)` (Ok)
+
+#### `<=` — less than or equal to the parameter
+- tier ★ Advanced · parameter slot: the value itself · `to: ref_or_literal`
+- note: ordering (inclusive)
+- chain: `[["py", "<=", 5]]`
+- input: `5`
+- output: `Ok(value=True)` (Ok)
+
+#### `>` — greater than the parameter
+- tier ★ Advanced · parameter slot: the value itself · `to: ref_or_literal`
+- note: ordering
+- chain: `[["py", ">", 5]]`
+- input: `6`
+- output: `Ok(value=True)` (Ok)
+
+#### `>=` — greater than or equal to the parameter
+- tier ★ Advanced · parameter slot: the value itself · `to: ref_or_literal`
+- note: ordering (inclusive)
+- chain: `[["py", ">=", "b"]]`
+- input: `'c'`
+- output: `Ok(value=True)` (Ok)
 
 #### `b64_encode` — Base64 encode
 - tier ○ Rare · parameter slot: no parameter (write two positions, or "")

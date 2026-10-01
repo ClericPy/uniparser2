@@ -179,6 +179,7 @@ def _selector_op(op: str) -> list[Case]:
         case("html", "html", "div.content", "Common", 1, "inner HTML"),
         case("remove", "remove", "script,style", "Common", 2, "pure function: pruned copy"),
         case("nodes", "nodes", "ul.rel a", "Common", 3, "node set for L2 fan-out (not a value)"),
+        case("exists", "exists", "ul.rel a", "Common", 4, "boolean: does the selector match"),
         case("outer", "outer", "h1.article-title", "Advanced", 1, "outer HTML (with its own tag)"),
         case("self", "self", "div.content", "Advanced", 2, "handle of the first match"),
     ]
@@ -301,7 +302,7 @@ def coverage_cases() -> list[Case]:
 
 
 def _py_cases() -> list[Case]:
-    """`py`  has 32 allowlisted functions, tiered by commonness (module docstring)."""
+    """`py`  has 41 allowlisted functions, tiered by commonness (module docstring)."""
     spec: list[tuple[str, int, str, Any, Any, str]] = [
         ("Core", 1, "strip", "  text  ", "", "strip leading/trailing whitespace"),
         ("Core", 2, "normalize_space", "a   b\n c", "", "collapse consecutive whitespace"),
@@ -357,6 +358,11 @@ def _py_cases() -> list[Case]:
         ),
         ("Common", 10, "int", "42", "", "type conversion (formerly cast int)"),
         ("Common", 11, "str", 42, "", "type conversion (formerly cast str)"),
+        ("Common", 12, "==", 200, 200, "equality with the parameter (no type coercion)"),
+        ("Common", 13, "!=", "200", 200, "inequality (also negates a boolean: ['!=', true])"),
+        ("Common", 14, "in", 301, [200, 301, 302], "Python's in: the parameter is the container"),
+        ("Common", 15, "or", "in", ["", "fallback"], "Python's or: first truthy, else the last"),
+        ("Common", 16, "and", "in", [{"a": 1}, ""], "Python's and: first falsy, else the last"),
         ("Advanced", 1, "upper", "abc", "", "uppercase"),
         ("Advanced", 2, "lower", "ABC", "", "lowercase"),
         ("Advanced", 3, "flatten", [[1, 2], [3]], "", "flatten one level"),
@@ -376,6 +382,10 @@ def _py_cases() -> list[Case]:
         ("Advanced", 10, "float", "1.5", "", "type conversion"),
         ("Advanced", 11, "bool", "no", "", "type conversion (falsey word list)"),
         ("Advanced", 12, "list", '["a","b"]', "", "JSON array text → list"),
+        ("Advanced", 13, "<", 5, 10, "ordering: two numbers or two strings only"),
+        ("Advanced", 14, "<=", 5, 5, "ordering (inclusive)"),
+        ("Advanced", 15, ">", 6, 5, "ordering"),
+        ("Advanced", 16, ">=", "c", "b", "ordering (inclusive)"),
         ("Rare", 1, "b64_encode", "abc", "", "Base64 encode"),
     ]
     return [

@@ -12,6 +12,18 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Added
 
+- **Predicate actions on `py`, spelled the way Python spells them**: `==` / `!=` / `<` / `<=` / `>` /
+  `>=` / `in` answer with a boolean in one stage, and `or` / `and` follow Python's **value** semantics
+  (`or` answers with the first truthy operand, else the last, `and` with the first falsy, else the
+  last), so `[["py","or",["$locals._a","fallback"]]]` is the "take A, else B" shape. The four orderings
+  take a comparable pair only (`UP2-E2002` names both types, instead of letting a Python `TypeError`
+  escape as `UP2-E2099`), `in` keeps Python's operand order (the parameter is the container:
+  `["py","in",[200,301,302]]`), and `!=` against a boolean is the negation — there is deliberately no
+  `not` action. `css` / `css1` gained `exists`, which answers `true` / `false` and **never** `Missing`:
+  `nodes` reports a missing value when nothing matches, so its answer is decided by the missing-value
+  policy, which no predicate can rely on. `py` now holds 41 functions; the conformance audit reports 72
+  declared pairs and 26 error codes.
+
 - **`each`, the iteration operator** (`["each", {"title": [["css1","text","a"]]}]`): the stage above
   produces a list, the argument is a **field map** (`field name → chain`, the same shape a node's
   `fields` block has) and the result is **one dictionary per element**, in input order. It is a 2-slot

@@ -225,7 +225,7 @@ The design intent of `--skip-tests`: it allows the realistic case of "store the 
 |---|---|
 | `root_domain` | site identity; use `local` for practice |
 | `tpl_key` | human-readable business name; matches `^[\w\u4e00-\u9fff][\w\u4e00-\u9fff.-]{0,63}$` |
-| Product target | confirm the `out` type of each step, above all the last one (a host-registered type, or a built-in one; `03` §3) |
+| Product target | confirm the `type` of each step, above all the one `exit` names (a host-registered type, or a built-in one; `03` §3) |
 | Sample input | **at least 1 real input**, placed at `samples/<root_domain>/<tpl_key>/<case>/input.txt` |
 
 **Acceptance**: `up2 lint --ops` can list the available operators and actions (read it before drafting; do not write action names from memory).
@@ -241,8 +241,8 @@ The LLM (or a person) produces the chain JSON, **using only operators and action
 
 1. what the run's input is (the **first step's input**; there is no `seed` and no input field, `03` §2) and that materialization is on demand (`03` §6);
 2. whether per-item parsing is needed (an `each` stage inside the chain that holds the list);
-3. each step's `out` type (`03` §3);
-4. the missing-value policy of fields (`on_missing`).
+3. each step's `type` (`03` §3), and the `exit` it declares;
+4. how a value that may be absent is handled: a field whose chain ends in a miss is simply **absent** from the product (`01` §4.2), so a fallback is written at the action level (`py.default` / `py.or`), not configured for the whole run.
 
 **Acceptance**: a parsable JSON file is produced.
 
@@ -345,7 +345,7 @@ up2 publish backup.json --domain … --key … --actor ops:me --source human --n
 | 12 | writing `$fields.title` inside **another** step | `UP2-E1006` | `$fields` is valid only inside the step that declares the field map; another step writes `$<step key>.title` |
 | 13 | a step key using a reserved name (`globals`) or duplicated | `UP2-E1009` | change the key |
 | 14 | `tpl_key` carrying `:` or `/` | `UP2-E3002` | pick a name inside the character set |
-| 15 | parsing a `Response` product as HTML without taking the body apart first | `UP2-E2002` | `css` sees a dict, not text: start the chain with `["py","get","text"]` (`03` §4.1) |
+| 15 | parsing an answer object as HTML without reading its body first | `UP2-E2002` | `css` sees the object, not text: start the chain with `["py","getattr","text"]` (`03` §4.1) |
 | 16 | a field chain longer than 32 stages / `each` nested deeper than 3 levels / one field map holding more than 256 fields | `UP2-E1012` | split the chain, spread the nesting over several steps, or switch to `udf` |
 | 17 | an empty field map, or a field name that is empty or contains `.` | `UP2-E1005` | declare at least one field, and name each one so a `$…` path can address it |
 
@@ -374,7 +374,7 @@ boundary as four layers: **the first three are the three sources of code capabil
 
 A chain is JSON, and `core/` contains no `eval` / `exec` / `__import__` (`N6`). **A default installation (including `uniparser2[all]`) installs
 no code-execution capability at all**: a chain can only call operators and actions already declared in the registry. This layer is statically decidable — read the chain and read
-the output of `up2 ops` and you can enumerate everything it can do; the 41 allowlisted `py` functions are pure functions that ship with the engine (JSON in, JSON out, no IO) and belong to this layer.
+the output of `up2 ops` and you can enumerate everything it can do; the 40 allowlisted `py` functions are pure functions that ship with the engine (JSON in, JSON out, no IO) and belong to this layer.
 
 ### 11.2 Layer two: `udf` = host-registered functions (the chain holds only a name)
 

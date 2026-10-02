@@ -192,8 +192,8 @@ This round started from "build the scaffold + the conformance mechanism first, a
 |---|---|
 | Field-map orchestration | multi-field evaluation over one input, cross-field `locals` references, chain-level / step-level / field-level overrides of `on_missing` / `on_error` |
 | **Lists and nesting** | `each` iteration (one dictionary per element, with the per-element scope), `$lit` escaping, arbitrarily deep nested `dict`/`list` |
-| **The story** | the linear step sequence (`parse` = a chain or a field map / `call` = a host function, plus `out`), the type registry and the step-boundary validation, the executor and the run loop (`start` / `next` / `send`) |
-| Effects | `Request` / `RequestBatch` → `Response` (`03` §4.1); `call` → a serializable receipt; trace versus suspension |
+| **The story** | the step sequence (`name` / `type`, `parse` = a chain or a field map, `call` = a host function, `next` = the receiving step), the type registry and the step-boundary validation (`L8`, still open), the executor and the run loop (`start` / `next` / `send`) — **landed** in `story-jump-and-naming`, except the type registry |
+| Effects | `Request` / `RequestBatch` → the host's own answer (`03` §4.1); `call` → a receipt that is JSON; trace versus suspension |
 | materialization | the run-scoped, byte-capped cache (`03` §6) — load-bearing for acceptance item 7 |
 | lint | every live rule of `03` §10, each with at least one test (L20 is retired with `presets`) |
 | trace | `up2 trial --trace --json` (the data structure of `06` §5.1) |
@@ -205,7 +205,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 > `nodes`, `next` / `routes` / `default_route`, the `emit` export shapes (`record` / `flat` / `request`),
 > the `result` template and the graph lints are all retired; `03` §12.1 records the rulings and the
 > alternatives each one rejected. Dispatch by the product's type name lives in the **host**, and a step
-> whose `out` is `Request` suspends the run so the host can send it. The `03` section numbers cited inside
+> whose `type` is `Request` suspends the run so the host can send it. The `03` section numbers cited inside
 > §2 below refer to `03` v0.1's numbering, which no longer matches the rewritten note.
 
 > **Iteration redesign (change `l2-chain-structure-and-each`, landed in the operator layer)**: the `select` fan-out, the `callback` operator with its `presets` container, the `$map` template directive and the `item` scope root were **retired in favour of one operator, `each`** (`02` §6.9, `03` §7). It takes the list the stage above produced plus an **inline field map** (`field name → chain`, the same shape a step's field map has) and yields one dictionary per element; a `_`-prefixed field name is a local of that element, and every element is evaluated in its own child scope. `$item` is gone because the element is simply the input value of each field chain, and lint L20 is retired with the container. Implemented in the operator layer: 72 `(operator, action)` pairs, 26 error codes, `MAX_EACH_DEPTH` / `MAX_EACH_ITER` / `MAX_FIELDS_PER_MAP` (`01` §9).
@@ -232,7 +232,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | Store | the `TemplateStore` protocol + `FileStore` + `SqliteStore` + fingerprints + auditing; `root_domain` / `tpl_key` are introduced for the first time |
 | publish gate | G1 mandatory lint, G2 snapshot regression, G3 coverage confirmation, no-op detection, `--skip-tests` leaving a trace |
 | SOP | `up2 snapshot` / `up2 test` / `up2 get` / `up2 list` / `up2 audit` / `up2 doctor`; `04` §7 written as an executable document |
-| host seam | a "consume the request dict" example (a step whose `out` is `Request` → the host HTTP layer, `03` §4.1); a "host implements TemplateStore (MySQL) + dispatches by key" example |
+| host seam | a "consume the request dict" example (a step whose `type` is `Request` → the host HTTP layer, `03` §4.1); a "host implements TemplateStore (MySQL) + dispatches by key" example |
 
 **Acceptance**
 
@@ -269,7 +269,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | **f** | whether an integrated orchestration of "collection story → detail story" (`run_pipeline`) is needed | `03` §8.3 currently loops in the caller | not recommended: the kernel keeps "one run, one story"; integrated orchestration belongs to the host (and a story may already fetch for itself through a `Request` effect) |
 | ~~**g**~~ | ~~whether `variants` should be brought forward~~ | — | **dissolved**: dispatch by product type name lives in the host (`03` §1) |
 | **h** | the own restricted Schema language vs adopting JSON Schema directly | `01` §6.1 | the own vocabulary is recommended (both the LLM generation cost and the error-message quality are better); if integration with external tooling is needed later, add a JSON Schema converter |
-| ~~**i**~~ | ~~how an `emit` node with `produces: "flat"` names the field it exports~~ | — | **dissolved**: there is no `emit` and no `flat`; a collection is a named field of a step's product and `out` names its type (`03` §9) |
+| ~~**i**~~ | ~~how an `emit` node with `produces: "flat"` names the field it exports~~ | — | **dissolved**: there is no `emit` and no `flat`; a collection is a named field of a step's product and `type` names its type (`03` §9) |
 | **j** | whether a `_` name reused at two nesting levels should be a compile-time error instead of an authoring rule (the read fallback is **by name**, so the inner name simply wins) | `03` §7; the story layer | defer it to the story layer: one check there sees a step's field-map names as well, so it covers every level instead of only `each` inside `each`; the alternative — a strictly local `$locals` plus explicit outer references (`locals.__parent__…`, `$loop.parent…`) — was rejected because every cross-layer read would then have to count nesting levels |
 
 **Resolutions** (settled with the project owner; this list is what allowed the design notes to be
@@ -285,7 +285,7 @@ migrated into `docs/specs/`, per `05` §5.4):
 | **f** | **settled** — no integrated orchestration for now; keeping "one `run`, one chain` stands, and turning a chain's output into a `request` structure before sending it remains a host concern to be thought through later. |
 | **g** | **settled** — `variants` is **dissolved**: the host picks which story to run and dispatches on the product's type name (`03` §1); revisit only if a real case cannot be expressed that way. |
 | **h** | **deferred by choice** — the parameter Schema language will be reconsidered later (candidates named: `pydantic` / `msgspec`); until then the own restricted vocabulary stands. |
-| **i** | **dissolved** — there is no `emit` and no `flat` any more (`03` §12.1): a collection is a named field of a step's product and `out` names its type. |
+| **i** | **dissolved** — there is no `emit` and no `flat` any more (`03` §12.1): a collection is a named field of a step's product and `type` names its type. |
 | **j** | **deferred by choice** — the scope rule is stated as implemented (the fallback is by name, so the current scope's name wins outright); the collision check lands with the story layer, where the same compilation site sees a step's field-map names too. |
 
 ---

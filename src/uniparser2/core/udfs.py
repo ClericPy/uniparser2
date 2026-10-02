@@ -18,7 +18,7 @@ from typing import Any, Final
 type UdfFn = Callable[..., Any]
 """The user-defined function contract: ``fn(value, **params) -> JSON value``.
 
-Returning a non-JSON value is ``UP2-E2009``.
+Returning a value that cannot be a product is ``UP2-E2009``.
 """
 
 _UDFS: dict[str, UdfFn] = {}

@@ -27,12 +27,18 @@ from typing import Any, Final
 
 from .ast import Ref
 from .errors import Failed, Missing, Ok, Outcome, Up2Error, diag
-from .values import is_json_value, type_name
+from .values import MISSING, is_json_value, type_name
 
 REF_PREFIX: Final = "$"
 LIT_DIRECTIVE: Final = "$lit"
-RESERVED_ROOTS: Final = ("globals", "locals", "fields")
+RESERVED_ROOTS: Final = ("globals", "locals", "fields", "in")
 WRITABLE_ROOTS: Final = ("locals", "fields")
+INPUT_ROOT: Final = "in"
+"""The root naming **this step's own input** (``$in.url``, design doc 03 §2.1).
+
+A story step's input is the value the step was handed (the previous step's product, a host answer,
+or the run's own input for the first step), and it has no ``locals`` round-trip: ``$in`` names it.
+"""
 # In L1, $fields and $locals name the scope of the current field; L2 splits them (the node's
 # product versus the scratch area) and adds the per-element scope that `each` already needs.
 _LOCAL_ALIASES: Final = ("locals", "fields")
@@ -112,16 +118,26 @@ class Scope:
     fallback is outward while a write stays where it was asked for. The rule is **by name**: the
     innermost scope holding the first segment of a path resolves the whole path, so a name this
     scope wrote is never resolved in a parent, however deep the path goes.
+
+    ``step_input`` is the value ``$in`` names: the input of the **story step** being evaluated (a
+    field chain inside one step still sees the step's input, never the element ``each`` handed it).
+    It stays ``MISSING`` when nothing was handed in.
     """
 
     globals: Mapping[str, Any] = field(default_factory=dict)
-    products: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    products: Mapping[str, Any] = field(default_factory=dict)
     locals: dict[str, Any] = field(default_factory=dict)
     parent: Scope | None = None
+    step_input: Any = MISSING
 
     def child(self) -> Scope:
-        """A fresh scope for one iteration: same globals/products, empty locals, outward reads."""
-        return Scope(globals=self.globals, products=self.products, parent=self)
+        """A fresh scope for one iteration: same globals/products/input, outward reads."""
+        return Scope(
+            globals=self.globals,
+            products=self.products,
+            parent=self,
+            step_input=self.step_input,
+        )
 
     def read(self, ref: Ref) -> Outcome:
         """Read a reference.
@@ -134,6 +150,12 @@ class Scope:
             return _walk_path(self.globals, ref)
         if ref.root in _LOCAL_ALIASES:
             return self._read_locals(ref)
+        if ref.root == INPUT_ROOT:
+            if self.step_input is MISSING:
+                return Missing(
+                    reason=f"{ref.raw} names this step's input, and no input was handed to it"
+                )
+            return _walk_path(self.step_input, ref)
         product = self.products.get(ref.root)
         if product is None:
             return Failed(
@@ -221,31 +243,77 @@ class Scope:
 
 
 def _walk_path(base: Any, ref: Ref) -> Outcome:
-    """Walk a reference path: an absent key is ``Missing``, a shallower structure ``Failed``."""
+    """Walk a reference path, dispatching on the value kind.
+
+    A mapping is read by key, a sequence by index and a **host object by ``getattr``**, so one
+    dotted path works on a dictionary and on an object alike. An absent key is ``Missing`` (the
+    value is not there); a structure that cannot take the segment - a scalar, an index out of
+    range, or an object without that attribute - is ``Failed`` (``UP2-E2001``), and the reason
+    names the class the walk hit.
+    """
     current = base
     walked: list[str] = []
     for segment in ref.path:
-        if isinstance(current, Mapping):
-            if segment not in current:
-                return Missing(
-                    reason=f"{ref.raw} is missing key {segment!r} at {'.'.join(walked) or ref.root}"
-                )
-            current = current[segment]
-        elif isinstance(current, list):
-            return Failed(
-                code="UP2-E2001",
-                reason=f"{ref.raw} tried to index a list with {segment!r}",
-                fix='references do not support array subscripts, use ["py","getitem",N]',
-            )
-        else:
-            return Failed(
-                code="UP2-E2001",
-                reason=f"{ref.raw} hit {type_name(current)} at "
-                f"{'.'.join(walked) or ref.root} and cannot continue to {segment!r}",
-                fix="check how deep the reference path is, or add the intermediate fields",
-            )
+        outcome = _descend(current, segment, ref, walked)
+        if not isinstance(outcome, Ok):
+            return outcome
+        current = outcome.value
         walked.append(segment)
     return Ok(current)
+
+
+def _descend(current: Any, segment: str, ref: Ref, walked: list[str]) -> Outcome:
+    """Take one path segment from a mapping, a sequence or a host object."""
+    if isinstance(current, Mapping):
+        if segment not in current:
+            return Missing(
+                reason=f"{ref.raw} is missing key {segment!r} at {'.'.join(walked) or ref.root}"
+            )
+        return Ok(current[segment])
+    if isinstance(current, (list, tuple)):
+        return _walk_sequence(current, segment, ref)
+    if current is None or isinstance(current, (str, bool, int, float)):
+        return Failed(
+            code="UP2-E2001",
+            reason=f"{ref.raw} hit {type_name(current)} at "
+            f"{'.'.join(walked) or ref.root} and cannot continue to {segment!r}",
+            fix="check how deep the reference path is, or add the intermediate fields",
+        )
+    return _walk_attribute(current, segment, ref, walked)
+
+
+def _walk_sequence(current: list[Any] | tuple[Any, ...], segment: str, ref: Ref) -> Outcome:
+    """Index a sequence with a dotted segment; only digits are an index."""
+    try:
+        index = int(segment)
+    except ValueError:
+        return Failed(
+            code="UP2-E2001",
+            reason=f"{ref.raw} tried to index a list with {segment!r}",
+            fix='a sequence is read by a digit index; for anything else use ["py","getitem",K]',
+        )
+    try:
+        return Ok(current[index])
+    except IndexError:
+        return Failed(
+            code="UP2-E2001",
+            reason=f"{ref.raw} is out of range: the list has {len(current)} items, so index "
+            f"{index} cannot be read",
+            fix="check the length of the list, or take an element with py.first / py.last",
+        )
+
+
+def _walk_attribute(current: Any, segment: str, ref: Ref, walked: list[str]) -> Outcome:
+    """Read an attribute of a host object; the reason carries the exception's own class name."""
+    try:
+        return Ok(getattr(current, segment))
+    except AttributeError as exc:
+        return Failed(
+            code="UP2-E2001",
+            reason=f"{ref.raw} at {'.'.join(walked) or ref.root}: {exc.__class__.__name__}: {exc}",
+            fix="check the attribute name against the host object, or read it with "
+            '["py","getattr",NAME]',
+        )
 
 
 _SENTINEL: Final = object()

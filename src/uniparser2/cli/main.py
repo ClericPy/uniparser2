@@ -4,6 +4,10 @@ run (design docs 04 §7-S0–S3, 05 §5).
 Exit codes: ``0`` ok (including ``Missing`` — missing is not an error, 01 §4.1); ``1`` compile or
 run failed; ``2`` usage error.
 
+Two file shapes are accepted by ``lint`` / ``trial``: a **field chain** (a JSON array of stages) and
+a **story** (a JSON object carrying ``steps``). A story is compiled and run with the story layer; a
+suspension is reported as such, because a CLI has no host to answer a request (§12 of ``03``).
+
 Value conventions:
 - ``--global K=V`` / ``--product K=V``: ``V`` is parsed as JSON and falls back to a string.
 - ``--input K=V``: ``V`` is parsed as JSON only when it starts with ``{``/``[``; otherwise it stays
@@ -15,7 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +30,13 @@ from uniparser2 import (
     Missing,
     Ok,
     Outcome,
-    Policy,
     Scope,
     Up2Error,
     compile_field,
+    compile_story,
     eval_field,
     pack,
+    start,
 )
 from uniparser2.core import registry
 from uniparser2.core.conformance import check
@@ -42,6 +47,7 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_USAGE = 2
 MAIN_INPUT_KEY = "text"
+STORY_KEY = "steps"
 _JSON_CONTAINER_PREFIXES = ("{", "[")
 
 
@@ -113,8 +119,6 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="NAME=JSON",
         help="inject outputs of preceding nodes",
     )
-    trial.add_argument("--on-missing", default="empty", choices=("empty", "none", "drop", "raise"))
-    trial.add_argument("--on-error", default="raise", choices=("raise", "empty", "none", "drop"))
     trial.add_argument("--json", action="store_true", help="output JSON")
     trial.set_defaults(handler=_cmd_trial)
 
@@ -163,6 +167,8 @@ def _cmd_lint(args: argparse.Namespace) -> int:
     if error is not None:
         print(error, file=sys.stderr)
         return EXIT_USAGE
+    if _is_story(source):
+        return _lint_story(source, args)
     names, values, error = _split_assignments(args.product, need_value=False)
     if error is not None:
         print(error, file=sys.stderr)
@@ -180,11 +186,30 @@ def _cmd_lint(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _lint_story(source: Any, args: argparse.Namespace) -> int:
+    """A story declares its own step names, so ``--product`` has nothing to say here."""
+    if args.product:
+        print("--product cannot be used with a story file", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        story = compile_story(source)
+    except Up2Error as exc:
+        _print_diagnostic(exc.diagnostic, as_json=args.json)
+        return EXIT_FAILED
+    if args.json:
+        print(json.dumps({"ok": True, "steps": len(story.steps), "exit": story.exit}))
+    else:
+        print(f"OK: {len(story.steps)} steps, exit {story.exit}")
+    return EXIT_OK
+
+
 def _cmd_trial(args: argparse.Namespace) -> int:
     source, error = _load_chain(args.file)
     if error is not None:
         print(error, file=sys.stderr)
         return EXIT_USAGE
+    if _is_story(source):
+        return _trial_story(source, args)
     names, products, error = _split_assignments(args.product, need_value=True)
     if error is not None:
         print(error, file=sys.stderr)
@@ -202,10 +227,43 @@ def _cmd_trial(args: argparse.Namespace) -> int:
     if error is not None:
         print(error, file=sys.stderr)
         return EXIT_USAGE
-    policy = Policy(on_missing=args.on_missing, on_error=args.on_error)
     scope = Scope(globals=globals_map, products=products)
     value = inputs.get(MAIN_INPUT_KEY, inputs)
-    return _report_outcome(eval_field(compiled, value, scope=scope, policy=policy), args.json)
+    return _report_outcome(eval_field(compiled, value, scope=scope), args.json)
+
+
+def _trial_story(source: Any, args: argparse.Namespace) -> int:
+    """Run a story to its first effect. Without a host there is nothing to answer a request."""
+    if args.product or args.global_vars:
+        print(
+            "--product and --global cannot be used with a story file: a story carries its own "
+            "globals and its own step names",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    inputs, error = _read_inputs(args.input)
+    if error is not None:
+        print(error, file=sys.stderr)
+        return EXIT_USAGE
+    value = inputs.get(MAIN_INPUT_KEY, inputs)
+    try:
+        effect = start(source, value).next()
+    except Up2Error as exc:
+        _print_diagnostic(exc.diagnostic, as_json=args.json)
+        return EXIT_FAILED
+    if effect[0] == "done":
+        return _report_outcome(Ok(effect[1]), args.json)
+    payload: dict[str, Any] = {
+        "state": "suspended",
+        "effect": effect[0],
+        "detail": list(effect[1:]),
+        "note": "a suspension is not an error; a host answers it with run.send(answer)",
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"[suspended] {json.dumps(payload, ensure_ascii=False)}")
+    return EXIT_OK
 
 
 def _report_outcome(outcome: Outcome, as_json: bool) -> int:
@@ -248,6 +306,11 @@ def _load_chain(path_text: str) -> tuple[Any, str | None]:
         return None, f"cannot read chain file {path}: {exc}"
     except json.JSONDecodeError as exc:
         return None, f"{path} is not valid JSON: {exc}"
+
+
+def _is_story(source: Any) -> bool:
+    """A story is a JSON object carrying ``steps``; anything else is a field chain (03 §2)."""
+    return isinstance(source, Mapping) and STORY_KEY in source
 
 
 def _split_assignments(

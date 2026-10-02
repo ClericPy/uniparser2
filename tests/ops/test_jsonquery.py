@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Missing, Ok, Outcome, Policy, Up2Error, compile_field, eval_field
+from uniparser2 import Failed, Missing, Ok, Outcome, Up2Error, compile_field, eval_field
 from uniparser2.core import registry
 from uniparser2.ops import jsonquery
 
@@ -60,7 +60,7 @@ def fake_jmespath(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def run(chain: Any, value: Any) -> Outcome:
-    return eval_field(compile_field(chain), value, policy=Policy(on_missing="drop"))
+    return eval_field(compile_field(chain), value)
 
 
 def test_action_is_unavailable_without_jmespath() -> None:

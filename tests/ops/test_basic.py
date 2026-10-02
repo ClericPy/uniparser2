@@ -11,12 +11,12 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Ok, Outcome, Policy, Up2Error, compile_field, eval_field
+from uniparser2 import Ok, Outcome, Up2Error, compile_field, eval_field
 
 
 def run(chain: Any, value: Any, *, products: tuple[str, ...] = ()) -> Outcome:
     compiled = compile_field(chain, products=products)
-    return eval_field(compiled, value, policy=Policy(on_missing="drop"))
+    return eval_field(compiled, value)
 
 
 @pytest.mark.covers("const", "const")

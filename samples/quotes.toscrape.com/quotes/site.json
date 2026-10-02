@@ -2,62 +2,60 @@
   "globals": {
     "base_url": "https://quotes.toscrape.com"
   },
-  "policy": {
-    "on_missing": "drop",
-    "on_error": "raise"
-  },
-  "chains": {
-    "list": [["py", "get", "text"], ["css", "@href", "div.quote a[href^='/author/']"]]
-  },
   "steps": [
     {
-      "key": "start",
+      "name": "start",
       "parse": {
-        "url": [["py", "str", ""]]
+        "url": [["py", "id", ""]]
       },
-      "out": "Request",
-      "chain": "list"
+      "type": "Request",
+      "next": "links"
     },
     {
-      "key": "authors",
+      "name": "links",
       "parse": {
         "items": [
+          ["py", "getattr", "text"],
+          ["css", "@href", "div.quote a[href^='/author/']"],
           ["py", "uniq", ""],
           [
             "each",
             {
-              "url": [["py", "str", ""], ["py", "urljoin", "$globals.base_url"]]
+              "url": [["py", "id", ""], ["py", "urljoin", "$globals.base_url"]]
             }
           ]
         ]
       },
-      "out": "RequestBatch"
+      "type": "RequestBatch",
+      "next": "author"
     },
     {
-      "key": "records",
+      "name": "author",
       "parse": {
-        "items": [
-          [
-            "each",
-            {
-              "url": [["py", "get", "url"]],
-              "name": [["py", "get", "text"], ["css1", "text", "h3.author-title"], ["py", "normalize_space", ""]],
-              "born_date": [["py", "get", "text"], ["css1", "text", "span.author-born-date"], ["py", "strip", ""]],
-              "born_location": [
-                ["py", "get", "text"],
-                ["css1", "text", "span.author-born-location"],
-                ["py", "strip", ""]
-              ],
-              "description": [
-                ["py", "get", "text"],
-                ["css1", "text", "div.author-description"],
-                ["py", "normalize_space", ""]
-              ]
-            }
-          ]
+        "url": [["py", "getattr", "url"]],
+        "name": [
+          ["py", "getattr", "text"],
+          ["css1", "text", "h3.author-title"],
+          ["py", "normalize_space", ""]
+        ],
+        "born_date": [
+          ["py", "getattr", "text"],
+          ["css1", "text", "span.author-born-date"],
+          ["py", "strip", ""]
+        ],
+        "born_location": [
+          ["py", "getattr", "text"],
+          ["css1", "text", "span.author-born-location"],
+          ["py", "strip", ""]
+        ],
+        "description": [
+          ["py", "getattr", "text"],
+          ["css1", "text", "div.author-description"],
+          ["py", "normalize_space", ""]
         ]
       },
-      "out": "AuthorList"
+      "type": "Author"
     }
-  ]
+  ],
+  "exit": "author"
 }

@@ -185,11 +185,10 @@ A container that the parameter genuinely accepts stays legal (`py.default`'s fal
 
 ## 5. Evaluation semantics of a field chain
 
-A field = one ordered chain; a field definition has two forms:
+A field = one ordered chain, written in one form:
 
 ```jsonc
-"title": [["css","text","h1"], ["py","first",""], ["py","strip",""]]   // short form: use the chain-level default policy
-"content": {"chain": [["css","html","div.c"]], "on_missing": "drop"}  // full form: override the policy
+"title": [["css","text","h1"], ["py","first",""], ["py","strip",""]]
 ```
 
 Evaluation rules:
@@ -197,8 +196,8 @@ Evaluation rules:
 | Current state | Behaviour of the next stage |
 |---|---|
 | `Ok(v)` | feed `v` as the input of the next stage and keep evaluating |
-| `Missing` | **short-circuit this field** (later stages do not run) and land a value according to the effective `on_missing` |
-| `Failed` | according to the effective `on_error`: with `raise` the whole `run()` fails; when degraded, short-circuit and land a value according to the policy |
+| `Missing` | **short-circuit this field** (later stages do not run) and stay missing: the key is absent from a field-map product and the item is skipped in a batch — never `""`, never `null` (`01` §4.2) |
+| `Failed` | **stop the chain** and fail the run with the code of the stage that failed; nothing degrades it |
 
 - The first stage's input = the field's `input` (the step's input by default; inside `each`'s field map it is the current element, §6.9).
 - Fields are evaluated in **declaration order** (a JSON object preserves order), so a later field can reference the `_` local values produced by an earlier one.
@@ -214,7 +213,7 @@ short-circuiting.
 |---|---|
 | only the **immediately adjacent** stage can catch it | in `[re, ctx.set, py.default]` a missing `re` short-circuits at `ctx.set`, so `default` never gets a chance; to fall back, `default` must directly follow the stage that produced the missing |
 | currently only `py.default` declares it | it is the only "missing handler" in the closed set; future additions must declare it explicitly and cannot be guessed from the name |
-| the default policy is still `on_missing="empty"` | short-circuiting lands `""`, so the chain's product is an empty string rather than a failure — consistent with the session context's "missing is not an error" |
+| the fallback belongs to the chain, not to the engine | the stage that catches the missing value decides what comes out (`py.default` answers its parameter); the engine itself never invents `""` or `null` (`01` §4.2) |
 
 > **Deviation record D-02-3**: the `04` parser-syntax draft describes `remove` as "delete a node (a side effect)". This design removes side effects — `remove`
 > returns a **pruned copy** as the input of the next stage, affecting only this field's chain. Reasons: (a) invariant I5 of `01` requires operators to be
@@ -327,8 +326,7 @@ scalar rejects a JSON container before the chain runs, because the function's ow
 | `slice` | `spec` | a string | `isinstance(spec, str)` guard ⇒ `UP2-E2002` |
 | `split` | `sep` | a string | `isinstance(sep, str)` guard ⇒ `UP2-E2002` |
 | `split` | `maxsplit` | an integer | `int(container)` raises `TypeError` |
-| `getitem` | `index` | an integer | the same `int(container)` path |
-| `get` | `key` | a string | explicit `list`/`dict` guard ⇒ `UP2-E2002` |
+| `getitem` | `at` | an integer or a string | `value[at]` raises `TypeError` (an unhashable key, a str index on a list) ⇒ `UP2-E2002` |
 | `replace` | `old` / `new` | strings | `isinstance(..., str)` guard ⇒ `UP2-E2002` |
 | `sort` | `key` | `""` / `"str"` / `"int"` / `"float"` | enum check ⇒ `UP2-E2005` |
 | `urlsplit` | `part` | the URL-part enum | enum check, already at compile time |
@@ -343,7 +341,7 @@ returns `{"a":1}`), `join.sep` and `parse_time.lang` (both `str()`-coerced). A *
 
 The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser's directive table lives in Python's `_strptime` and is the same on every platform, while `strftime` delegates unknown directives to the C library — glibc passes `%Q` through verbatim and the Windows CRT raises, so a `strftime` probe gave the same chain two verdicts on two operating systems. Asking the parser also means the verdict matches what the operator does at run time: the set therefore follows the interpreter (measured on 3.12.11 / 3.13.12 / 3.14.3, `%T` / `%e` / `%-d` are accepted from 3.13 on, and a stray `%` is read as a literal by 3.12 but rejected by 3.13+).
 
-**Function table (41 functions, a closed set; anything outside the table is `UP2-E1003`)**:
+**Function table (42 functions, a closed set; anything outside the table is `UP2-E1003`)**:
 
 > **Dependencies are declared per action** (a convergence made while implementing L1): `requires` can hang not only off an operator but also off a **single
 > action** — `html_to_markdown` needs `html-to-markdown`, whereas `strip` in the same operator needs nothing at all. When a dependency is missing, that
@@ -364,8 +362,9 @@ The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser'
 | Text | `join` | `separator` | `list` → `str` | `04` |
 | Text | `upper` / `lower` | — | upper/lower case | `04` |
 | Collections | `slice` | `":20"` / `"1:5"` / `"::-1"` | slice a string or a list | `04` |
-| Collections | `getitem` | `index` | take a list index (out of range ⇒ `Missing`) | `04` |
-| Collections | `get` | `key name` | take a dict key (missing key ⇒ `Missing`) | `04` |
+| Collections | `getitem` | `at` (`ref_or_literal`) | take a subscript — a sequence by index, a mapping by key, a str by character, **no coercion**; a subscript that is not there is `UP2-E2018` (an error, not `Missing`) | `04` (merged with `get`) |
+| Host object | `getattr` | `ref_or_literal` (the attribute name, required, no default) | read an attribute of the value that flows in (a response object, a library node); an absent attribute is `UP2-E2002` whose `reason` begins with the exception's own class (`AttributeError: 'Response' object has no attribute 'txet'`), and an attribute that is **callable** is refused — a method is never called, and never becomes a value | new (host objects may flow, `03` §3.3) |
+| Identity | `id` | — | return the input unchanged; the action for a step whose value **is** its own input (a seed URL), replacing the `["py","str",""]` workaround | new (the story layer) |
 | Collections | `len` | — | length | `04` |
 | Collections | `first` / `last` | — | take the first/last element | `dsl-design` §3.4 |
 | Collections | `flatten` | — | flatten one level | `dsl-design` §3.4 |
@@ -391,7 +390,7 @@ The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser'
 | Removed | Reason |
 |---|---|
 | `const` | it is already a standalone operator, `["const", v]` (more visible in the operator table, and it avoids mixing "function name vs type name") |
-| `getattr` | the old v3 used it to fetch a node's `attributes` dict; the new value domain has no attribute object, and the `@attr` accessor takes attributes directly |
+| ~~`getattr`~~ | **restored** (`allow-object-values`): the reason it was dropped — "the new value domain has no attribute object" — no longer holds, because a value that flows may be a **host object** (`03` §3.3), and reading one of its own attributes is the one thing no JSON action can do. It refuses callable attributes, so it is not a method call |
 
 > **The output of `parse_time` is not a `datetime`**: the value domain is a JSON tree and a `datetime` cannot leave the chain (the exit rejects it), so the
 > product is a normalised **string**; for another layout use `py.strftime` in the next stage, which re-parses that canonical string
@@ -415,7 +414,7 @@ The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser'
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (40 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -512,8 +511,8 @@ mapping a field name to a chain — exactly the shape a step's field map has (`0
 - **Every element is evaluated in its own child scope**: a read falls back outward **by name** — the element's locals, then the calling scope's, then the
   chain-level values — so a name the element itself wrote is resolved there and nowhere else: `$locals._a.b` is a miss when the element's own `_a` has no `b`,
   even if the calling scope's `_a` does. Writes always land in the element's scope, and the element's locals do not outlive the element.
-- **The effective policy is applied per element**, and no element is ever dropped: an element whose fields all resolve to absent is still `{}`. A `Failed` whose
-  policy is `raise` propagates out of `each` with the failing stage's code.
+- **A missing field is simply not part of the element**, and no element is ever dropped: an element whose fields all resolve to absent is still `{}`. A `Failed`
+  propagates out of `each` with the failing stage's code.
 - **Limits**: nesting deeper than `MAX_EACH_DEPTH` (3) is `UP2-E1012` at compile time; a list longer than `MAX_EACH_ITER` (10 000) is `UP2-E2012` before
   anything is evaluated (`01` §9); a field map with more than `MAX_FIELDS_PER_MAP` (256) fields is `UP2-E1012` at compile time, and an empty map — or a field
   name that is empty or contains `.` — is `UP2-E1005`, because no reference path could address such a key.
@@ -531,7 +530,7 @@ mapping a field name to a chain — exactly the shape a step's field map has (`0
 
 - The function must be in the host registry (the `entry_points` group `uniparser2.udfs`, or `register_udf(name, fn)` at runtime).
 - Not registered ⇒ **compile-time** `UP2-E1010` (it does not blow up halfway through a run).
-- Contract: `fn(value: Value, **params) -> Value`; returning a non-serialisable value ⇒ runtime `Failed` (`UP2-E2009`).
+- Contract: `fn(value: Value, **params) -> Value`; returning a value that cannot be a product ⇒ runtime `Failed` (`UP2-E2009`).
 - **Parameter names are not Schema-validated**: the keys in `{"strict": true}` are simply the host function's kwargs and their names are decided by the host, so
   the compiler has nothing to validate against — this is the key difference between `udf` and the built-in operators (`py`/`re` have closed parameter tables).
   When the host function rejects a kwarg, the exception lands on `UP2-E2099`.
@@ -563,7 +562,7 @@ is in §6.12).
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (40 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -677,7 +676,7 @@ needed, the sandbox can `import` them directly — it ships a **subset** of thes
   effect.
 
 **Error codes**: a limit being hit ⇒ `UP2-E2016`; an exception in the sandboxed code ⇒ `UP2-E2017` (including syntax errors and unsupported constructs); a
-non-serialisable return value (or an input that is not a JSON value) ⇒ `UP2-E2009`; an upstream value that is a handle ⇒ `UP2-E2003`.
+return value that cannot be a product (or an input that is not a JSON value) ⇒ `UP2-E2009`; an upstream value that is a handle ⇒ `UP2-E2003`.
 
 **Dialect limitations**: the sandbox implements only **a subset of CPython 3.14**, and it rejects class inheritance and metaclasses, generators (`yield`),
 `match`, `del`, `async with` / `async for`, wildcard imports (`from m import *`), PEP 695 `type` aliases and similar constructs already at parse time (landing
@@ -689,7 +688,7 @@ falsely reject legal constructs that the sandbox does not support anyway. The au
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (40 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -710,13 +709,14 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E1005` | parameter Schema validation failure (type/required/unknown parameter) | give the parameter name + the expected type + the actual type |
 | `UP2-E1006` | the reference points at a later step or at an undeclared path | give the available step order and the list of available keys |
 | `UP2-E1007` | a literal was written in a `ref` position | hint that the position must be a `$…` reference |
-| `UP2-E1009` | a step key is a reserved name or is duplicated | list the reserved names (`globals`/`locals`/`fields`) |
+| `UP2-E1009` | a step name is a reserved root (`globals`/`locals`/`fields`/`in`) or is duplicated | list the reserved roots and the declared step names (`03` §10 L3) |
 | `UP2-E1010` | the `udf` is not registered | hint at `register_udf` or the `entry_points` group name |
-| `UP2-E1011` | the type name declared by a step's `out` is not registered | list the registered type names (`03` §3) |
+| `UP2-E1011` | the type name declared by a step's `type` is not registered | list the registered type names (`03` §3) |
 | `UP2-E1012` | a resource limit is exceeded (`01` §9) | give the constant name that was hit and the limit value |
 | `UP2-E1013` | the regex contains a nested quantifier (ReDoS risk) | hint at rewriting it or switching to non-greedy |
 | `UP2-E1014` | a `_`-prefixed local key was referenced **across steps** | hint that a local value does not leave its step; inside the same step use `$fields.<key>` |
 | `UP2-E1015` | `ctx.set`/`del` wrote a path outside `locals.` | hint that the write surface is limited to `locals` |
+| `UP2-E1016` | a `next` / `exit` target is not a step of the story | list the declared step names (`03` §10 L9) |
 | ~~`UP2-E1101`~~ … ~~`UP2-E1106`~~, ~~`UP2-E1108`~~ | **retired with the v0.1 node model** (`03` §12.1) | they policed a graph that no longer exists (`next`/`routes`/`default_route`, node existence, reachability, cycles, in-degree > 1, `route_field`, the `result` template). The numbers are **retired, not reused**, so older references keep pointing at the same rule |
 | `UP2-E1107` | an operator's optional dependency is missing | give the install command (e.g. `uv add selectolax`) |
 
@@ -731,30 +731,33 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2005` | value conversion failed | give the source type, the target type and a preview of the source value |
 | `UP2-E2007` | `time` parsing failed | give the input string and the list of formats that were tried |
 | `UP2-E2008` | `py.parse_time` reached the natural-language path but `dateparser` is not installed | give the install command |
-| `UP2-E2009` | the operator returned a non-serialisable value | the return value must be inside the JSON value domain (`str`/`int`/`float`/`bool`/`None`/`list`/`dict`) |
-| `UP2-E2010` | a `Request` product carries no `url` | give `url` in the field map of the step whose `out` is `Request` (`03` §4.1) |
+| `UP2-E2009` | the operator returned a value that cannot be a product | only a JSON value may be a **product**: a host object may flow, but it exits through `pack` (`UP2-E2003`), so convert it first |
+| `UP2-E2010` | a `Request` product carries no `url` | give `url` in the field map of the step whose `type` is `Request` (`03` §4.1) |
 | `UP2-E2011` | `output="single"` but several products or several terminals exist | change `output` to `auto` / `list` |
 | `UP2-E2012` | the list given to `each` is longer than `MAX_EACH_ITER` | truncate it first with `["py","slice",":100"]` |
 | `UP2-E2013` | the input text exceeds `MAX_TEXT_BYTES` | truncate in the outer layer first, or switch to a streaming upstream |
 | `UP2-E2014` | exit schema validation failed | give the JSON Pointer, the expected type and the actual type |
-| `UP2-E2015` | the tri-state is `Missing` and the effective policy is `raise` | change `on_missing` or fix the selector |
+| ~~`UP2-E2015`~~ | **retired** with the settlement policy (`01` `D-01-1`): it reported "the value is missing and the effective policy is raise", and a missing value is not an error any more. The number is **retired, not reused**, so an older reference still points at the same rule | — |
 | `UP2-E2016` | sandbox execution exceeded its limits (execution duration / memory / host round-trip budget) | reduce the amount of data or rewrite the algorithm; the limits are configured by the host (`uniparser2.ops.code.configure`) and cannot be changed from the chain |
 | `UP2-E2017` | the sandboxed code raised an exception (including syntax errors and unsupported constructs) | fix `src`; the sandbox implements only a subset of CPython 3.14 (see Monty's limitations document) |
+| `UP2-E2018` | a subscript (`py.getitem`) has no such key or index | name the key or the index and the shape it was looked up in (`KeyError: 'text' — the dict has no key 'text'`) |
 | `UP2-E2099` | an operator raised an unexpected exception (backstop) | this is a defect in the operator implementation; keep the chain and the input for reproduction |
 
-**The two codes deleted while implementing L1 (the reasons are recorded so that they are not "added back" later)**:
+**The codes retired while implementing L1 (the reasons are recorded so that they are not "added back" later)**:
 
-| Deleted | Reason |
+| Retired | Reason |
 |---|---|
 | `UP2-E1008` "a reference was written in a `literal` position" | it conflicts with §3.2: a `$` in a `literal` position **is always a literal** (that is exactly the point of deciding by kind), so this error cannot occur. An extra code is an extra branch |
 | `UP2-E2006` "regex execution timed out" | **there is no real mechanism**: Python's `re` has no `timeout` parameter (measured on 3.13/3.14). Better to delete the code than to keep a false promise |
+| `UP2-E2015` "the tri-state is `Missing` and the effective policy is `raise`" | the settlement policy is **retired** (`01` `D-01-1`): missing means "not there" (`01` §4.2), so there is no configuration left to raise it. The number is not reused |
 
 **The current status of `UP2-E1007`**: L1's operators (`const`/`re`/`py`/`ctx`/`each`) **have no `ref`-only parameter** — `ctx`'s path is literal path text,
 `each`'s field map is a structured parameter and `py`'s parameters are `ref_or_literal`. `ctx`'s `refs` parameter keeps the rule alive at compile time, and L1 covers
 it with a test patched to "temporarily turn `urljoin.base` into `Kind.REF`".
 
-> Runtime error codes are returned in the form `Failed` only when `on_error: "raise"` (the default); when a policy degrades them the code goes into the log
-> (into `--trace` from L2 onwards) and does not interrupt the chain.
+> A runtime failure is returned as `Failed` with the code of the stage that failed; it always fails the run (there is no
+> policy that degrades it into a value), and the step/field location of that stage goes to the trace (`01` §10).
+
 
 ---
 
@@ -769,7 +772,7 @@ it with a test patched to "temporarily turn `urljoin.base` into `Kind.REF`".
 | D-02-5 | `ctx` has `get/set/del/map` with an undefined write surface; there is also a `call` verb | the write surface is hard-limited to `locals.*`; `call` is deleted | preserves purity and the immutability of products; calling a function is an operator |
 | D-02-6 | three reference forms are undefined (`$fields.*`, multi-level paths, literals), and an undefined `$get` appears | one rule: a leading `$` ⇒ a reference, `{"$lit":…}` escapes; `$get` is abolished | a rule must fit in one sentence; undefined concepts are deleted |
 | D-02-7 | the `cast` vocabulary contains `datetime`, which conflicts with exit encoding (blocker N of the `02` worked-example draft) | type conversion only converts inside the JSON value domain, and time goes to `py.parse_time` (which outputs a str) | the value domain is a JSON tree and `N2` requires serialisability |
-| D-02-8 | the `py` table contains `const`/`getattr` (as well as `int`/`float`/`bool`/`str`/`list`) | `const` is a standalone operator; `getattr` has no counterpart; the five type functions first went to `cast` and then, with D-02-14, back to `py` | a single entry point, avoiding one name meaning two things |
+| D-02-8 | the `py` table contains `const`/`getattr` (as well as `int`/`float`/`bool`/`str`/`list`) | `const` is a standalone operator; `getattr` **came back** with host objects (`allow-object-values`), where it reads an attribute of the value that flows in and refuses a callable one; the five type functions first went to `cast` and then, with D-02-14, back to `py` | a single entry point, avoiding one name meaning two things |
 | D-02-9 | the `re` capture-group action does not say how pattern and group name are given together | the named object `{"pattern":…, "group":…}` | the parameter position cannot hold two parameters |
 | D-02-10 | there are no `default` / `first` / `sort` / `uniq` / `urlsplit` / encoding functions | the allowlist functions are completed | the list was ported from `dsl-design` §3.4 and taken from `essence` §3.4; these are equivalent ports of existing behaviour |
 | D-02-11 | `css1` was deleted for a while (replaced by `css` + `py.first`) | `css1` is restored: `css` produces a `list`, `css1` produces a scalar | in L1 `nodes` cannot shoulder "take all values"; first-match-by-default risks silent truncation; `css_first` is not a fast path and the gain is in extracting N-1 fewer values |

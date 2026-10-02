@@ -3,7 +3,7 @@
 The action names are Python's own (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `or`, `and`), so a chain
 reads like the expression it means. The order follows the delta spec: one-stage comparisons, `in`,
 the selection actions, and existence on the selector family — `exists` in particular never leans on
-the missing-value policy, which is what `nodes` does.
+what a missing value settles to, which is what `nodes` does.
 """
 
 from __future__ import annotations
@@ -12,14 +12,13 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Missing, Ok, Policy, Up2Error, compile_field, eval_field
+from uniparser2 import Failed, Missing, Ok, Up2Error, compile_field, eval_field
 
-DROP = Policy(on_missing="drop")
 HTML = '<ul class="list"><li>x</li></ul>'
 
 
-def run(chain: Any, value: Any, *, policy: Policy = DROP) -> Any:
-    return eval_field(compile_field(chain), value, policy=policy)
+def run(chain: Any, value: Any) -> Any:
+    return eval_field(compile_field(chain), value)
 
 
 # ---------------------------------------------------------------- comparison
@@ -240,12 +239,10 @@ def test_css1_exists_on_a_matching_structure() -> None:
 
 
 @pytest.mark.covers("css", "exists")
-@pytest.mark.parametrize("strategy", ["empty", "none", "drop", "raise"])
-def test_css_exists_is_false_under_every_policy(strategy: str) -> None:
+def test_css_exists_is_false_when_nothing_matches() -> None:
     """The whole reason `exists` exists: `nodes` would report a missing value here."""
     pytest.importorskip("selectolax")
-    outcome = run([["css", "exists", ".nope"]], HTML, policy=Policy(on_missing=strategy))
-    assert outcome == Ok(False)
+    assert run([["css", "exists", ".nope"]], HTML) == Ok(False)
 
 
 @pytest.mark.covers("css", "exists")

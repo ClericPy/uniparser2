@@ -5,13 +5,15 @@
 声明式、确定性、可序列化的**文本解析引擎**：把「输入文本 → 指定结构」的解析过程写成 JSON 数据（**解析链**），
 由人或 LLM 离线生成，运行时只做确定性求值。
 
-> **状态**：`0.4.0`，L1（DSL 算子层）已完成。已实现 **11 个算子**：`css` / `css1`（HTML 选择器，前者取全部、
-> 后者只取首个，selectolax）、`xpath`（XML，lxml）、`json`（jmespath）、`re`、`py`（41 个白名单函数）、
+> **状态**：`0.4.0`。**L1**（DSL 算子层）已完成：**11 个算子**——`css` / `css1`（HTML 选择器，前者取全部、
+> 后者只取首个，selectolax）、`xpath`（XML，lxml）、`json`（jmespath）、`re`、`py`（42 个白名单函数）、
 > `udf`（宿主注册，链里不含代码）、`code`（链内代码，语言级沙箱，**默认不存在**，见「安全提示」），
-> 外加作用域算子 `ctx`、积木 `const` 与迭代算子 `each`，
-> 共 72 对 `(算子, 动作)`。链级结构（`seed`/`parse`/`emit`、`result` 装配）与就地验证台属 L2。
-> 进度与验收标准见设计稿的路线图；想直接跑起来看效果（需在源码检出目录内）：`uv run python demo.py`
-> ——一趟走查覆盖 11 个算子、三态结算与坏链诊断。（`demo.py` 与 `tools/demo_report.py` 只存在于仓库里：
+> 外加作用域算子 `ctx`、积木 `const` 与迭代算子 `each`，共 73 对 `(算子, 动作)`。**L2 已起步**：站点包
+> （**story**）可编译可运行——`start(bundle, value)` / `run.next()` / `run.send(answer)`，`Request` /
+> `RequestBatch` / `call` 挂起运行、其答复恢复**同一个**运行——两个 `samples/*/site.json` 都能对真实站点
+> 端到端跑通。命令行可试：`uv run up2 lint samples/books.toscrape.com/books/site.json`。物化缓存、注册
+> 类型构造器与就地验证台尚未实现。进度与验收标准见设计稿的路线图；想直接跑起来看算子层（需在源码检出
+> 目录内）：`uv run python demo.py`。（`demo.py` 与 `tools/demo_report.py` 只存在于仓库里：
 > wheel 与 sdist 都不含它们。）
 
 ## 为什么需要它
@@ -30,8 +32,8 @@
 
 ## 现在有什么（L1）
 
-**算子层**已完成，且有机械审计：11 个算子、72 对 `(算子, 动作)`，每一对都有覆盖用例
-（`uv run up2 conformance --check`）；26 个已实现的错误码每一个都有测试断言。
+**算子层**已完成，且有机械审计：11 个算子、73 对 `(算子, 动作)`，每一对都有覆盖用例
+（`uv run up2 conformance --check`）；28 个已实现的错误码每一个都有测试断言。
 
 | 算子 | 引擎（extra） | 动作 |
 |---|---|---|
@@ -39,7 +41,7 @@
 | `xpath` | lxml（`[xml]`） | `text` · `self` · `nodes`（XML；XPath 是 lxml 原生能力） |
 | `json` | jmespath（`[json]`） | `get`——jmespath 表达式，留空表示根 |
 | `re` | 标准库 | `search` · `group` · `findall` |
-| `py` | 标准库；`parse_time` 的自然语言路径需 `[time]`，`html_to_markdown` 需 `[md]` | 41 个白名单纯函数：`int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `get` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` · `==` `!=` `<` `<=` `>` `>=` `in` `or` `and`（谓词，Python 的写法） |
+| `py` | 标准库；`parse_time` 的自然语言路径需 `[time]`，`html_to_markdown` 需 `[md]` | 42 个白名单纯函数：`int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `getattr` `id` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` · `==` `!=` `<` `<=` `>` `>=` `in` `or` `and`（谓词，Python 的写法） |
 | `ctx` | 标准库 | `get` · `set` · `del` · `map`（作用域读写） |
 | `udf` | 宿主注册 | 宿主事先注册的任意函数；链里只带名字 |
 | `code` | pydantic-monty（`[code]`，刻意不在 `[all]` 里） | `run`——链内代码，跑在语言级沙箱里（见「安全提示」） |
@@ -51,13 +53,14 @@
 
 ## 还没有的（L2–L4）
 
-今天只有算子层；设计里叠在它上面的一切都还没实现：没有 `seed` / `parse` / `emit` 节点类型，没有顺序
-执行器与 `routes`，没有 `result` / `$lit` 装配，没有 Schema 校验器，没有那些 lint 规则，没有
-`up2 trial --trace`，没有 `up2 studio` 验证台，
-没有 Store（`FileStore` / `SqliteStore`），没有指纹与 `S0–S7` 发布 SOP，ADR 也还没写。CLI 就是
-`ops` / `conformance` / `lint` / `trial` 四个子命令；公开 API 是 `compile_field` / `compile_stage` /
-`eval_field` 加值域、作用域与策略类型。分层、各层交付物与验收标准见
-[`docs/specs/007` §3](docs/specs/007-source-decisions-and-roadmap.md)。
+算子层已完成，**第一版 story 执行器**也已落地；设计里 L2 的其余部分还没实现：没有按运行期作用域的物化
+缓存（所以同一段文本喂给多个 `css`/`json` 阶段会各解析一次），没有注册类型构造器（步骤的 `type` 只是一个
+声明的名字，边界检查是「产物必须是 JSON」），没有 `up2 trial --trace`，没有 `up2 studio` 验证台，
+没有 Store（`FileStore` / `SqliteStore`），没有指纹与 `S0–S7` 发布 SOP，ADR 也还没写。没有 `seed` /
+`parse` / `emit` 节点类型，也没有 `routes`——那套模型已随 story 模型退役，剩下的就是上面这张清单。
+CLI 就是 `ops` / `conformance` / `lint` / `trial` 四个子命令；公开 API 是 `compile_field` /
+`compile_stage` / `compile_story` / `start` / `eval_field` 加值域、作用域类型。分层、各层交付物与验收
+标准见 [`docs/specs/007` §3](docs/specs/007-source-decisions-and-roadmap.md)。
 
 ## 安装
 
@@ -157,15 +160,14 @@ chain = up2.compile_field(
     ]
 )
 
-policy = up2.Policy(on_missing="drop")  # 缺失时丢弃而不是落空串
 scope = up2.Scope(globals={"base_url": "https://example.com"})
-outcome = up2.eval_field(chain, "published in 2026-09", scope=scope, policy=policy)
+outcome = up2.eval_field(chain, "published in 2026-09", scope=scope)
 
 match outcome:
     case up2.Ok(value=value):
         print(value)  # 2026
     case up2.Missing(reason=reason):
-        print("missing:", reason)  # 缺失不是错误
+        print("missing:", reason)  # 缺失即"不在这里"：产品里没有这个键，不是 "" 也不是 null
     case up2.Failed(code=code, reason=reason, fix=fix):
         print(code, reason, fix)  # 确定性错误码 + 一句话修法
 ```

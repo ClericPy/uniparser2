@@ -90,7 +90,7 @@ class Each(Op):
                 code="UP2-E2002",
                 reason=f"each needs a list, got {type_name(value)}",
                 fix='take a list out of it first: ["css","nodes","li"] for nodes, '
-                '["py","list"] for JSON array text, ["py","get",K] for one key of an object',
+                '["py","list"] for JSON array text, ["py","getitem",K] for one key of an object',
             )
         if len(value) > MAX_EACH_ITER:
             return Failed(

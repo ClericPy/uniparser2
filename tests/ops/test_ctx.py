@@ -16,7 +16,6 @@ from uniparser2 import (
     Missing,
     Ok,
     Outcome,
-    Policy,
     Scope,
     Up2Error,
     compile_field,
@@ -26,7 +25,7 @@ from uniparser2 import (
 
 def run(chain: Any, value: Any, *, scope: Scope | None = None) -> Outcome:
     compiled = compile_field(chain)
-    return eval_field(compiled, value, scope=scope, policy=Policy(on_missing="drop"))
+    return eval_field(compiled, value, scope=scope)
 
 
 def compile_error(chain: Any, *, products: tuple[str, ...] = ()) -> str:
@@ -129,12 +128,15 @@ def test_chain_uses_local_across_steps() -> None:
     assert run(chain, "Ab") == Ok("AB")
 
 
-def test_scope_read_into_list_is_type_failure() -> None:
-    """References do not support array subscripts (Q24).
+def test_scope_read_indexes_a_list() -> None:
+    """A reference path dispatches per value kind: a sequence is read by its digit index.
 
-    A list used as an intermediate layer ⇒ ``UP2-E2001``.
+    ``01``'s Q24 said a reference supports no array subscript; the story layer's host objects made
+    a dotted path walk mappings, sequences and objects alike, so ``locals.a.0`` is the first
+    element. A segment that is not a digit is still ``UP2-E2001``.
     """
     scope = Scope(locals={"a": [1, 2]})
-    outcome = run([["ctx", "get", "locals.a.0"]], None, scope=scope)
+    assert run([["ctx", "get", "locals.a.0"]], None, scope=scope) == Ok(1)
+    outcome = run([["ctx", "get", "locals.a.first"]], None, scope=scope)
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2001"

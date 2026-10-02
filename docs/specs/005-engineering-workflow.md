@@ -171,7 +171,7 @@ uniparser2/
 | **Compile-time error codes** | `tests/compile/` | At least one case for every `UP2-E1xxx` of `02` §7 (table-driven: bad chain → expected code + expected `fix` keyword) | ~30 entries | L1 |
 | **Runtime error codes** | `tests/runtime/` | At least one case for every `UP2-E2xxx` of `02` §7.1 (build an input that can trigger it → expected code) | ~15 entries | L1 |
 | **Store error codes** | `tests/store/` | At least one case for every `UP2-E3xxx` of `04` §5.1 (including `--skip-tests` without `--note`, and an inconsistent chain audit) | ~5 entries | L3 |
-| **Chain (story) level** | `tests/chains/` | The linear step sequence, `parse` / `call`, `each` iteration (including the per-element scope), the two effects (`Request` → `Response`, `call` → receipt), the suspend/resume run loop, scope visibility | ~40 entries | L2 |
+| **Chain (story) level** | `tests/chains/` | The step sequence (`name` / `type` / `next` / `exit`), `parse` / `call`, `each` iteration (including the per-element scope), the effects (`Request` / `RequestBatch` → the host's answer, `call` → receipt), the suspend/resume run loop, scope visibility | ~40 entries | L2 |
 | **Snapshots** | `tests/snapshots/` | The expected output of a chain × a sample (`04` §7-S4/S5); **structural comparison**, and a failure prints the JSON Pointer difference | ≥ 1 per chain | L2 |
 | **Serialization, character by character** | `tests/serialization/` | A **character-for-character** assertion of `dumps(loads(x)) == dumps(x)`; plus fingerprint stability assertions | ~10 entries | L1 |
 | **CLI end to end** | `tests/cli/` | `lint` / `trial` / `snapshot` / `publish` / `get` / `audit` / `doctor`, using `tmp_path` as `UP2_HOME` | ~20 entries | L2 (the last three are L3) |

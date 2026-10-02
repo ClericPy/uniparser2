@@ -12,15 +12,11 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Missing, Ok, Outcome, Policy, Up2Error, compile_field, eval_field
-
-# `drop` keeps a missing value visible as `Missing` instead of turning it into "", which is what the
-# scope and failure cases assert.
-DROP = Policy(on_missing="drop")
+from uniparser2 import Failed, Missing, Ok, Outcome, Up2Error, compile_field, eval_field
 
 
-def run(chain: Any, value: Any, *, policy: Policy = DROP) -> Outcome:
-    return eval_field(compile_field(chain), value, policy=policy)
+def run(chain: Any, value: Any) -> Outcome:
+    return eval_field(compile_field(chain), value)
 
 
 def diagnostic(chain: Any) -> Any:
@@ -132,6 +128,13 @@ def test_an_element_local_does_not_outlive_the_element() -> None:
 def test_an_element_is_kept_even_when_every_field_is_absent() -> None:
     chain = [["each", {"n": [["ctx", "get", "locals.nope"]]}]]
     assert run(chain, ["a", "b"]) == Ok([{}, {}])
+
+
+@pytest.mark.covers("each", "each")
+def test_a_missing_field_is_absent_from_the_element() -> None:
+    """Missing means "not there": the key is absent, never `""` and never `null`."""
+    chain = [["each", {"gone": [["ctx", "get", "locals.nope"]], "n": [["py", "len", ""]]}]]
+    assert run(chain, ["ab"]) == Ok([{"n": 2}])
 
 
 @pytest.mark.covers("each", "each")

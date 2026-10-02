@@ -2,99 +2,92 @@
   "globals": {
     "base_url": "https://books.toscrape.com/"
   },
-  "policy": {
-    "on_missing": "drop",
-    "on_error": "raise"
-  },
-  "chains": {
-    "list": [
-      ["ctx", "set", "locals._page"],
-      ["py", "get", "text"],
-      ["css", "@href", "article.product_pod h3 a"],
-      [
-        "each",
-        {
-          "url": [["py", "str", ""], ["py", "urljoin", "$locals._page.url"]]
-        }
-      ]
-    ]
-  },
   "steps": [
     {
-      "key": "start",
+      "name": "start",
       "parse": {
-        "url": [["py", "str", ""]]
+        "url": [["py", "id", ""]]
       },
-      "out": "Request"
+      "type": "Request",
+      "next": "channels"
     },
     {
-      "key": "channels",
+      "name": "channels",
       "parse": {
         "items": [
-          ["py", "get", "text"],
+          ["py", "getattr", "text"],
           ["css", "@href", "div.side_categories ul li ul li a"],
           ["py", "slice", ":2"],
           [
             "each",
             {
-              "url": [["py", "str", ""], ["py", "urljoin", "$globals.base_url"]],
-              "chain": [["const", "list"]]
+              "url": [["py", "id", ""], ["py", "urljoin", "$globals.base_url"]],
+              "next": [["const", "shelf_page"]]
             }
           ]
         ]
       },
-      "out": "RequestBatch",
-      "chain": "list"
+      "type": "RequestBatch",
+      "next": "shelf_page"
     },
     {
-      "key": "shelf",
+      "name": "shelf_page",
+      "parse": [
+        ["py", "getattr", "text"],
+        ["css", "@href", "article.product_pod h3 a"],
+        [
+          "each",
+          {
+            "url": [["py", "id", ""], ["py", "urljoin", "$in.url"]]
+          }
+        ]
+      ],
+      "type": "ShelfPage"
+    },
+    {
+      "name": "shelf",
       "parse": {
-        "items": [
-          ["py", "flatten", ""],
-          ["py", "slice", ":3"],
-          [
-            "each",
-            {
-              "url": [["py", "get", "url"]]
-            }
-          ]
-        ]
+        "items": [["py", "flatten", ""], ["py", "slice", ":3"]]
       },
-      "out": "RequestBatch"
+      "type": "RequestBatch",
+      "next": "book"
     },
     {
-      "key": "books",
+      "name": "book",
       "parse": {
-        "items": [
-          [
-            "each",
-            {
-              "url": [["py", "get", "url"]],
-              "title": [["py", "get", "text"], ["css1", "text", "div.product_main h1"], ["py", "normalize_space", ""]],
-              "price": [["py", "get", "text"], ["css1", "text", "p.price_color"], ["py", "strip", ""]],
-              "availability": [
-                ["py", "get", "text"],
-                ["css1", "text", "p.instock.availability"],
-                ["py", "normalize_space", ""]
-              ],
-              "description": [
-                ["py", "get", "text"],
-                ["css1", "text", "#product_description + p"],
-                ["py", "normalize_space", ""]
-              ]
-            }
-          ]
+        "url": [["py", "getattr", "url"]],
+        "title": [
+          ["py", "getattr", "text"],
+          ["css1", "text", "div.product_main h1"],
+          ["py", "normalize_space", ""]
+        ],
+        "price": [
+          ["py", "getattr", "text"],
+          ["css1", "text", "p.price_color"],
+          ["py", "strip", ""]
+        ],
+        "availability": [
+          ["py", "getattr", "text"],
+          ["css1", "text", "p.instock.availability"],
+          ["py", "normalize_space", ""]
+        ],
+        "description": [
+          ["py", "getattr", "text"],
+          ["css1", "text", "#product_description + p"],
+          ["py", "normalize_space", ""]
         ]
       },
-      "out": "BookList"
+      "type": "Book"
     },
     {
-      "key": "store",
+      "name": "store",
       "call": "host.store_books",
       "with": {
-        "table": "books"
+        "table": "books",
+        "records": "$in"
       },
-      "out": "dict"
+      "type": "dict"
     }
-  ]
+  ],
+  "exit": "store"
 }

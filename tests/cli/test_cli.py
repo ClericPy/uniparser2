@@ -174,16 +174,17 @@ def test_trial_keeps_numeric_input_as_text(tmp_path: Path, capsys) -> None:
 
 def test_trial_missing_is_not_an_error(tmp_path: Path, capsys) -> None:
     path = write_chain(tmp_path, [["re", "search", r"\d+"]])
-    code = main(["trial", str(path), "--input", "text=abc", "--on-missing", "drop", "--json"])
+    code = main(["trial", str(path), "--input", "text=abc", "--json"])
     assert code == EXIT_OK
     assert json.loads(capsys.readouterr().out)["state"] == "missing"
 
 
 def test_trial_failed_exits_nonzero(tmp_path: Path, capsys) -> None:
-    path = write_chain(tmp_path, [["re", "search", r"\d+"]])
-    code = main(["trial", str(path), "--input", "text=abc", "--on-missing", "raise", "--json"])
+    """A failed stage always fails the run: there is no configuration that degrades it."""
+    path = write_chain(tmp_path, [["py", "int", ""]])
+    code = main(["trial", str(path), "--input", "text=abc", "--json"])
     assert code == EXIT_FAILED
-    assert json.loads(capsys.readouterr().out)["code"] == "UP2-E2015"
+    assert json.loads(capsys.readouterr().out)["code"] == "UP2-E2005"
 
 
 def test_trial_products_reference(tmp_path: Path, capsys) -> None:
@@ -203,14 +204,77 @@ def test_trial_products_reference(tmp_path: Path, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["value"] == "https://x/page.html"
 
 
-def test_trial_bad_policy_is_usage_error(tmp_path: Path) -> None:
-    """An illegal policy is blocked by argparse choices (``parser.error`` -> ``SystemExit(2)``)."""
+def test_trial_has_no_settlement_flags(tmp_path: Path) -> None:
+    """The retired ``--on-missing`` / ``--on-error`` are gone, not silently ignored."""
     path = write_chain(tmp_path, [["py", "strip", ""]])
-    with pytest.raises(SystemExit) as info:
-        main(["trial", str(path), "--input", "text=a", "--on-missing", "nope"])
-    assert info.value.code == EXIT_USAGE
+    for flag in ("--on-missing", "--on-error"):
+        with pytest.raises(SystemExit) as info:
+            main(["trial", str(path), "--input", "text=a", flag, "drop"])
+        assert info.value.code == EXIT_USAGE
 
 
 def test_trial_bad_product_syntax(tmp_path: Path) -> None:
     path = write_chain(tmp_path, [["py", "strip", ""]])
     assert main(["trial", str(path), "--input", "text=a", "--product", "n1"]) == EXIT_USAGE
+
+
+# ---------------------------------------------------------------- story files (03 §2)
+
+
+def _story(*, request: bool = True) -> dict[str, object]:
+    body: list[object] = [["py", "getattr", "text"]] if request else [["py", "id", ""]]
+    steps: list[dict[str, object]] = [
+        {
+            "name": "records",
+            "parse": {"body": body},
+            "type": "Record",
+        }
+    ]
+    if request:
+        steps.insert(
+            0,
+            {
+                "name": "seed",
+                "parse": {"url": [["py", "id", ""]]},
+                "type": "Request",
+                "next": "records",
+            },
+        )
+    return {"steps": steps, "exit": "records"}
+
+
+def test_lint_accepts_a_story_file(tmp_path: Path, capsys) -> None:
+    path = write_chain(tmp_path, _story(), name="site.json")
+    assert main(["lint", str(path), "--json"]) == EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ok": True, "steps": 2, "exit": "records"}
+
+
+def test_lint_reports_a_story_diagnostic(tmp_path: Path, capsys) -> None:
+    broken = {"steps": [{"name": "a", "parse": {"u": [["py", "id", ""]]}}], "exit": "gone"}
+    path = write_chain(tmp_path, broken, name="site.json")
+    assert main(["lint", str(path), "--json"]) == EXIT_FAILED
+    assert json.loads(capsys.readouterr().out)["code"] == "UP2-E1016"
+
+
+def test_trial_finishes_a_story_without_requests(tmp_path: Path, capsys) -> None:
+    path = write_chain(tmp_path, _story(request=False), name="site.json")
+    assert main(["trial", str(path), "--input", "text=hi", "--json"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out) == {"state": "ok", "value": [{"body": "hi"}]}
+
+
+def test_trial_reports_a_story_suspension(tmp_path: Path, capsys) -> None:
+    """A CLI has no host, so running to the first effect is the honest result."""
+    path = write_chain(tmp_path, _story(), name="site.json")
+    assert main(["trial", str(path), "--input", "text=https://x/", "--json"]) == EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "suspended"
+    assert payload["effect"] == "request"
+    assert payload["detail"] == [{"url": "https://x/"}, "records"]
+
+
+def test_trial_refuses_chain_only_flags_for_a_story(tmp_path: Path) -> None:
+    path = write_chain(tmp_path, _story(), name="site.json")
+    assert main(["trial", str(path), "--input", "text=x", "--product", "n1=1"]) == EXIT_USAGE
+    assert main(["trial", str(path), "--input", "text=x", "--global", "a=1"]) == EXIT_USAGE
+    assert main(["lint", str(path), "--product", "n1"]) == EXIT_USAGE

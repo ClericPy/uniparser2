@@ -1,4 +1,4 @@
-"""The behaviour dictionary of ``py``'s 41 allowlisted functions (design doc 02 §6.4).
+"""The behaviour dictionary of ``py``'s 40 allowlisted functions (design doc 02 §6.4).
 
 Design points:
 - ``CASES`` is the behaviour dictionary (at least one ``input → output`` assertion per function);
@@ -32,7 +32,6 @@ from uniparser2 import (
     Missing,
     Ok,
     Outcome,
-    Policy,
     Scope,
     Up2Error,
     compile_field,
@@ -53,7 +52,6 @@ COVERS_PAIRS = (
     ("py", "lower"),
     ("py", "slice"),
     ("py", "getitem"),
-    ("py", "get"),
     ("py", "len"),
     ("py", "first"),
     ("py", "last"),
@@ -74,9 +72,11 @@ COVERS_PAIRS = (
     ("py", "bool"),
     ("py", "list"),
     ("py", "from_json"),
+    ("py", "getattr"),
+    ("py", "id"),
 )
 
-WHITELIST_SIZE = 41
+WHITELIST_SIZE = 42
 
 _SHA256_ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
@@ -105,6 +105,22 @@ def markdown_result(outcome: Outcome) -> bool:
     return True
 
 
+class _HostResponse:
+    """A stand-in host object: attributes are values, methods are not."""
+
+    __slots__ = ("status", "text")
+
+    def __init__(self, status: int = 200, text: str = "body") -> None:
+        self.status = status
+        self.text = text
+
+    def json(self) -> Any:
+        return {"status": self.status}
+
+
+_HOST_RESPONSE = _HostResponse(200, "body")
+
+
 CASES: tuple[tuple[str, object, object, Callable[[Outcome], bool]], ...] = (
     ("strip", "  a \n", (), ok("a")),
     ("strip_tags", "<b>a</b>c", (), ok("ac")),
@@ -117,7 +133,8 @@ CASES: tuple[tuple[str, object, object, Callable[[Outcome], bool]], ...] = (
     ("lower", "AB", (), ok("ab")),
     ("slice", "abcdef", ":3", ok("abc")),
     ("getitem", [1, 2, 3], 1, ok(2)),
-    ("get", {"a": 1}, "a", ok(1)),
+    ("getitem", {"a": 1}, "a", ok(1)),
+    ("getitem", "abc", -1, ok("c")),
     ("len", [1, 2], (), ok(2)),
     ("first", [1, 2], (), ok(1)),
     ("last", [1, 2], (), ok(2)),
@@ -138,11 +155,13 @@ CASES: tuple[tuple[str, object, object, Callable[[Outcome], bool]], ...] = (
     ("bool", "false", (), ok(False)),
     ("list", "[1,2]", (), ok([1, 2])),
     ("from_json", '{"a":1}', (), ok({"a": 1})),
+    ("getattr", _HOST_RESPONSE, "status", ok(200)),
+    ("id", {"url": "u"}, (), ok({"url": "u"})),
 )
 
 
 def run(chain: Any, value: Any) -> Outcome:
-    return eval_field(compile_field(chain), value, policy=Policy(on_missing="drop"))
+    return eval_field(compile_field(chain), value)
 
 
 def _chain(name: str, params: Any) -> list[Any]:
@@ -220,23 +239,146 @@ def test_default_swallows_missing() -> None:
     """``py.default`` is the only action that can catch ``MISSING`` (``accepts_missing``)."""
     chain = [["re", "search", r"\d+"], ["py", "default", "none"]]
     compiled = compile_field(chain)
-    assert eval_field(compiled, "abc", policy=Policy(on_missing="drop")) == Ok("none")
+    assert eval_field(compiled, "abc") == Ok("none")
 
 
 def test_default_keeps_present_value() -> None:
     assert run([["py", "default", "none"]], "present") == Ok("present")
 
 
-def test_getitem_out_of_range_is_missing() -> None:
-    assert isinstance(run([["py", "getitem", 9]], [1]), Missing)
+def test_getitem_is_the_only_subscript_action() -> None:
+    """`get` was the dict-key twin of `getitem`; the catalogue keeps one subscript action."""
+    names = pyops.functions()
+    assert "getitem" in names
+    assert "get" not in names
 
 
-def test_get_missing_key_is_missing() -> None:
-    assert isinstance(run([["py", "get", "z"]], {"a": 1}), Missing)
+def test_getitem_computed_key_is_resolved_at_runtime() -> None:
+    """`ref_or_literal` means the subscript may be computed: `$globals.key` picks the key."""
+    chain = [["py", "getitem", "$globals.key"]]
+    compiled = compile_field(chain)
+    assert eval_field(compiled, {"a": 1}, scope=Scope(globals={"key": "a"})) == Ok(1)
+    missed = eval_field(compiled, {"a": 1}, scope=Scope(globals={"key": "b"}))
+    assert isinstance(missed, Failed)
+    assert missed.code == "UP2-E2018"
+
+
+@pytest.mark.parametrize(
+    ("chain", "value", "code", "reason"),
+    [
+        (
+            [["py", "getitem", "text"]],
+            {"a": 1},
+            "UP2-E2018",
+            "KeyError: 'text' — the dict has no key",
+        ),
+        ([["py", "getitem", 9]], [1], "UP2-E2018", "IndexError: list index out of range"),
+        ([["py", "getitem", 5]], "ab", "UP2-E2018", "IndexError: string index out of range"),
+        (
+            [["py", "getitem", "0"]],
+            [1, 2],
+            "UP2-E2002",
+            "py.getitem cannot subscript list with str",
+        ),
+        ([["py", "getitem", 0]], 7, "UP2-E2002", "py.getitem cannot subscript int with int"),
+    ],
+)
+def test_getitem_failure_paths(chain: Any, value: Any, code: str, reason: str) -> None:
+    """A subscript that is not there is `UP2-E2018`; a wrong type of subscript is `UP2-E2002`."""
+    outcome = run(chain, value)
+    assert isinstance(outcome, Failed), outcome
+    assert outcome.code == code
+    assert outcome.reason.startswith(reason)
+    assert outcome.fix
+
+
+def test_getitem_out_of_range_is_e2018() -> None:
+    outcome = run([["py", "getitem", 9]], [1])
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2018"
+    assert "index 9" in outcome.reason
+
+
+def test_getitem_missing_key_is_e2018() -> None:
+    """The dict is there, the key is not: an error naming the key, not a `Missing` outcome."""
+    outcome = run([["py", "getitem", "text"]], {"a": 1})
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2018"
+    assert outcome.reason == "KeyError: 'text' — the dict has no key 'text'"
 
 
 def test_first_on_empty_list_is_missing() -> None:
     assert isinstance(run([["py", "first", ""]], []), Missing)
+
+
+# ---------------------------------------------------------------- getattr (host objects)
+
+
+def test_getattr_reads_an_attribute_of_the_value_that_flows_in() -> None:
+    response = _HostResponse(200, "body")
+    assert run([["py", "getattr", "status"]], response) == Ok(200)
+    assert run([["py", "getattr", "text"]], response) == Ok("body")
+
+
+def test_getattr_absent_attribute_is_e2002_naming_the_class() -> None:
+    outcome = run([["py", "getattr", "txet"]], _HostResponse())
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2002"
+    assert outcome.reason.startswith(
+        "AttributeError: '_HostResponse' object has no attribute 'txet'"
+    )
+
+
+def test_getattr_refuses_a_callable_attribute() -> None:
+    """A method is never turned into a value silently (selectolax's `decompose` mutates a tree)."""
+    outcome = run([["py", "getattr", "json"]], _HostResponse())
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2002"
+    assert "callable" in outcome.reason
+    assert '["css","text",""]' in outcome.fix
+    assert "udf" in outcome.fix
+
+
+def test_getattr_on_a_value_without_attributes_is_e2002() -> None:
+    outcome = run([["py", "getattr", "tag"]], 5)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2002"
+    assert outcome.reason.startswith("AttributeError: 'int' object has no attribute 'tag'")
+
+
+def test_getattr_name_must_be_a_scalar() -> None:
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "getattr", {"ref_or_literal": "text"}]])
+    assert info.value.diagnostic.code == "UP2-E1005"
+
+
+def test_getattr_accepts_a_reference_as_the_name() -> None:
+    """The parameter is `ref_or_literal`, so the attribute name may be computed."""
+    chain = [["py", "getattr", "$globals.attr"]]
+    compiled = compile_field(chain)
+    response = _HostResponse(200, "body")
+    assert eval_field(compiled, response, scope=Scope(globals={"attr": "text"})) == Ok("body")
+
+
+def test_getattr_on_a_selectolax_node() -> None:
+    """The real case: a node's own attributes are values, `.text` is a method."""
+    selectolax = pytest.importorskip("selectolax.parser")
+    tree = selectolax.HTMLParser("<div id='a'><p>hi</p></div>")
+    node = tree.css_first("div")
+    assert run([["py", "getattr", "tag"]], node) == Ok("div")
+    assert run([["py", "getattr", "attributes"]], node) == Ok({"id": "a"})
+    parent = run([["py", "getattr", "parent"]], node)
+    assert isinstance(parent, Ok)
+    method = run([["py", "getattr", "text"]], node)
+    assert isinstance(method, Failed)
+    assert method.code == "UP2-E2002"
+    assert "callable" in method.reason
+
+
+def test_id_returns_its_input_unchanged() -> None:
+    payload = {"url": "https://example.com"}
+    assert run([["py", "id", ""]], payload) == Ok(payload)
+    assert run([["py", "id", ""]], "https://example.com") == Ok("https://example.com")
 
 
 def test_split_empty_separator_is_failed() -> None:
@@ -276,8 +418,7 @@ def test_urlsplit_part_is_validated_at_compile_time() -> None:
         ([["py", "slice", {"spec": "0:4"}]], "/0/2/spec"),
         ([["py", "split", {"sep": {}}]], "/0/2/sep"),
         ([["py", "split", {"sep": ",", "maxsplit": {}}]], "/0/2/maxsplit"),
-        ([["py", "getitem", {"index": {}}]], "/0/2/index"),
-        ([["py", "get", {"key": {}}]], "/0/2/key"),
+        ([["py", "getitem", {"at": {}}]], "/0/2/at"),
         ([["py", "replace", {"old": {}, "new": ""}]], "/0/2/old"),
     ],
 )

@@ -18,7 +18,6 @@ from uniparser2 import (
     Missing,
     Ok,
     Outcome,
-    Policy,
     Ref,
     Scope,
     Up2Error,
@@ -57,8 +56,21 @@ def test_preview_truncates_long_values() -> None:
 
 
 def test_preview_handles_unserialisable_values() -> None:
-    """``json.dumps(default=repr)`` downgrades an unserialisable value to a string, not an error."""
-    assert values.preview({1, 2}) == '"{1, 2}"'
+    """A host object is previewed as **type name plus repr** (03 §3.3: it may flow, never exit)."""
+    assert values.preview({1, 2}) == "set {1, 2}"
+    assert values.type_name({1, 2}) == "set"
+
+
+def test_preview_of_a_host_object_names_its_class() -> None:
+    class Response:
+        def __repr__(self) -> str:
+            return "<Response [200]>"
+
+    response = Response()
+    assert values.type_name(response) == "Response"
+    assert values.preview(response) == "Response <Response [200]>"
+    assert values.preview(response, 4).startswith("Resp...(+")
+    assert values.is_json_value(response) is False
 
 
 # ---------------------------------------------------------------- ast shape and serialization
@@ -151,7 +163,6 @@ def test_list_valued_reference_param_descends(monkeypatch: pytest.MonkeyPatch) -
             compile_field([["udf", "up2_test_edge_tag", ["$globals.x"]]]),
             "v",
             scope=Scope(globals={"x": 1}),
-            policy=Policy(on_missing="drop"),
         )
     finally:
         udfs.unregister_udf("up2_test_edge_tag")
@@ -241,34 +252,22 @@ def test_the_scope_view_merges_the_chain() -> None:
     assert inner.json_view()["locals"] == {"a": 1, "b": 3}
 
 
-# ---------------------------------------------------------------- evaluator policy
-
-
-def test_policy_rejects_unknown_error_strategy() -> None:
-    with pytest.raises(ValueError, match="on_error"):
-        Policy(on_error="nope")
+# ---------------------------------------------------------------- evaluator outcomes
 
 
 def test_missing_short_circuits_non_accepting_next_step() -> None:
     chain = [["re", "search", r"\d+"], ["py", "strip", ""]]
-    assert isinstance(
-        eval_field(compile_field(chain), "abc", policy=Policy(on_missing="drop")), Missing
-    )
+    assert isinstance(eval_field(compile_field(chain), "abc"), Missing)
 
 
-def test_failed_short_circuits_when_error_is_dropped() -> None:
+def test_failed_short_circuits_the_rest_of_the_chain() -> None:
+    """A failed stage stops the chain and is reported with its own code (never settled)."""
     # The former ``cast`` operator has been merged into ``py``: ``["py","int",""]`` is its
     # equivalent spelling.
     chain = [["py", "int", ""], ["py", "strip", ""]]
-    outcome = eval_field(
-        compile_field(chain), "not-a-number", policy=Policy(on_error="drop", on_missing="drop")
-    )
-    assert isinstance(outcome, Missing)
-
-
-def test_on_missing_none_yields_json_null() -> None:
-    chain = [["re", "search", r"\d+"]]
-    assert eval_field(compile_field(chain), "abc", policy=Policy(on_missing="none")) == Ok(None)
+    outcome = eval_field(compile_field(chain), "not-a-number")
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2005"
 
 
 def test_system_errors_are_not_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:

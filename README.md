@@ -6,17 +6,20 @@ A declarative, deterministic, serializable **text parsing engine**: it turns the
 input text to a specified structure into JSON data (a **parse chain**), generated offline by a human
 or an LLM, with nothing but deterministic evaluation at runtime.
 
-> **Status**: `0.4.0`, L1 (the DSL operator layer) is complete. **11 operators** are implemented:
+> **Status**: `0.4.0`. **L1** (the DSL operator layer) is complete: **11 operators** —
 > `css` / `css1` (HTML selectors — all matches vs. first match only, selectolax), `xpath` (XML, lxml),
-> `json` (jmespath), `re`, `py` (41 allowlist functions), `udf` (host-registered, no code in the
+> `json` (jmespath), `re`, `py` (42 allowlist functions), `udf` (host-registered, no code in the
 > chain), `code` (in-chain code, language-level sandbox, **not present by default** — see the
 > security note), plus the scoping operator `ctx`, the building block `const` and the iteration
-> operator `each` — 72 `(operator, action)` pairs in total. The chain-level structure
-> (`seed`/`parse`/`emit`, `result` assembly) and the in-place trial UI are L2. For progress and
-> acceptance criteria see the roadmap in the design notes; to see it run right now, in a source
-> checkout: `uv run python demo.py` — one walkthrough that exercises all 11 operators, the tri-state
-> settlement and bad-chain diagnostics. (`demo.py` and `tools/demo_report.py` live in the repository
-> only: neither the wheel nor the sdist ships them.)
+> operator `each` — 73 `(operator, action)` pairs in total. **L2 has started**: a site bundle (a
+> **story**) compiles and runs — `start(bundle, value)` / `run.next()` / `run.send(answer)`, where a
+> `Request` / `RequestBatch` / `call` suspends the run and its answer resumes the **same** run — and
+> both `samples/*/site.json` run end to end against their live sites. Try one from the CLI:
+> `uv run up2 lint samples/books.toscrape.com/books/site.json`. The materialization cache, the
+> registered-type constructor and the in-place trial UI are not there yet. For progress and
+> acceptance criteria see the roadmap in the design notes; to see the operator layer run right now,
+> in a source checkout: `uv run python demo.py`. (`demo.py` and `tools/demo_report.py` live in the
+> repository only: neither the wheel nor the sdist ships them.)
 
 ## Why it exists
 
@@ -36,8 +39,8 @@ store rules as data and reuse them. uniparser2 solves all five at once:
 
 ## What you get today (L1)
 
-The **operator layer** is complete and mechanically audited: 11 operators, 61 `(operator, action)`
-pairs, each with a covering case (`uv run up2 conformance --check`), and 26 implemented error codes
+The **operator layer** is complete and mechanically audited: 11 operators, 73 `(operator, action)`
+pairs, each with a covering case (`uv run up2 conformance --check`), and 28 implemented error codes
 each asserted by a test.
 
 | Operator | Engine (extra) | Actions |
@@ -46,7 +49,7 @@ each asserted by a test.
 | `xpath` | lxml (`[xml]`) | `text` · `self` · `nodes` (XML; XPath is lxml-native) |
 | `json` | jmespath (`[json]`) | `get` — a jmespath expression, empty means the root |
 | `re` | stdlib | `search` · `group` · `findall` |
-| `py` | stdlib; the natural-language path of `parse_time` needs `[time]`, `html_to_markdown` needs `[md]` | 41 allowlisted pure functions: `int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `get` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` · `==` `!=` `<` `<=` `>` `>=` `in` `or` `and` (predicates, Python's spellings) |
+| `py` | stdlib; the natural-language path of `parse_time` needs `[time]`, `html_to_markdown` needs `[md]` | 42 allowlisted pure functions: `int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `getattr` `id` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` · `==` `!=` `<` `<=` `>` `>=` `in` `or` `and` (predicates, Python's spellings) |
 | `ctx` | stdlib | `get` · `set` · `del` · `map` (scope reads and writes) |
 | `udf` | host-registered | any function the host registered beforehand; the chain carries only a name |
 | `code` | pydantic-monty (`[code]`, deliberately not in `[all]`) | `run` — in-chain code in a language-level sandbox (see the security note) |
@@ -60,14 +63,17 @@ chain.
 
 ## Not there yet (L2–L4)
 
-Only the operator layer exists today; everything the design puts on top of it is unimplemented. There
-are no `seed` / `parse` / `emit` node types, no sequential executor or `routes`, no `result` / `$lit`
-assembly, no Schema validator, none of the lint rules, no `up2 trial --trace`, no `up2 studio` bench,
+The operator layer is complete and a **first story executor** exists; the rest of the design's L2 is
+unimplemented: no run-scoped materialization cache (so feeding the same text to several `css`/`json`
+stages parses it once per stage), no registered-type constructor (a step's `type` is a declared name,
+and the boundary check is "a product must be JSON"), no `up2 trial --trace`, no `up2 studio` bench,
 no Store (`FileStore` / `SqliteStore`), no fingerprints and no `S0–S7` publishing SOP; the ADRs have
-not been written either.
+not been written either. There are no `seed` / `parse` / `emit` node types and no `routes` — that
+model was retired with the story model, so what is left to build is the list above.
 The CLI is exactly `ops` / `conformance` / `lint` / `trial`, and the public API is `compile_field` /
-`compile_stage` / `eval_field` plus the value, scope and policy types. The layers, their deliverables
-and their acceptance criteria are in [`docs/specs/007` §3](docs/specs/007-source-decisions-and-roadmap.md).
+`compile_stage` / `compile_story` / `start` / `eval_field` plus the value and scope types. The layers,
+their deliverables and their acceptance criteria are in
+[`docs/specs/007` §3](docs/specs/007-source-decisions-and-roadmap.md).
 
 ## Installation
 
@@ -179,17 +185,16 @@ chain = up2.compile_field(
     ]
 )
 
-policy = up2.Policy(on_missing="drop")  # drop on missing instead of falling back to an empty string
 scope = up2.Scope(globals={"base_url": "https://example.com"})
-outcome = up2.eval_field(chain, "published in 2026-09", scope=scope, policy=policy)
+outcome = up2.eval_field(chain, "published in 2026-09", scope=scope)
 
 match outcome:
     case up2.Ok(value=value):
         print(value)  # 2026
     case up2.Missing(reason=reason):
-        print("missing:", reason)  # missing is not an error
+        print("missing:", reason)  # not there; the key is absent from a product, not "" or null
     case up2.Failed(code=code, reason=reason, fix=fix):
-        print(code, reason, fix)  # deterministic error code + one-line remedy
+        print(code, reason, fix)  # deterministic error code + one-line remedy; the run failed
 ```
 
 A bad chain gets a deterministic diagnostic with a pointer at **compile time**, instead of exploding

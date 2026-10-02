@@ -6,12 +6,12 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Missing, Ok, Outcome, Policy, Up2Error, compile_field, eval_field
+from uniparser2 import Failed, Missing, Ok, Outcome, Up2Error, compile_field, eval_field
 
 
 def run(chain: Any, value: Any) -> Outcome:
     compiled = compile_field(chain)
-    return eval_field(compiled, value, policy=Policy(on_missing="drop"))
+    return eval_field(compiled, value)
 
 
 def compile_error(chain: Any) -> str:

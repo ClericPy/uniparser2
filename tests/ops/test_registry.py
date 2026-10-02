@@ -42,8 +42,8 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
         "ctx",
         "code",
     }
-    assert len(pairs) == 72
-    assert len([pair for pair in pairs if pair[0] == "py"]) == 41
+    assert len(pairs) == 73
+    assert len([pair for pair in pairs if pair[0] == "py"]) == 42
     assert len([pair for pair in pairs if pair[0] == "css"]) == 8
     assert len([pair for pair in pairs if pair[0] == "css1"]) == 8
     assert len([pair for pair in pairs if pair[0] == "xpath"]) == 3
@@ -64,6 +64,9 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
     # gone together with the 2-slot operator.
     assert ("py", "parse_time") in pairs
     assert ("py", "strftime") in pairs
+    # The dict-key twin of `getitem` is gone: subscripting is one action (Python's `__getitem__`).
+    assert ("py", "getitem") in pairs
+    assert ("py", "get") not in pairs
     assert ("json", "get") in pairs
     # In-chain code has a single action ⇒ a 2-slot operator, so the action name never appears in a
     # chain.

@@ -25,7 +25,6 @@ from uniparser2 import (
     Ok,
     Opaque,
     Outcome,
-    Policy,
     Up2Error,
     compile_field,
     eval_field,
@@ -128,7 +127,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeEngine:
 
 
 def run(chain: Any, value: Any) -> Outcome:
-    return eval_field(compile_field(chain), value, policy=Policy(on_missing="drop"))
+    return eval_field(compile_field(chain), value)
 
 
 @pytest.mark.parametrize("action", ["text", "html", "outer"])

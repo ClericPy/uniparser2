@@ -17,7 +17,6 @@ from uniparser2 import (
     Failed,
     Ok,
     Outcome,
-    Policy,
     Up2Error,
     compile_field,
     eval_field,
@@ -49,7 +48,7 @@ def udfs() -> Iterator[Callable[[str, Callable[..., Any]], str]]:
 
 
 def run(chain: Any, value: Any) -> Outcome:
-    return eval_field(compile_field(chain), value, policy=Policy(on_missing="drop"))
+    return eval_field(compile_field(chain), value)
 
 
 def test_unregistered_function_fails_at_compile_time() -> None:
@@ -198,6 +197,7 @@ def test_non_serialisable_return_is_e2009(udfs) -> None:
     outcome = run([["udf", "up2_test_bad", ""]], "x")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2009"
+    assert "cannot be a product" in outcome.reason
     assert "list" in outcome.fix
 
 

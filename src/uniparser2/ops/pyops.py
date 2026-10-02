@@ -1,4 +1,4 @@
-"""``py`` operator: 41 allowlist functions (design doc 02 §6.4).
+"""``py`` operator: 42 allowlist functions (design doc 02 §6.4).
 
 **Slots** (see ``02`` §1): ``["py", function name, parameters]`` — the function name is in slot 2
 and its parameters in slot 3.
@@ -7,6 +7,14 @@ and its parameters in slot 3.
 ``import`` capability here, so chain data cannot introduce new code (``N6``). Third-party
 dependencies are declared per **action** (``html_to_markdown`` needs ``html-to-markdown``); when
 missing, that action is unavailable and the install command is reported.
+
+``getitem`` is the only subscript action. It used to sit beside a ``get`` that took a dict key: the
+same operation split by parameter type. Taking a subscript is Python's ``__getitem__``, so a
+sequence is read by index, a mapping by key and a str by character, with **no coercion**, and a
+subscript that is not there is an **error** (``UP2-E2018``) rather than ``Missing``.
+
+``getattr`` (a host object's own attribute) and ``id`` (the identity) are the two actions that are
+not functions of a JSON value: see their own docstrings.
 
 Two groups of functions used to be separate operators and were folded into this table (see D-02-14
 in ``02``):
@@ -109,7 +117,7 @@ def _text(value: Any, who: str) -> str | Failed:
     return Failed(
         code="UP2-E2002",
         reason=f"py.{who} needs a str, got {type_name(value)}",
-        fix="turn the upstream value into text with py.strip_tags / py.getitem / py.get first",
+        fix="turn the upstream value into text with py.strip_tags / py.getitem first",
     )
 
 
@@ -217,29 +225,85 @@ def _py_slice(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
 
 
 def _py_getitem(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
-    items = _items(value, "getitem")
-    if isinstance(items, Failed):
-        return items
+    """Python's ``value[at]``: a sequence by index, a mapping by key, a str by character.
+
+    No coercion: a string index on a list is a type failure, never an integer. A subscript the value
+    does not have is an **error**, not ``Missing`` (``UP2-E2018``) — the value is there, the key or
+    the index is not, which is a fact about the data rather than "nothing matched".
+    """
+    del scope
+    at = params["at"]
     try:
-        index = _int_param(params, "index")
-    except ValueError as exc:
-        return Failed(code="UP2-E2002", reason=f"invalid index for getitem: {exc}")
-    if not -len(items) <= index < len(items):
-        return Missing(
-            reason=f"the list has only {len(items)} items, so index {index} is unavailable"
+        return Ok(value[at])
+    except KeyError as exc:
+        return Failed(
+            code="UP2-E2018",
+            reason=f"KeyError: {exc} — the dict has no key {exc}",
+            fix="read a key the mapping has, or make the producing stage write it",
         )
-    return Ok(items[index])
+    except IndexError as exc:
+        return Failed(
+            code="UP2-E2018",
+            reason=f"IndexError: {exc} — the {type_name(value)} has {len(value)} items, so index "
+            f"{at} is out of range",
+            fix="read an index the sequence has, or shape it first with py.slice",
+        )
+    except TypeError as exc:
+        return Failed(
+            code="UP2-E2002",
+            reason=f"py.getitem cannot subscript {type_name(value)} with {type_name(at)}: {exc}",
+            fix="read a sequence by integer index and a mapping by string key "
+            "(there is no coercion)",
+        )
 
 
-def _py_get(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
-    if not isinstance(value, Mapping):
-        return Failed(code="UP2-E2002", reason=f"get needs a dict, got {type_name(value)}")
-    key = params["key"]
-    if isinstance(key, (list, dict)):
-        return Failed(code="UP2-E2002", reason=f"the key of get is unhashable: {type_name(key)}")
-    if key not in value:
-        return Missing(reason=f"the dict has no key {key!r}")
-    return Ok(value[key])
+def _py_getattr(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Read an attribute of the value that flows in.
+
+    The value may be a **host object** (a response, a library node), which is the one thing a stage
+    needs that no JSON action can do. Two rules keep it from becoming a method-call hole:
+
+    - an absent attribute is ``UP2-E2002`` with the exception's own class name in ``reason``
+      (``AttributeError: 'Response' object has no attribute 'txet'``);
+    - an attribute that is **callable** is refused, because a method is not a value: the fix names
+      the operator (``["css","text",""]``) or a ``udf``. A zero-argument method on a document node
+      can mutate the tree (``selectolax``'s ``decompose``), so it is never called here.
+    """
+    del scope
+    name = params["ref_or_literal"]
+    if not isinstance(name, str):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"the attribute name of py.getattr must be a string, got {type_name(name)}",
+            fix='write the attribute name in slot 3: ["py","getattr","text"]',
+        )
+    try:
+        found = getattr(value, name)
+    except AttributeError as exc:
+        return Failed(
+            code="UP2-E2002",
+            reason=f"{exc.__class__.__name__}: {exc}",
+            fix="check the attribute name against the value, or make the producing stage write it",
+        )
+    if callable(found):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"the attribute {name!r} of {type_name(value)} is callable, and py.getattr "
+            "never calls it",
+            fix='a method is not a value: read the text with ["css","text",""] (or "html" / '
+            '"outer"), or register a udf that calls it',
+        )
+    return Ok(found)
+
+
+def _py_id(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Return the input unchanged: the identity action (a step whose value *is* its input).
+
+    ``["py","str",""]`` was the workaround (it is the identity on a string, and it *converts*
+    anything else); this one takes no argument and copies nothing.
+    """
+    del params, scope
+    return Ok(value)
 
 
 def _py_len(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
@@ -971,8 +1035,8 @@ _SCALAR_PARAMS: Final[Mapping[str, Mapping[str, str]]] = {
     "urljoin": {"base": "a string"},
     "slice": {"spec": "a string"},
     "split": {"sep": "a string", "maxsplit": "an integer"},
-    "getitem": {"index": "an integer"},
-    "get": {"key": "a string"},
+    "getitem": {"at": "a scalar"},
+    "getattr": {"ref_or_literal": "a string"},
     "replace": {"old": "a string", "new": "a string"},
     "strftime": {"layout": "a string"},
 }
@@ -1072,8 +1136,19 @@ _TABLE: Final[tuple[_Entry, ...]] = (
     _Entry("upper", "convert to uppercase", _py_upper),
     _Entry("lower", "convert to lowercase", _py_lower),
     _Entry("slice", "slice a string or list", _py_slice, (ParamSpec("spec", Kind.LITERAL),)),
-    _Entry("getitem", "take a list index", _py_getitem, (ParamSpec("index", Kind.LITERAL),)),
-    _Entry("get", "fetch a dict key", _py_get, (ParamSpec("key", Kind.LITERAL),)),
+    _Entry(
+        "getitem",
+        "take a subscript: a sequence index, a mapping key or a str character",
+        _py_getitem,
+        (ParamSpec("at", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
+        "getattr",
+        "read an attribute of the value that flows in (a host object's own attribute)",
+        _py_getattr,
+        (ParamSpec("ref_or_literal", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry("id", "return the input unchanged (a step whose value is its own input)", _py_id),
     _Entry("len", "length", _py_len),
     _Entry("first", "take the first element", _py_first),
     _Entry("last", "take the last element", _py_last),
@@ -1207,7 +1282,7 @@ _ACTIONS: Final[Mapping[str, ActionSpec]] = {
 
 @op("py", aliases=("python",))
 class Py(Op):
-    """The allowlist function set (41 functions, closed)."""
+    """The allowlist function set (42 functions, closed)."""
 
     summary = "Python built-in allowlist functions"
     slot_roles = ("function", "params")

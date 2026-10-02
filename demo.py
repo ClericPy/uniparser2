@@ -228,8 +228,7 @@ FEED_DOCS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("RSS 1.0 / RDF — rdf:about, dc:date", SAMPLE_RDF, RDF_CHAINS),
 )
 
-# The settlement policy: what a field becomes when the value is absent or the rule is broken.
-POLICY = up2.Policy(on_missing="drop")
+# The tri-state is fixed: a missing value is not there, a failed stage always fails the run.
 _LIMIT = 62
 SHOWN: set[str] = set()
 
@@ -268,16 +267,16 @@ def show_source(title: str, source: str) -> None:
     print(source.strip())
 
 
-def run(chain: list[Any], value: Any, *, policy: up2.Policy = POLICY) -> up2.Outcome:
+def run(chain: list[Any], value: Any) -> up2.Outcome:
     """Compile + evaluate one chain on a fresh scope; remember which operators it used."""
     for step in chain:
         SHOWN.add(step[0])
-    return up2.eval_field(up2.compile_field(chain), value, scope=make_scope(), policy=policy)
+    return up2.eval_field(up2.compile_field(chain), value, scope=make_scope())
 
 
-def one(label: str, chain: list[Any], value: Any, *, policy: up2.Policy = POLICY) -> None:
+def one(label: str, chain: list[Any], value: Any) -> None:
     """Print a single chain and its outcome."""
-    outcome = run(chain, value, policy=policy)
+    outcome = run(chain, value)
     print(f"   {json.dumps(chain, ensure_ascii=False)}")
     print(f"       {label}: {render_outcome(outcome)}")
 
@@ -348,7 +347,7 @@ def section_regex() -> None:
 
 
 def section_python() -> None:
-    show_source("5. `py` — the 41-function allowlist (no extra needed)", SAMPLE_TEXT)
+    show_source("5. `py` — the 40-function allowlist (no extra needed)", SAMPLE_TEXT)
     one(
         "default() catches a Missing upstream",
         [["re", "search", r"\d+"], ["py", "default", "none"]],
@@ -388,7 +387,7 @@ def section_scope() -> None:
 
 def section_literals() -> None:
     heading("7. `const` — literals and build-up")
-    one("a plain literal", [["const", "article"]], "ignored", policy=up2.Policy(on_missing="empty"))
+    one("a plain literal", [["const", "article"]], "ignored")
     one("a literal that starts with $", [["const", {"$lit": "$not-a-reference"}]], "ignored")
     one(
         "const replaces the value mid-chain",
@@ -466,18 +465,17 @@ def section_code() -> None:
     print("   the host side (uniparser2.ops.code.configure) and the chain cannot widen them.")
 
 
-def section_policy() -> None:
-    heading("10. Tri-state and policy — what an absent or broken value settles to")
-    chain = [["re", "search", r"\d+"]]
-    for missing in ("empty", "none", "drop", "raise"):
-        one(f"on_missing={missing}", chain, "abc", policy=up2.Policy(on_missing=missing))
-    one("a broken rule is an error by default", [["py", "int", ""]], "abc")
+def section_tristate() -> None:
+    heading("10. Tri-state — what an absent or broken value means")
+    one("a selector that matched nothing is missing, not empty", [["re", "search", r"\d+"]], "abc")
+    one("a broken rule always fails the run", [["py", "int", ""]], "abc")
     one(
-        "...unless you downgrade it",
-        [["py", "int", ""]],
+        "the failure stops the chain at the stage that failed",
+        [["py", "int", ""], ["py", "strip", ""]],
         "abc",
-        policy=up2.Policy(on_error="empty"),
     )
+    print("\n   `Missing` is not a value: the field is absent from the product. There is no policy")
+    print("   to configure; `py.default`/`py.or` fall back for one field when a chain needs it.")
 
 
 def section_diagnostics() -> None:
@@ -532,7 +530,7 @@ SECTIONS: Final[tuple[tuple[str, Callable[[], None]], ...]] = (
     ("const", section_literals),
     ("udf", section_udf),
     ("code", section_code),
-    ("policy", section_policy),
+    ("tri-state", section_tristate),
     ("diagnostics", section_diagnostics),
     ("each", section_iteration),
 )

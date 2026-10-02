@@ -60,10 +60,9 @@ and a JSON Pointer. `uv run up2 lint <chain.json>` performs exactly that check.
 rather than a switch, because a silent truncation is worse than a longer name. An empty selector means
 "the node itself".
 
-Use `exists` rather than `nodes` when the chain only needs to branch: `["css","nodes",S]` reports
-`Missing` when nothing matches, so the missing-value policy decides the answer (`""` under the default,
-`Missing` under `drop`, a failure under `raise`), while `["css","exists",S]` answers `false` under all
-of them.
+Use `exists` rather than `nodes` when the chain only needs a decision: `["css","nodes",S]` reports
+`Missing` when nothing matches (and a missing value is not there, `01` §4.2), while `["css","exists",S]`
+answers `false`.
 
 ### `xpath` — XPath on XML (engine: lxml, extra `[xml]`)
 
@@ -96,13 +95,15 @@ Python's `re` has **no** timeout parameter, so there is no runtime backstop — 
 
 ### `py` — the allowlist of pure functions (standard library)
 
-41 functions, JSON in and JSON out, no IO. A closed set: an unknown name is `UP2-E1003`. The predicate
+42 functions, JSON in and JSON out, no IO. A closed set: an unknown name is `UP2-E1003`. The predicate
 actions use Python's own spellings, so a chain reads like the expression it means.
 
 | Purpose | Functions |
 |---|---|
 | text | `strip` · `strip_tags` · `normalize_space` · `upper` · `lower` · `replace {"old","new"}` · `split {"sep","maxsplit"?}` · `join` · `slice` · `len` |
-| collections | `first` · `last` · `flatten` · `uniq` · `sort {"key"?,"reverse"?}` · `getitem` · `get` |
+| collections | `first` · `last` · `flatten` · `uniq` · `sort {"key"?,"reverse"?}` · `getitem` |
+| host object | `getattr` — read an attribute of the value that flows in (a method is never called) |
+| identity | `id` — return the input unchanged (a step whose value *is* its own input) |
 | URL | `urljoin` · `urlsplit` |
 | encoding / hash | `b64_encode` · `b64_decode` · `sha256` |
 | conversion | `str` · `int` · `float` · `bool` · `list` · `from_json` |
@@ -133,11 +134,30 @@ way — so "take A, else B" covers candidates that are present but empty, and on
 present first (`[["css1","text","h1"],["py","default",""]]`). To negate a boolean, compare it:
 `["py","!=",true]`; there is deliberately no `not` action.
 
-The parameter slot is written bare for `urljoin` / `slice` / `getitem` / `get` / `join` / `urlsplit` /
+`getitem` is the **only subscript action** (Python's `__getitem__`): a sequence by integer index, a
+mapping by string key, a str by character, and **no coercion** — `["py","getitem","0"]` on a list is
+`UP2-E2002`, never index `0`. A key or an index the value does not have is `UP2-E2018` (the value is
+there, the subscript is not — `KeyError: 'text' — the dict has no key 'text'`), never `Missing`. Its
+parameter is a literal or a reference, so `["py","getitem","$globals.key"]` reads a computed key.
+
+`getattr` is its twin for a **host object**: it reads the value's own attribute
+(`["py","getattr","status_code"]` on a response, `["py","getattr","attributes"]` on a `selectolax`
+node), which is what a value that is not JSON needs. An absent attribute is `UP2-E2002` and its `reason`
+begins with the exception's own class — `AttributeError: 'Response' object has no attribute 'txet'` — and
+an attribute that is **callable** is refused with the same code: a method is never called (a
+zero-argument method such as `selectolax`'s `decompose` mutates the tree), so the `fix` names the operator
+to use instead (`["css","text",""]`) or a `udf`. A value with no attributes at all (an integer, say) is
+the same `AttributeError` failure.
+
+`id` returns its input unchanged and takes no arguments: it is the action for a step whose value **is**
+its own input (`["py","id",""]` on a seed URL), where `["py","str",""]` used to serve as the identity
+(and silently converted anything that was not a string).
+
+The parameter slot is written bare for `urljoin` / `slice` / `getitem` / `getattr` / `join` / `urlsplit` /
 `default` / `strftime` / `==` / `!=` / `<` / `<=` / `>` / `>=` / `in` / `or` / `and`, and as a named
 object for `split` / `replace` / `sort` / `parse_time`. A container
 where the function needs a scalar is a compile-time `UP2-E1005` (`urljoin.base`, `slice.spec`,
-`split.sep`, `split.maxsplit`, `getitem.index`, `get.key`, `replace.old`, `replace.new`,
+`split.sep`, `split.maxsplit`, `getitem.at`, `getattr.ref_or_literal`, `replace.old`, `replace.new`,
 `strftime.layout`, and an unknown `sort.key`).
 
 `parse_time` reaches the optional engine only after the built-in table has failed, so a machine shape
@@ -267,7 +287,7 @@ Each line below is a real run; the input is named in the note.
 |---|---|
 | `uv run up2 ops --json` | the operator/action/parameter facts — read this before writing a chain |
 | `uv run up2 lint chain.json` | compile-time validation, without executing |
-| `uv run up2 trial chain.json --input 'text=…' --json` | run it on local inputs; `--global`, `--product`, `--on-missing`, `--on-error` |
+| `uv run up2 trial chain.json --input 'text=…' --json` | run it on local inputs; `--global`, `--product` |
 | `uv run up2 conformance --check` | the audit behind this project: every declared `(operator, action)` has a case, every implemented error code is asserted |
 
 `tools/demo_report.py` renders the same kind of catalogue as an HTML page for local browsing

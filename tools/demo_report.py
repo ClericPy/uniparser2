@@ -118,6 +118,24 @@ RSS_DOC: Final = """<?xml version="1.0" encoding="UTF-8"?>
 </rss>"""
 
 
+@dataclass(frozen=True, slots=True)
+class _HostObject:
+    """A stand-in host object for the catalogue: it needs no optional dependency.
+
+    ``status`` and ``url`` are attributes (values); ``json`` is a method, which ``py.getattr``
+    refuses — the two cases of the ``getattr`` section.
+    """
+
+    status: int = 200
+    url: str = "https://example.com/list.html"
+
+    def json(self) -> dict[str, Any]:
+        return {"status": self.status}
+
+
+_HOST_OBJECT: Final = _HostObject()
+
+
 @dataclass
 class Case:
     """One case: an `(operator, action)` pair (or a multi-stage chain) + input + commonness tier."""
@@ -130,7 +148,6 @@ class Case:
     rank: int = 0
     scope_globals: dict[str, Any] = field(default_factory=dict)
     scope_locals: dict[str, Any] = field(default_factory=dict)
-    policy: up2.Policy = up2.DEFAULT_POLICY
     note: str = ""
 
 
@@ -302,7 +319,7 @@ def coverage_cases() -> list[Case]:
 
 
 def _py_cases() -> list[Case]:
-    """`py`  has 41 allowlisted functions, tiered by commonness (module docstring)."""
+    """`py`  has 42 allowlisted functions, tiered by commonness (module docstring)."""
     spec: list[tuple[str, int, str, Any, Any, str]] = [
         ("Core", 1, "strip", "  text  ", "", "strip leading/trailing whitespace"),
         ("Core", 2, "normalize_space", "a   b\n c", "", "collapse consecutive whitespace"),
@@ -315,18 +332,27 @@ def _py_cases() -> list[Case]:
             "",
             "first item (xpath/css yield a list; a scalar is needed)",
         ),
-        ("Core", 5, "get", {"k": 7}, "k", "dict key lookup (missing key ⇒ Missing)"),
-        ("Core", 6, "len", [1, 2, 3], "", "length"),
-        ("Core", 7, "slice", "abcdef", ":3", 'slice: ":3" / "1:5" / "::-1"'),
+        ("Core", 5, "getitem", {"k": 7}, "k", "dict key lookup (a missing key ⇒ UP2-E2018)"),
         (
             "Core",
-            8,
+            6,
+            "getattr",
+            _HOST_OBJECT,
+            "status",
+            "read an attribute of a host object (never a callable one)",
+        ),
+        ("Core", 7, "id", "https://example.com/list.html", "", "identity: the input unchanged"),
+        ("Core", 8, "len", [1, 2, 3], "", "length"),
+        ("Core", 9, "slice", "abcdef", ":3", 'slice: ":3" / "1:5" / "::-1"'),
+        (
+            "Core",
+            10,
             "default",
             "",
             "fallback value",
             "fallback for empty/None/missing (accepts_missing)",
         ),
-        ("Common", 1, "getitem", ["a", "b"], 1, "list index (out of range ⇒ Missing)"),
+        ("Common", 1, "getitem", ["a", "b"], 1, "list index (out of range ⇒ UP2-E2018)"),
         ("Common", 2, "last", [1, 2], "", "last item"),
         ("Common", 3, "replace", "old document", ["old", "new"], "replace all (positional array)"),
         ("Common", 4, "split", "a,b,c", ",", "split on a separator"),
@@ -534,23 +560,15 @@ def chain_cases() -> list[Case]:
 
 
 def edge_cases() -> list[Case]:
-    """Appendix: tri-state and policy (cross-operator, so not in an operator section)."""
+    """Appendix: the tri-state (cross-operator, so not in an operator section)."""
     return [
         Case("tri-state", "Ok (hit)", [["css1", "text", "h1.article-title"]], HTML_DOC),
         Case(
             "tri-state",
-            'Missing → default policy empty ⇒ Ok("")',
+            "Missing (no match: the value is not there)",
             [["css1", "text", "div.nope"]],
             HTML_DOC,
-            note="default on_missing=empty",
-        ),
-        Case(
-            "tri-state",
-            "Missing (kept as is)",
-            [["css1", "text", "div.nope"]],
-            HTML_DOC,
-            policy=up2.Policy(on_missing="drop"),
-            note="on_missing=drop",
+            note="a missing value is not a value: no empty string, no null",
         ),
         Case(
             "tri-state",
@@ -564,39 +582,24 @@ def edge_cases() -> list[Case]:
         ),
         Case(
             "tri-state",
-            "Failed (Missing required to raise)",
-            [["css1", "text", "div.nope"]],
-            HTML_DOC,
-            policy=up2.Policy(on_missing="raise"),
-            note="on_missing=raise ⇒ UP2-E2015",
+            "Failed (a subscript that is not there)",
+            [["py", "getitem", "text"]],
+            {"a": 1},
+            note="UP2-E2018: the dict is there, the key is not — an error, not a Missing value",
         ),
         Case(
-            "policy",
-            "on_missing=empty",
-            [["css1", "text", "div.nope"]],
-            HTML_DOC,
-            policy=up2.Policy(on_missing="empty"),
+            "tri-state",
+            "Failed (an attribute that is a method)",
+            [["py", "getattr", "json"]],
+            _HOST_OBJECT,
+            note="UP2-E2002: py.getattr never calls a method (the fix names an operator or a udf)",
         ),
         Case(
-            "policy",
-            "on_missing=none",
-            [["css1", "text", "div.nope"]],
-            HTML_DOC,
-            policy=up2.Policy(on_missing="none"),
-        ),
-        Case(
-            "policy",
-            "on_error=drop (treat a failure as missing)",
-            [["py", "int", ""]],
-            "abc",
-            policy=up2.Policy(on_error="drop"),
-        ),
-        Case(
-            "policy",
-            "on_error=empty (a failure falls back to an empty string)",
-            [["py", "int", ""]],
-            "abc",
-            policy=up2.Policy(on_error="empty"),
+            "tri-state",
+            "Failed (an absent attribute)",
+            [["py", "getattr", "txet"]],
+            _HOST_OBJECT,
+            note="UP2-E2002 whose reason begins with the exception class: AttributeError: ...",
         ),
         Case(
             "tri-state",
@@ -656,7 +659,7 @@ def bad_chains() -> list[list[Any]]:
         # a single-parameter function, an array, and an unknown enum value.
         [["py", "urljoin", {"base": "https://example.com/news/"}]],
         [["py", "slice", {"spec": "0:4"}]],
-        [["py", "getitem", {"index": {}}]],
+        [["py", "getitem", {"at": {}}]],
         [["py", "split", {"sep": ",", "maxsplit": {}}]],
         [["py", "sort", {"key": {}}]],
         [["css", "txt", "h1"]],
@@ -715,7 +718,7 @@ def _run(case: Case) -> Ran:
             prefix = up2.compile_field(case.chain[:index])
         except up2.Up2Error as exc:
             return Ran(case, "compile error", "", steps, exc.diagnostic)
-        outcome = up2.eval_field(prefix, case.value, scope=scope, policy=case.policy)
+        outcome = up2.eval_field(prefix, case.value, scope=scope)
         steps.append(
             (json.dumps(case.chain[index - 1], ensure_ascii=False), _render_value(outcome))
         )
@@ -724,7 +727,7 @@ def _run(case: Case) -> Ran:
         compiled = up2.compile_field(case.chain)
     except up2.Up2Error as exc:
         return Ran(case, "compile error", "", [], exc.diagnostic)
-    outcome = up2.eval_field(compiled, case.value, scope=scope, policy=case.policy)
+    outcome = up2.eval_field(compiled, case.value, scope=scope)
     return Ran(case, type(outcome).__name__, _render_value(outcome), steps)
 
 
@@ -1071,12 +1074,13 @@ def build_html() -> str:
     )
     appendix = (
         '<section id="appendix"><h2>Appendix: mechanisms shared by all operators</h2>'
-        '<p class="sub">These sections are **not grouped by operator**: tri-state, policy and '
-        "parameter forms are mechanisms shared by every operator, so slicing them per "
+        '<p class="sub">These sections are **not grouped by operator**: the tri-state and '
+        "the parameter forms are mechanisms shared by every operator, so slicing them per "
         "operator would hide the differences.</p>"
-        "<h3>A. Tri-state and policy</h3>"
-        '<p class="sub">Defaults are on_missing=empty and on_error=raise, so "no match" falls '
-        'back to Ok("") by default.</p>'
+        "<h3>A. Tri-state</h3>"
+        '<p class="sub">A missing value is not a value: it stays <code>Missing</code> and the '
+        "key is absent from a product. A failed stage always fails the run with the code it "
+        "reported.</p>"
         + "".join(_case_card(ran, None, shared_input="", anchor="appendix") for ran in runs.edges)
         + "<h3>B. Parameter forms</h3>"
         '<p class="sub">The scalar / positional array / named object / reference / '
@@ -1274,13 +1278,13 @@ def build_md() -> str:
     parts += [
         "## Appendix: mechanisms shared by all operators",
         "",
-        "These are **not grouped by operator**: the tri-state, the policy and the parameter forms "
-        "belong to every operator, so slicing them per operator would hide the differences.",
+        "These are **not grouped by operator**: the tri-state and the parameter forms belong to "
+        "every operator, so slicing them per operator would hide the differences.",
         "",
-        "### A. Tri-state and policy",
+        "### A. Tri-state",
         "",
-        'The defaults are `on_missing=empty` and `on_error=raise`, so "no match" falls back to '
-        '`Ok("")` unless the policy says otherwise.',
+        "A missing value is not a value: it stays `Missing` and the key is absent from a product. "
+        "A failed stage always fails the run with the code it reported.",
         "",
     ]
     for ran in runs.edges:

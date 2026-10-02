@@ -217,7 +217,8 @@ class Udf(Op):
         if not is_json_value(result):
             return Failed(
                 code="UP2-E2009",
-                reason=f"udf.{call.action} returned a non-serializable value: {type_name(result)}",
+                reason=f"udf.{call.action} returned a value that cannot be a product: "
+                f"{type_name(result)}",
                 fix="restrict the return value to str/int/float/bool/None/list/dict",
             )
         return Ok(result)

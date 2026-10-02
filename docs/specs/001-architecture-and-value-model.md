@@ -113,8 +113,9 @@ tests/
 
 ```python
 JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
-Opaque    = DOMNode | JsonNodeHandle | BytesHandle        # may only flow inside a chain
-Value     = JsonValue | Opaque
+Opaque    = DOMNode | JsonNodeHandle | BytesHandle        # may flow, never exits
+HostObject = <anything the host hands over: a response, a udf result>
+Value     = JsonValue | Opaque | HostObject
 ```
 
 | Decision | Content |
@@ -123,6 +124,7 @@ Value     = JsonValue | Opaque
 | **Do not adopt the D1-b Row model** | it would promote the special case of "a list page" to a global model, wrapping scalar scenarios in containers |
 | **Do not adopt the D1-d stream model** | the export needs a fold to finish, the mental burden is permanent, and low-code users cannot follow it |
 | **`Opaque` is an explicit type** | `self` / `nodes` produce node handles; **the export packing layer rejects `Opaque`** (`N5`), so a value must pass through a serializing action such as `text` / `html` / `@attr` before it can leave the chain |
+| **A value that flows may be a host object; a product must be JSON** | a response object, a library node and anything a `udf` returns travel by reference (read with `py.getattr`), but **a step product must be JSON**: after the step's type constructor runs, the product re-enters `JsonValue`, and the single exit (`UP2-E2003`) still holds |
 | **`bytes` never enters the value domain** | the caller decodes (`start(story, value)` and the CLI's `--input K=@file` hand over text); a tree is built on demand by the operator that consumes the value, under a run-scoped cache (`03` §6) |
 
 **Lessons from v3**: the `_RECURSION_LIST` boolean flag let every operator decide on its own "whether to expand a list element by element", scattering the behavior across 14 classes (the internal source material, not shipped in this repository, `uniparser-essence.md` §5-R). This design **does not have that flag**: a list is produced by an ordinary operator (`css nodes` / `xpath nodes` / `re findall` / `json`) and expanded in exactly one place — an explicit `each` stage whose field map says what one element becomes — and the behavior of any operator on a `list` input must be written down explicitly in its own Schema.
@@ -135,7 +137,7 @@ Value     = JsonValue | Opaque
 
 ---
 
-## 4. Tri-state and error policy
+## 4. Tri-state and error handling
 
 ### 4.1 Tri-state
 
@@ -152,34 +154,28 @@ class Failed:  code: str; reason: str; exc: Exception | None   # evaluation fail
 |---|---|
 | **Missing ≠ error** | `Missing` is a normal result (the page simply does not have this field); `Failed` is an exception that requires a decision. The two must be separated, otherwise it is impossible to be both "bad data does not interrupt" and "bad rules surface early" |
 | **An error is not a value** | never pass an exception object down as a result (this is the direct cause of the old v3 breaking "the export is all str", R5); `Failed` is a control signal, not a value |
-| **Stage semantics** | see `02` §5. In one sentence: `Ok` → keep evaluating; `Missing` → short-circuit this field (settle a value according to the policy); `Failed` → `on_error` decides whether to interrupt or to degrade |
-| **`on_error` defaults to `raise`** | bad rules should surface early; degradation is allowed only when it is explicitly declared (the recommendation of the old `dsl-design` §5.5) |
-| **`on_missing` defaults to `empty`** | in scraping, "this news item has no publish time" is the norm and must not interrupt the whole chain |
+| **Stage semantics** | see `02` §5. In one sentence: `Ok` → keep evaluating; `Missing` → short-circuit this field and stay missing; `Failed` → stop the chain and report the code of the stage that failed |
+| **A missing value is not a value** | the engine does not settle `Missing` into `""` or `null`: in a field map the key is absent from the product, in a batch the item is skipped. A fallback for one field is written where it applies, at the action level (`py.default` / `py.or`) |
+| **A failed stage always fails the run** | bad rules surface early, with the code of the stage that failed; no configuration turns a failure into a value |
 
-### 4.2 Policy scope
+### 4.2 Missing and failed have fixed outcomes
 
-A policy may be declared at **three levels**, with the nearest one overriding:
+The tri-state settles in exactly two ways, and there is nothing to configure:
 
-| Level | Where it is declared | Default |
-|---|---|---|
-| chain level | `graph.policy.on_missing` / `graph.policy.on_error` | `empty` / `raise` |
-| field level | the object form of a field definition `{"chain": [...], "on_missing": "drop"}` | inherits the chain level |
-| step level | `step.policy` | inherits the chain level |
+| State | Outcome |
+|---|---|
+| `Missing` | **not there**: in a field map the key is **absent** from the product; in a batch the item is **skipped** — never `""`, never `null` |
+| `Failed` | **always fails the run**, carrying the code of the stage that failed (its JSON Pointer in the trace); nothing degrades it |
 
-> L1 implements only the **chain level**: the caller passes one `Policy` to `eval_field` (the CLI exposes
-> it as `--on-missing` / `--on-error`). Field- and step-level declarations belong to the L2 story format
-> (`03` §7); L2 merges the three levels into that single `Policy`, so the kernel API stays unchanged.
+A field that must exist is enforced by the **host-registered type constructor** at the step boundary
+(`03` §3): it reports the missing key at the step that produced it, which is where the author can see
+it. A value that may be absent is made present by the action that knows how — `py.default` and `py.or`
+catch a missing value (`accepts_missing`, `02` §5) instead of reconfiguring the whole run.
 
-Policy vocabulary (the tri-state × policy settlement table):
-
-| Policy | Applied to `Missing` | Applied to `Failed` |
-|---|---|---|
-| `empty` | settles `""` (which is just the empty string in the value domain) | settles `""` |
-| `none` | settles `null` | settles `null` |
-| `drop` | the field does not appear | the field does not appear |
-| `raise` | raises `ChainMissingError` | raises `ChainFailedError` (the default) |
-
-> Whether to settle `""` or `null` is a **field contract** question, declared by the chain author; the engine does not guess on behalf of the business.
+> **The settlement policy is retired** (change `retire-settlement-policy`): the `Policy` type, the four
+> `on_missing` / `on_error` strategies, the `policy=` parameter of `eval_field`, the `policy` block of a
+> story (`03` §2) and the CLI's `--on-missing` / `--on-error` are all gone, and `UP2-E2015` is retired
+> without reusing its number. The deviation record is `D-01-1` in §11.
 
 ### 4.3 Error codes
 
@@ -205,7 +201,7 @@ def compile(chain: Chain) -> CompiledGraph: ...
 
 | Phase | What it does | What it must not do |
 |---|---|---|
-| **Compile time** | full lint (`03` §10); Schema validation of every operator's arguments; action legality validation; reference resolution and the "may only point backward" check; pre-compilation of CSS selectors / regexes / jmespath expressions; `out` type resolution; fingerprint computation | any IO, any evaluation, any network |
+| **Compile time** | full lint (`03` §10); Schema validation of every operator's arguments; action legality validation; reference resolution and the "may only point backward" check; pre-compilation of CSS selectors / regexes / jmespath expressions; `type` resolution; fingerprint computation | any IO, any evaluation, any network |
 | **Runtime** | pure evaluation: execute the stages according to the compile product, produce the value-domain tree, pack the export | structural validation, string parsing, any reflection other than looking an operator up by name |
 
 Key points:
@@ -222,11 +218,13 @@ Key points:
 def pack(value: Value, schema: SchemaSpec | None) -> Ok | Failed: ...
 ```
 
-Three stages, in a fixed order:
+Two stages, in a fixed order:
 
 1. **Reject `Opaque`**: hitting a DOM handle yields `UP2-E2003` and points out which field it is (with the hint "serialize it through `text`/`html`/`@attr` first").
 2. **Schema validation** (if declared): type, optionality, list elements, nested objects; a failure yields `Failed` with a JSON Pointer path.
-3. **Settle empty values**: according to the effective policy, settle `Missing` into `""` / `null` / omission.
+
+There is **no empty-value settlement step**: a `Missing` field is not a value at all, so it never reaches
+packing — its key is simply absent from the product (§4.2).
 
 ### 6.1 Own Schema description (JSON Schema is not adopted)
 
@@ -248,7 +246,7 @@ The export structure is limited and must be friendly to LLM generation, so a **r
 | the `?` suffix | optional (`null` and a missing key are both legal) |
 | `[...]` | a list whose elements are described by the inner description |
 | `{...}` | a nested object |
-| built-in types | `Request` / `Response` (structures in `03` §4.1), plus host-registered types (`Article`, `NoticeList`, …; `03` §3) |
+| built-in types | `Request` / `RequestBatch` (the effect types; the `Request` structure is in `03` §4.1), plus host-registered types (`Article`, `NoticeList`, …; `03` §3). There is no `Response`: an answer is the host's own object and has no declared type (`03` §4.1) |
 
 **Reason**: JSON Schema's expressive power is excessive for this scenario, and an LLM's error rate and token cost when generating JSON Schema are both significantly higher; the restricted vocabulary covers 100% of this engine's export shapes, and error messages can be precise down to "which key of which list element".
 
@@ -328,3 +326,29 @@ Absorbing the old v3's "library logging conventions": in `__init__.py`, `logger 
 | missing operator dependency | `INFO` (on the first `up2 ops`) | operator name + missing dependency + install command |
 
 **Deviation record from the upstream material**: the old v3 achieved "does not blow up" with "an error is a value + a `SYSTEM_ERRORS` allowlist re-raise" (the internal source material, not shipped in this repository, `uniparser-essence.md` §B5). This design replaces that with the tri-state, but **keeps the allowlist idea**: `KeyboardInterrupt` / `SystemExit` / `MemoryError` / `OSError` are **never swallowed** and propagate directly upward (implementation site: the fallback `except Exception:` in `evaluator`, never a bare `except:`).
+
+---
+
+## 11. Deviation records
+
+### 11.1 `D-01-1` — the settlement policy is retired
+
+The tri-state originally settled through a chain-level policy (`{on_missing, on_error}`, four strategies
+each), threaded through `eval_field`, the story JSON and the CLI. Change `retire-settlement-policy`
+deletes it:
+
+| Removed | Where it was |
+|---|---|
+| `Policy` / `DEFAULT_POLICY` / `MISSING_STRATEGIES` / `ERROR_STRATEGIES` | `core/evaluator.py` |
+| the `policy` parameter of `eval_field` | `core/evaluator.py`, `core/__init__.py` |
+| `--on-missing` / `--on-error` | `up2 trial` (`cli/main.py`) |
+| the `policy` block | the story JSON (`03` §2) |
+
+`on_missing="empty"` — the old default — is the reason for the retirement: it wrote `""` into a record
+whenever a selector never matched, which is a lie in the data. Missing now means "not there" and a failed
+stage always fails the run (§4.2), so "tolerate one absence" is expressed at the action level
+(`py.default` / `py.or`) and "this field must exist" by the host-registered type constructor.
+
+The tri-state itself, `accepts_missing` and the actions that catch a missing value are **unchanged**: only
+the configurable settlement went. `UP2-E2015` ("value is missing and the effective policy is raise") is
+**retired, not reused** (`02` §7.1), so an older reference still points at the same meaning.

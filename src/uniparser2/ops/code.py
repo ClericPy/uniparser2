@@ -486,7 +486,7 @@ def _run_in_sandbox(
     if not is_json_value(result):
         return Failed(
             code="UP2-E2009",
-            reason=f"code returned a non-serializable value: {type_name(result)}",
+            reason=f"code returned a value that cannot be a product: {type_name(result)}",
             fix="restrict the return value to str/int/float/bool/None/list/dict",
         )
     return Ok(result)

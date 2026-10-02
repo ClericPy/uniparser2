@@ -26,7 +26,6 @@ from uniparser2 import (
     Ok,
     Opaque,
     Outcome,
-    Policy,
     Up2Error,
     compile_field,
     eval_field,
@@ -74,7 +73,7 @@ def xml_ready(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def run(chain: Any, value: Any = SITEMAP) -> Outcome:
-    return eval_field(compile_field(chain), value, policy=Policy(on_missing="drop"))
+    return eval_field(compile_field(chain), value)
 
 
 def test_text_returns_list_of_element_text(xml_ready: None) -> None:

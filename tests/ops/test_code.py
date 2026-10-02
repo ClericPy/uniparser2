@@ -47,9 +47,7 @@ def _run(
     globals_: dict[str, Any] | None = None,
 ) -> Outcome:
     scope = Scope(locals=dict(locals_ or {}), globals=dict(globals_ or {}))
-    return up2.eval_field(
-        up2.compile_field(chain), value, scope=scope, policy=up2.Policy(on_missing="drop")
-    )
+    return up2.eval_field(up2.compile_field(chain), value, scope=scope)
 
 
 def _code(src: str, **extra: Any) -> Any:
@@ -340,15 +338,14 @@ def test_return_value_is_last_expression(sandbox: Any) -> None:
     assert _run(_code("print('hi')")) == Ok(None)
 
 
-def test_missing_policy_still_applies(sandbox: Any) -> None:
+def test_a_missing_upstream_short_circuits(sandbox: Any) -> None:
     """``code`` does not declare accepts_missing, so an upstream Missing short-circuits.
 
-    The effective policy decides what comes out.
+    The outcome stays ``Missing``: nothing settles it into a value.
     """
     outcome = up2.eval_field(
         up2.compile_field([["ctx", "get", "locals.nope"], ["code", {"src": "1"}]]),
         None,
-        policy=up2.Policy(on_missing="drop"),
     )
     assert isinstance(outcome, Missing)
 

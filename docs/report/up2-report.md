@@ -7,14 +7,14 @@ Generated from `uniparser2` 0.4.0 · one case per `(operator, action)` pair decl
 ## Coverage check
 
 - **Coverage check passed**: every declared pair has a case and every behavior case ran `Ok`.
-- the registry declares **72** pairs = **72** pairs covered by cases
-- states across every run: `Failed` 5, `Missing` 2, `Ok` 100
+- the registry declares **73** pairs = **73** pairs covered by cases
+- states across every run: `Failed` 7, `Missing` 1, `Ok` 98
 
 | operator | arity | slots | summary | actions |
 |---|---|---|---|---|
 | `css` | 3 | accessor / selector | CSS selector (all matches) | 8 |
 | `css1` | 3 | accessor / selector | CSS selector (first match only) | 8 |
-| `py` | 3 | function / params | Python built-in allowlist functions | 41 |
+| `py` | 3 | function / params | Python built-in allowlist functions | 42 |
 | `xpath` | 3 | accessor / XPath | XPath query (XML; lxml) | 3 |
 | `json` | 2 | jmespath path | JSON dot-path query (jmespath) | 1 |
 | `re` | 3 | mode / pattern | Regex matching (search / group / findall) | 3 |
@@ -252,7 +252,7 @@ Shared input for this section:
 
 ## `py` — Python built-in allowlist functions
 
-arity 3 · slot 2=function / slot 3=params · dependencies: none · 41 actions (Core, Common, Advanced, Rare)
+arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (Core, Common, Advanced, Rare)
 
 Shared input for this section:
 
@@ -290,12 +290,26 @@ Shared input for this section:
 - input: `['a', 'b']`
 - output: `Ok(value='a')` (Ok)
 
-#### `get` — fetch a dict key
-- tier ★★★ Core · parameter slot: the value itself · `key: literal`
-- note: dict key lookup (missing key ⇒ Missing)
-- chain: `[["py", "get", "k"]]`
+#### `getitem` — take a subscript: a sequence index, a mapping key or a str character
+- tier ★★★ Core · parameter slot: the value itself · `at: ref_or_literal`
+- note: dict key lookup (a missing key ⇒ UP2-E2018)
+- chain: `[["py", "getitem", "k"]]`
 - input: `{'k': 7}`
 - output: `Ok(value=7)` (Ok)
+
+#### `getattr` — read an attribute of the value that flows in (a host object's own attribute)
+- tier ★★★ Core · parameter slot: the value itself · `ref_or_literal: ref_or_literal`
+- note: read an attribute of a host object (never a callable one)
+- chain: `[["py", "getattr", "status"]]`
+- input: `_HostObject(status=200, url='https://example.com/list.html')`
+- output: `Ok(value=200)` (Ok)
+
+#### `id` — return the input unchanged (a step whose value is its own input)
+- tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
+- note: identity: the input unchanged
+- chain: `[["py", "id", ""]]`
+- input: `'https://example.com/list.html'`
+- output: `Ok(value='https://example.com/list.html')` (Ok)
 
 #### `len` — length
 - tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
@@ -318,9 +332,9 @@ Shared input for this section:
 - input: `''`
 - output: `Ok(value='fallback value')` (Ok)
 
-#### `getitem` — take a list index
-- tier ★★ Common · parameter slot: the value itself · `index: literal`
-- note: list index (out of range ⇒ Missing)
+#### `getitem` — take a subscript: a sequence index, a mapping key or a str character
+- tier ★★ Common · parameter slot: the value itself · `at: ref_or_literal`
+- note: list index (out of range ⇒ UP2-E2018)
 - chain: `[["py", "getitem", 1]]`
 - input: `['a', 'b']`
 - output: `Ok(value='b')` (Ok)
@@ -606,7 +620,7 @@ Shared input for this section:
 | `[["py", "default", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare the earlier node product with --product |
 | `[["py", "urljoin", {"base": "https://example.com/news/"}]]` | `UP2-E1005` | `/0/2/base` | parameter 'base' of py.urljoin must be a string, got dict | write the value directly: ["py", "urljoin", "…"] |
 | `[["py", "slice", {"spec": "0:4"}]]` | `UP2-E1005` | `/0/2/spec` | parameter 'spec' of py.slice must be a string, got dict | write the value directly: ["py", "slice", "…"] |
-| `[["py", "getitem", {"index": {}}]]` | `UP2-E1005` | `/0/2/index` | parameter 'index' of py.getitem must be an integer, got dict | write the value directly: ["py", "getitem", "…"] |
+| `[["py", "getitem", {"at": {}}]]` | `UP2-E1005` | `/0/2/at` | parameter 'at' of py.getitem must be a scalar, got dict | write the value directly: ["py", "getitem", "…"] |
 | `[["py", "split", {"sep": ",", "maxsplit": {}}]]` | `UP2-E1005` | `/0/2/maxsplit` | parameter 'maxsplit' of py.split must be an integer, got dict | write the parameters as a named object with 'sep', 'maxsplit', for example {"maxsplit": …} |
 | `[["py", "sort", {"key": {}}]]` | `UP2-E1005` | `/0/2/key` | the key of sort must be one of ('', 'str', 'int', 'float'), got {} | write "str", "int" or "float", or drop the parameter |
 
@@ -896,11 +910,11 @@ Shared input for this section:
 
 ## Appendix: mechanisms shared by all operators
 
-These are **not grouped by operator**: the tri-state, the policy and the parameter forms belong to every operator, so slicing them per operator would hide the differences.
+These are **not grouped by operator**: the tri-state and the parameter forms belong to every operator, so slicing them per operator would hide the differences.
 
-### A. Tri-state and policy
+### A. Tri-state
 
-The defaults are `on_missing=empty` and `on_error=raise`, so "no match" falls back to `Ok("")` unless the policy says otherwise.
+A missing value is not a value: it stays `Missing` and the key is absent from a product. A failed stage always fails the run with the code it reported.
 
 #### `Ok (hit)` — tri-state
 - tier ★★★ Core
@@ -908,16 +922,9 @@ The defaults are `on_missing=empty` and `on_error=raise`, so "no match" falls ba
 - input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
 - output: `Ok(value='  Notice on Issuing the Government Service Item List  ')` (Ok)
 
-#### `Missing → default policy empty ⇒ Ok("")` — tri-state
+#### `Missing (no match: the value is not there)` — tri-state
 - tier ★★★ Core
-- note: default on_missing=empty
-- chain: `[["css1", "text", "div.nope"]]`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
-- output: `Ok(value='')` (Ok)
-
-#### `Missing (kept as is)` — tri-state
-- tier ★★★ Core
-- note: on_missing=drop
+- note: a missing value is not a value: no empty string, no null
 - chain: `[["css1", "text", "div.nope"]]`
 - input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
 - output: `Missing(reason='no node matched')` (Missing)
@@ -927,7 +934,7 @@ The defaults are `on_missing=empty` and `on_error=raise`, so "no match" falls ba
 - note: UP2-E2002
 - chain: `[["py", "strip_tags", ""]]`
 - input: `42`
-- output: `Failed(code='UP2-E2002', reason='py.strip_tags needs a str, got int', fix='turn the upstream value into text with py.strip_tags / py.getitem / py.get first')` (Failed)
+- output: `Failed(code='UP2-E2002', reason='py.strip_tags needs a str, got int', fix='turn the upstream value into text with py.strip_tags / py.getitem first')` (Failed)
 
 #### `Failed (evaluation failed)` — tri-state
 - tier ★★★ Core
@@ -936,36 +943,26 @@ The defaults are `on_missing=empty` and `on_error=raise`, so "no match" falls ba
 - input: `'abc'`
 - output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'abc'", fix='check the shape of the source value first (py.default can serve as a…` (Failed)
 
-#### `Failed (Missing required to raise)` — tri-state
+#### `Failed (a subscript that is not there)` — tri-state
 - tier ★★★ Core
-- note: on_missing=raise ⇒ UP2-E2015
-- chain: `[["css1", "text", "div.nope"]]`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
-- output: `Failed(code='UP2-E2015', reason='no node matched', fix='fix the selector/regex, or change on_missing to empty / none / drop')` (Failed)
+- note: UP2-E2018: the dict is there, the key is not — an error, not a Missing value
+- chain: `[["py", "getitem", "text"]]`
+- input: `{'a': 1}`
+- output: `Failed(code='UP2-E2018', reason="KeyError: 'text' — the dict has no key 'text'", fix='read a key the mapping has, or make the producing stage write it')` (Failed)
 
-#### `on_missing=empty` — policy
+#### `Failed (an attribute that is a method)` — tri-state
 - tier ★★★ Core
-- chain: `[["css1", "text", "div.nope"]]`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
-- output: `Ok(value='')` (Ok)
+- note: UP2-E2002: py.getattr never calls a method (the fix names an operator or a udf)
+- chain: `[["py", "getattr", "json"]]`
+- input: `_HostObject(status=200, url='https://example.com/list.html')`
+- output: `Failed(code='UP2-E2002', reason="the attribute 'json' of _HostObject is callable, and py.getattr never calls it", fix='a method is not a value: read the text with ["css","text",""]…` (Failed)
 
-#### `on_missing=none` — policy
+#### `Failed (an absent attribute)` — tri-state
 - tier ★★★ Core
-- chain: `[["css1", "text", "div.nope"]]`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
-- output: `Ok(value=None)` (Ok)
-
-#### `on_error=drop (treat a failure as missing)` — policy
-- tier ★★★ Core
-- chain: `[["py", "int", ""]]`
-- input: `'abc'`
-- output: `Missing(reason="py.int conversion failed: invalid literal for int() with base 10: 'abc'")` (Missing)
-
-#### `on_error=empty (a failure falls back to an empty string)` — policy
-- tier ★★★ Core
-- chain: `[["py", "int", ""]]`
-- input: `'abc'`
-- output: `Ok(value='')` (Ok)
+- note: UP2-E2002 whose reason begins with the exception class: AttributeError: ...
+- chain: `[["py", "getattr", "txet"]]`
+- input: `_HostObject(status=200, url='https://example.com/list.html')`
+- output: `Failed(code='UP2-E2002', reason="AttributeError: '_HostObject' object has no attribute 'txet'", fix='check the attribute name against the value, or make the producing stage write i…` (Failed)
 
 #### `Failed (sandbox code raised)` — tri-state
 - tier ★★★ Core

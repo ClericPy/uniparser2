@@ -11,7 +11,6 @@ from uniparser2 import (
     Ok,
     Opaque,
     Outcome,
-    Policy,
     Scope,
     compile_field,
     eval_field,
@@ -25,11 +24,53 @@ class FakeNode(Opaque):
     """A stand-in DOM handle: it may flow inside a chain, but the export must reject it."""
 
 
-def run(
-    chain: Any, value: Any, *, scope: Scope | None = None, policy: Policy | None = None
-) -> Outcome:
+class _HostResponse:
+    """A stand-in host object (what an HTTP client would hand over): read with py.getattr."""
+
+    __slots__ = ("status", "text")
+
+    def __init__(self, status: int, text: str) -> None:
+        self.status = status
+        self.text = text
+
+
+def run(chain: Any, value: Any, *, scope: Scope | None = None) -> Outcome:
     compiled = compile_field(chain)
-    return eval_field(compiled, value, scope=scope, policy=policy or Policy(on_missing="drop"))
+    return eval_field(compiled, value, scope=scope)
+
+
+def test_e2001_reference_walks_a_host_object() -> None:
+    """A dotted path dispatches per value kind: a mapping by key, an object by getattr."""
+    scope = Scope(locals={"resp": _HostResponse(200, "body")})
+    assert run([["ctx", "get", "locals.resp.text"]], None, scope=scope) == Ok("body")
+
+
+def test_e2001_reference_missing_attribute_names_the_class() -> None:
+    scope = Scope(locals={"resp": _HostResponse(200, "body")})
+    outcome = run([["ctx", "get", "locals.resp.txet"]], None, scope=scope)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
+    assert "AttributeError: '_HostResponse' object has no attribute 'txet'" in outcome.reason
+
+
+def test_e2001_reference_indexes_a_sequence() -> None:
+    scope = Scope(locals={"rows": ["a", "b"]})
+    assert run([["ctx", "get", "locals.rows.1"]], None, scope=scope) == Ok("b")
+
+
+@pytest.mark.parametrize(
+    ("path", "needle"),
+    [
+        ("locals.rows.first", "tried to index a list"),
+        ("locals.rows.9", "out of range"),
+    ],
+)
+def test_e2001_bad_sequence_index(path: str, needle: str) -> None:
+    scope = Scope(locals={"rows": ["a", "b"]})
+    outcome = run([["ctx", "get", path]], None, scope=scope)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
+    assert needle in outcome.reason
 
 
 def test_e2001_traverse_into_scalar() -> None:
@@ -41,7 +82,7 @@ def test_e2001_traverse_into_scalar() -> None:
 
 def test_e2001_unknown_product_at_runtime() -> None:
     compiled = compile_field([["py", "urljoin", "$n1.url"]], products=("n1",))
-    outcome = eval_field(compiled, "x", policy=Policy(on_missing="drop"))
+    outcome = eval_field(compiled, "x")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2001"
     assert "n1" in outcome.reason
@@ -71,6 +112,27 @@ def test_e2003_pack_rejects_non_json() -> None:
     outcome = pack({"a": {1, 2}})
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2003"
+
+
+def test_e2003_pack_rejects_a_host_object() -> None:
+    """A host object may flow, but it can never be a product (design doc 03 §3.3)."""
+    outcome = pack(_HostResponse(200, "body"))
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2003"
+    assert "_HostResponse" in outcome.reason
+
+
+def test_e2003_pack_rejects_a_host_object_nested_in_a_product() -> None:
+    outcome = pack({"answer": _HostResponse(200, "body")})
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2003"
+
+
+def test_a_host_object_flows_through_a_stage_unchanged() -> None:
+    """The value that flows may be an object: a stage reads it, nothing converts it."""
+    response = _HostResponse(200, "body")
+    assert run([["py", "getattr", "status"]], response) == Ok(200)
+    assert run([["py", "id", ""]], response) == Ok(response)
 
 
 def test_e2003_pack_accepts_json() -> None:
@@ -126,12 +188,6 @@ def test_e2005_split_with_empty_separator() -> None:
     assert outcome.code == "UP2-E2005"
 
 
-def test_e2015_missing_with_raise_policy() -> None:
-    outcome = run([["re", "search", r"\d+"]], "abc", policy=Policy(on_missing="raise"))
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2015"
-
-
 def _boom_evaluate(self: registry.Op, call: registry.Call) -> Outcome:
     raise RuntimeError("operator implementation exploded")
 
@@ -143,20 +199,3 @@ def test_e2099_unexpected_exception_becomes_failed(monkeypatch: pytest.MonkeyPat
     outcome = run([["py", "strip", ""]], " a ")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2099"
-
-
-def test_policy_on_error_drop_degrades_to_missing() -> None:
-    from uniparser2 import Missing
-
-    outcome = run([["re", "search", r"\d+"]], 12, policy=Policy(on_error="drop", on_missing="drop"))
-    assert isinstance(outcome, Missing)
-
-
-def test_policy_on_error_empty_degrades_to_empty_string() -> None:
-    outcome = run([["re", "search", r"\d+"]], 12, policy=Policy(on_error="empty"))
-    assert outcome == Ok("")
-
-
-def test_policy_rejects_unknown_strategy() -> None:
-    with pytest.raises(ValueError, match="on_missing"):
-        Policy(on_missing="nope")

@@ -1,16 +1,15 @@
-"""Chain evaluation: tri-state short-circuit plus policy (design doc 01 §4, 02 §5).
+"""Chain evaluation: the tri-state short-circuit (design doc 01 §4, 02 §5).
 
-The semantics in one sentence: ``Ok`` continues; ``Missing`` short-circuits the current field
-(falling to a value according to ``on_missing``); ``Failed`` either stops or degrades according to
-``on_error``. An action that declares ``accepts_missing`` (``py.default``, for example) can catch
-the ``MISSING`` sentinel as input; that is the only exception to the short-circuit rule.
+The semantics in one sentence: ``Ok`` continues; ``Missing`` short-circuits the current field and
+stays missing (the value is not there); ``Failed`` stops the chain and is reported with its code.
+An action that declares ``accepts_missing`` (``py.default``, for example) can catch the ``MISSING``
+sentinel as input; that is the only exception to the short-circuit rule.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any, Final
 
 from . import registry
@@ -21,31 +20,7 @@ from .values import MISSING
 
 logger = logging.getLogger("uniparser2")
 
-MISSING_STRATEGIES: Final = ("empty", "none", "drop", "raise")
-ERROR_STRATEGIES: Final = ("raise", "empty", "none", "drop")
 _SYSTEM_ERRORS: Final = (KeyboardInterrupt, SystemExit, MemoryError, OSError)
-
-
-@dataclass(frozen=True, slots=True)
-class Policy:
-    """The handling policy for missing/failed (01 §4.2).
-
-    The default is "missing falls to an empty string, a failure is reported".
-    """
-
-    on_missing: str = "empty"
-    on_error: str = "raise"
-
-    def __post_init__(self) -> None:
-        if self.on_missing not in MISSING_STRATEGIES:
-            raise ValueError(
-                f"on_missing must be one of {MISSING_STRATEGIES}, got {self.on_missing!r}"
-            )
-        if self.on_error not in ERROR_STRATEGIES:
-            raise ValueError(f"on_error must be one of {ERROR_STRATEGIES}, got {self.on_error!r}")
-
-
-DEFAULT_POLICY: Final = Policy()
 
 
 def eval_field(
@@ -54,37 +29,36 @@ def eval_field(
     /,
     *,
     scope: Scope | None = None,
-    policy: Policy = DEFAULT_POLICY,
 ) -> Outcome:
-    """Evaluate one field chain stage by stage."""
+    """Evaluate one field chain stage by stage.
+
+    Nothing settles a missing or a failed value: the outcome is returned as it stands, so the caller
+    drops a missing field from its product and stops on a failure.
+    """
     active_scope = scope if scope is not None else Scope()
-    run_chain = _subchain_runner(policy)
+    run_chain = _subchain_runner()
     current: Outcome = Ok(value)
     for stage in compiled.stages:
         if isinstance(current, Failed):
-            return _degrade_error(current, policy)
+            return current
         if isinstance(current, Missing):
             if not stage.accepts_missing:
-                return _degrade_missing(current, policy)
+                return current
             current = _invoke(stage, MISSING, active_scope, run_chain)
         else:
             current = _invoke(stage, current.value, active_scope, run_chain)
-    if isinstance(current, Failed):
-        return _degrade_error(current, policy)
-    if isinstance(current, Missing):
-        return _degrade_missing(current, policy)
     return current
 
 
-def _subchain_runner(policy: Policy) -> registry.ChainRunner:
+def _subchain_runner() -> registry.ChainRunner:
     """How a structural operator evaluates a compiled sub-chain (design D2 of the L2 change).
 
-    The sub-chain is evaluated under the **policy in force** for the chain that owns it, so ``each``
-    applies the effective policy per element instead of inventing one of its own.
+    A sub-chain is an ordinary field chain, so ``each`` applies the same rule per element instead of
+    inventing one of its own.
     """
 
     def run(chain: CompiledField, value: Any, scope: Scope) -> Outcome:
-        return eval_field(chain, value, scope=scope, policy=policy)
+        return eval_field(chain, value, scope=scope)
 
     return run
 
@@ -102,7 +76,7 @@ def _invoke(
             reason=f"operator {stage.op_name!r} is not registered",
             fix="import uniparser2.ops again to register the built-in operators",
         )
-    resolved = _resolve_params(stage.params, scope)
+    resolved = resolve_params(stage.params, scope)
     if isinstance(resolved, (Ok, Missing, Failed)):
         return resolved
     call = registry.Call(
@@ -127,10 +101,11 @@ def _invoke(
         )
 
 
-def _resolve_params(params: Mapping[str, Param], scope: Scope) -> Mapping[str, Any] | Outcome:
+def resolve_params(params: Mapping[str, Param], scope: Scope) -> Mapping[str, Any] | Outcome:
     """Read the references in the parameter tree into values.
 
-    Any reference that is not ``Ok`` short-circuits the whole stage.
+    Any reference that is not ``Ok`` short-circuits the whole stage. This is also how the story
+    layer resolves a ``call`` step's ``with`` arguments: the same leaves, the same scope.
     """
     try:
         return {key: _resolve_value(item, scope) for key, item in params.items()}
@@ -159,24 +134,3 @@ class _UnwindError(Exception):
     def __init__(self, outcome: Outcome) -> None:
         super().__init__("param unwind")
         self.outcome = outcome
-
-
-def _degrade_missing(missing: Missing, policy: Policy) -> Outcome:
-    if policy.on_missing == "raise":
-        return Failed(
-            code="UP2-E2015",
-            reason=missing.reason,
-            fix="fix the selector/regex, or change on_missing to empty / none / drop",
-        )
-    if policy.on_missing == "drop":
-        return missing
-    return Ok("" if policy.on_missing == "empty" else None)
-
-
-def _degrade_error(failed: Failed, policy: Policy) -> Outcome:
-    if policy.on_error == "raise":
-        return failed
-    logger.warning("degrading a failure per policy: %s %s", failed.code, failed.reason)
-    if policy.on_error == "drop":
-        return Missing(reason=failed.reason)
-    return Ok("" if policy.on_error == "empty" else None)

@@ -49,8 +49,8 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 │ ① Input                │ ② Chain editor                 │ ③ Output                         │
 │                        │                                │                                  │
 │ ○ Sample file          │ {                              │ ── exit product ──               │
-│ ○ Paste text           │   "policy": { … },             │ {                                │
-│ ○ Load file...         │   "globals": { … },            │   "url": "https://...",          │
+│ ○ Paste text           │   "globals": { … },            │ {                                │
+│ ○ Load file...         │   "steps": [ ... ]             │   "url": "https://...",          │
 │                        │   "steps": [ ... ]             │   "title": "..."                 │
 │ ┌───────────────────┐  │                                │ }                                │
 │ │ text/HTML preview │  │ (inline error highlight +      │                                  │
@@ -69,7 +69,7 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 │ │ 4  reqs        url        [py urljoin base]             "/p/1"       https...     Ok     │ │
 │ │ 5  reqs        —          effect: request × 20          RequestBatch —            ⇢      │ │
 │ │ 6  rows        pub_time   [css @content meta]           <meta>       Missing      ·      │ │
-│ │ 7  rows        —          parse: 20 dicts               20 Responses NoticeList   Ok     │ │
+│ │ 7  rows        —          parse: 20 dicts               20 answers   NoticeList   Ok     │ │
 │ │ 8  store       —          call: host.store_notices      NoticeList   receipt      Ok     │ │
 │ └────────────────────────────────────────────────────────────────────────────────────────┘ │
 │  [Missing only] [Failed only] [Expand the full value of the selected step]                 │
@@ -82,7 +82,7 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 |---|---|---|
 | ① Input | Provides the **run's input** (the first step's input; `03` §2) | Pick from the sample directory, paste, load a file; show the auto-sniffed format (html/xml/json/text) |
 | ② Chain editor | Edit the chain JSON, lint in real time | Inline highlighting of errors; the right-hand side lists the **error code + `fix` + the enumeration of allowed values** (the same source as `04` §8) |
-| ③ Output | Shows the run's **exit product** (`03` §9) and a summary of this run | Collapsible tree of the product JSON; highlight the built-in `Request` / `Response` fields; "Save as snapshot" |
+| ③ Output | Shows the run's **exit product** (`03` §9) and a summary of this run | Collapsible tree of the product JSON; highlight the built-in `Request` fields; "Save as snapshot" |
 | ④ Single-step trace | Shows the evaluation step by step | Filter `Missing`/`Failed`; click any step to expand its full input and output values |
 
 **Layout principle**: the trace fills the lower half of the screen instead of being squeezed into a popup — it is the reason this tool exists.

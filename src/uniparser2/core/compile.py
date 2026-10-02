@@ -394,26 +394,41 @@ def _resolve_field_map(
     products: tuple[str, ...],
     depth: int,
 ) -> dict[str, CompiledField]:
-    """Compile a **field map** (``each``'s argument): every value is a chain.
+    """Compile a **field map** (``each``'s argument), named after the parameter for diagnostics."""
+    return compile_field_map(spec.name, raw, products=products, depth=depth, pointer=pointer)
 
-    The compiled chains are the operator's payload, so the runtime only evaluates them.
+
+def compile_field_map(
+    name: str,
+    raw: Any,
+    /,
+    *,
+    products: tuple[str, ...] = (),
+    depth: int = 0,
+    pointer: str = "",
+) -> dict[str, CompiledField]:
+    """Compile a **field map**: ``{field name: chain}``, every value a chain.
+
+    The compiled chains are the payload the runtime only evaluates, so the shape is checked here:
+    it must be non-empty, no larger than ``MAX_FIELDS_PER_MAP``, and every name addressable by a
+    reference path. ``each``'s argument and a story step's ``parse`` object are the same object
+    shape, which is why this is public (the story layer compiles a step's field map with it).
     """
     if not isinstance(raw, Mapping):
         raise Up2Error(
             diag(
                 "UP2-E1005",
-                f"parameter {spec.name!r} must be an object of field name to chain, "
-                f"got {type_name(raw)}",
+                f"{name} must be an object of field name to chain, got {type_name(raw)}",
                 fix='write {"title": [["py","strip",""]]}',
                 pointer=pointer,
             )
         )
     _check_field_map(raw, pointer=pointer)
     return {
-        str(name): compile_field(
-            item, products=products, depth=depth + 1, pointer=f"{pointer}/{name}"
+        str(field): compile_field(
+            item, products=products, depth=depth + 1, pointer=f"{pointer}/{field}"
         )
-        for name, item in raw.items()
+        for field, item in raw.items()
     }
 
 

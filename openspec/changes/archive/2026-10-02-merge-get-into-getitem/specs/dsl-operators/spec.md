@@ -3,8 +3,9 @@
 ### Requirement: `py.getitem` reads a subscript
 
 The `py` operator SHALL provide `getitem` as its only subscript action, and `py.get` SHALL be absent from
-the registry. The parameter SHALL be `ref_or_literal` and required, and the action SHALL apply Python's
-subscript semantics — a sequence by index, a mapping by key, a str by character — with no type coercion.
+the registry. The parameter SHALL be named `at`, SHALL be `ref_or_literal` and required, and the action
+SHALL apply Python's subscript semantics — a sequence by index, a mapping by key, a str by character —
+with no type coercion.
 
 #### Scenario: a list index
 
@@ -24,7 +25,7 @@ subscript semantics — a sequence by index, a mapping by key, a str by characte
 #### Scenario: a key or an index that is not there
 
 - **WHEN** the mapping has no such key, or the index is out of range
-- **THEN** it SHALL fail with `UP2-E2006`, and `reason` SHALL begin with the exception class and name the
+- **THEN** it SHALL fail with `UP2-E2018`, and `reason` SHALL begin with the exception class and name the
   key or index, such as `KeyError: 'text' — the dict has no key 'text'`
 
 #### Scenario: a parameter of the wrong type

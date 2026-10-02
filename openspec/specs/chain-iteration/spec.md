@@ -96,34 +96,31 @@ element or be visible to another element.
 
 - **WHEN** the chain is `[["each", {"_a": [["const", {"b": 1}]], "kids": [["each", {"_a":
   [["const", {"c": 2}]], "seen": [["ctx","get","locals._a.b"]]}]]}]]` and the value is `[["x"]]`
-- **THEN** the result is `[{"kids": [{}]}]` under a dropping policy: the inner element owns `_a`, so the
-  read is a miss, never the outer element's `{"b": 1}`
+- **THEN** the result is `[{"kids": [{}]}]`: the inner element owns `_a`, so the read is a miss, never the
+  outer element's `{"b": 1}`
 
 #### Scenario: An element's local does not outlive the element
 
 - **WHEN** the chain is `[["each", {"_t": [["py","strip",""]]}], ["ctx","get","locals._t"]]` and the
   value is `["a"]`
-- **THEN** the final read resolves as a missing value under the effective policy, never as the
-  element's temporary
+- **THEN** the final read resolves as a missing value — the key is absent — never as the element's
+  temporary
 
 ### Requirement: A failure stays inside its element and no element is dropped
 
-The effective policy SHALL be applied per element, so a value that is missing for one element resolves
-for that element alone and does not disturb the others. `each` MUST NOT drop an element silently: the
-result holds one dictionary per input element even when every field of an element resolves to absent,
-and a failure whose effective policy is `raise` MUST propagate out of `each` with the code the failing
-stage reported.
+A missing value SHALL stay inside its element: a value that is missing for one element is absent from that
+element alone and does not disturb the others. `each` MUST NOT drop an element silently: the result holds
+one dictionary per input element even when every field of an element resolves to absent, and a failure
+MUST propagate out of `each` with the code the failing stage reported.
 
-#### Scenario: Every field is missing under a dropping policy
+#### Scenario: Every field is missing
 
-- **WHEN** the chain is `[["each", {"n": [["ctx","get","locals.nope"]]}]]` is evaluated with
-  `on_missing="drop"` and the value is `["a", "b"]`
+- **WHEN** the chain is `[["each", {"n": [["ctx","get","locals.nope"]]}]]` and the value is `["a", "b"]`
 - **THEN** the result is `[{}, {}]`, a list of two dictionaries
 
 #### Scenario: A failing stage propagates
 
-- **WHEN** the chain is `[["each", {"first": [["py","getitem","0"]]}]]` is evaluated with the default
-  `on_error="raise"` and the value is `["ab"]`
+- **WHEN** the chain is `[["each", {"first": [["py","getitem","0"]]}]]` and the value is `["ab"]`
 - **THEN** the outcome is `UP2-E2002`, the code the failing stage reported
 
 ### Requirement: The field map is validated recursively at compile time
@@ -159,3 +156,218 @@ An input list longer than `MAX_EACH_ITER` MUST fail with `UP2-E2012` before any 
 - **WHEN** the chain is `[["each", {"n": [["py","len",""]]}]]` and the value is a list of 10 001
   elements
 - **THEN** the outcome is `UP2-E2012`, and the fix line names `py.slice` as the way to truncate first
+
+### Requirement: A story bundle declares ordered steps and a named exit
+
+A story bundle SHALL be a JSON object carrying `steps` (a non-empty array, whose order is execution
+order) and `exit` (the name of the step whose products form the run's output). It MAY carry `globals`
+(a mapping of chain-level read-only constants). It SHALL NOT carry a `chains` table: a parse rule is a
+step.
+
+A step SHALL be a JSON object with `name`, an optional `type` (the product's type name), exactly one of
+`parse` (an array, one field chain, or an object, a field map) and `call` (a host function name), plus
+`with` only on a `call`. A field map SHALL be evaluated once, over the step's input, with `_`-prefixed
+fields staying in that step's locals.
+
+#### Scenario: A bundle with one parse step
+
+- **WHEN** the bundle is `{"steps": [{"name": "records", "parse": {"url": [["py","id",""]]},
+  "type": "Record"}], "exit": "records"}` and the run's input is `{"url": "u"}`
+- **THEN** the run SHALL finish with the output `[{"url": "u"}]`
+
+#### Scenario: A step declares both parse and call
+
+- **WHEN** a step carries `parse` and `call`
+- **THEN** compilation SHALL fail with `UP2-E1005`, naming the step
+
+#### Scenario: A bundle has no exit
+
+- **WHEN** the bundle carries `steps` but no `exit`
+- **THEN** compilation SHALL fail with `UP2-E1005`, because the exit is declared, never derived
+
+#### Scenario: A bundle carries a chains table
+
+- **WHEN** a bundle carries `chains` beside `steps`
+- **THEN** compilation SHALL fail with `UP2-E1005`: a parse rule is a step, and the bundle has no
+  second namespace for one
+
+### Requirement: Step names are unique, unreserved and resolvable
+
+Every step SHALL declare a non-empty `name` that is unique within the bundle and is not one of the
+reserved reference roots (`globals` / `locals` / `fields` / `in`). Every `next` and `exit` value SHALL
+name a step of the same bundle, and the check SHALL happen at compile time.
+
+#### Scenario: Two steps share a name
+
+- **WHEN** two steps are both named `records`
+- **THEN** compilation SHALL fail with `UP2-E1009`
+
+#### Scenario: A step is named after a reserved root
+
+- **WHEN** a step is named `globals`
+- **THEN** compilation SHALL fail with `UP2-E1009`, listing the reserved roots
+
+#### Scenario: An exit names a step that does not exist
+
+- **WHEN** `exit` names a step the bundle does not declare
+- **THEN** compilation SHALL fail with `UP2-E1016`, listing the declared step names
+
+### Requirement: A request step names the step that receives the responses
+
+A step whose `type` is `Request` or `RequestBatch` SHALL declare `next`, naming the step that receives
+the responses; `next` on any other step SHALL be rejected at compile time. A single task item MAY carry
+its own `next`, which overrides the step-level default for that task's answer. The kernel SHALL resolve
+`next` and SHALL NOT hand it to the host: the task a suspension reports SHALL NOT carry a `next` key.
+
+#### Scenario: A request step without next
+
+- **WHEN** a step whose `type` is `Request` declares no `next`
+- **THEN** compilation SHALL fail with `UP2-E1005`, because nothing would receive the answer
+
+#### Scenario: next on a step that produces no request
+
+- **WHEN** a step whose `type` is `dict` declares `next`
+- **THEN** compilation SHALL fail with `UP2-E1005`
+
+#### Scenario: A task overrides the step's next
+
+- **WHEN** a `RequestBatch` step declares `next: "page"` and one of its task items carries
+  `next: "feed"`
+- **THEN** that task's answer SHALL be delivered to the step named `feed` and the others' to `page`
+
+#### Scenario: The host never sees next
+
+- **WHEN** a batch of tasks that carry `next` is reported as an effect
+- **THEN** every task SHALL be free of the `next` key
+
+### Requirement: An answer is parsed by the step that receives it
+
+A suspension on `Request` or `RequestBatch` SHALL resume the same run with the host's answer, unwrapped
+and unconverted. The kernel SHALL run the receiving step once per answer, in task order, with that
+answer as the step's input. The product of a single `Request` answer SHALL become the input of the step
+after the receiving step; for a `RequestBatch` the products SHALL be collected, in task order, into a
+list that becomes the input of the step after the **last** step that received an answer (so a join
+never re-runs a step that already answered). A receiving step that
+itself produces a `Request` / `RequestBatch` SHALL suspend the run again, and the nested answers SHALL
+resume inside the same fan-out.
+
+#### Scenario: A response is read by the step that receives it
+
+- **WHEN** a step produces `Request` with `next: "read"` and the host sends back a response object
+- **THEN** the step named `read` SHALL run with that object as its input, and its field map MAY read it
+  with `["py","getattr",NAME]`
+
+#### Scenario: A batch fans out and rejoins
+
+- **WHEN** a `RequestBatch` step hands over two tasks whose answers both go to a step named `page`,
+  and `page` produces one product per answer
+- **THEN** the step after `page` SHALL receive the list of those two products, in task order
+
+#### Scenario: A receiving step is itself a request
+
+- **WHEN** the step that receives an answer produces `RequestBatch`
+- **THEN** the run SHALL suspend again with that batch, and the answers to it SHALL resume in the same
+  run
+
+### Requirement: The run's output is the exit step's products
+
+The run SHALL be done when execution passes the last step, and its product SHALL be the products of
+the step named by `exit`, collected in order as a list. A run whose exit step never executed SHALL be
+done with an empty list.
+
+#### Scenario: A per-answer exit step
+
+- **WHEN** the exit step runs once per answer of a batch of thirty
+- **THEN** the run's product SHALL be a list of thirty products, in task order
+
+#### Scenario: An exit step that never runs
+
+- **WHEN** execution ends without reaching the step named by `exit`
+- **THEN** the run SHALL be done with an empty list
+
+### Requirement: `$in` names the current step's own input
+
+`in` SHALL be a reserved reference root naming the step's own input value, so `$in.url` reads the input's
+`url` without writing it to `locals` first. It SHALL resolve through the same path walk as any other
+root (a mapping by key, a sequence by index, a host object by `getattr`). In a standalone field chain the
+chain's input SHALL be the step's input.
+
+#### Scenario: A seed step reads its own input
+
+- **WHEN** a step's chain is `[["py","id",""]]` and its input is the seed URL
+- **THEN** the product SHALL be that URL unchanged
+
+#### Scenario: An answer's final URL is the base of a relative link
+
+- **WHEN** a step's field chain is `[["py","getattr","href"], ["py","urljoin","$in.url"]]`, the input is
+  a response object whose `url` is `https://x/p/` and whose `href` attribute is `a.html`
+- **THEN** the product SHALL be `https://x/p/a.html`
+
+#### Scenario: A step name may not shadow the root
+
+- **WHEN** a step is named `in`
+- **THEN** compilation SHALL fail with `UP2-E1009`
+
+### Requirement: `py.id` returns its input unchanged
+
+The `py` operator SHALL provide an `id` action taking no arguments, whose product is the value it
+received, unchanged and unconverted. It SHALL replace the `["py","str",""]` spelling for a step whose
+value *is* its own input.
+
+#### Scenario: The identity on a string
+
+- **WHEN** the chain is `[["py","id",""]]` and the value is `https://example.com/list.html`
+- **THEN** the product SHALL be that same string
+
+#### Scenario: The identity does not convert
+
+- **WHEN** the chain is `[["py","id",""]]` and the value is a host object
+- **THEN** the product SHALL be that same object
+
+### Requirement: The run loop suspends on an effect and resumes the same run
+
+`start(bundle, value)` SHALL compile the bundle and run it to the first suspension or to completion.
+`run.next()` SHALL return the current effect as one of `("request", request, next_step)`,
+`("batch", tasks, default_next)`, `("call", name, with)` or `("done", product)`. `run.send(answer)`
+SHALL resume the suspended run with the answer and return the next effect or `done`. A suspension
+SHALL NOT end the run: the same run continues, so the kernel still performs no IO.
+
+#### Scenario: A run suspends on a request and then finishes
+
+- **WHEN** a bundle's first step produces `Request` and the host answers it
+- **THEN** `run.next()` SHALL report `("request", …)` before the answer, and after `send` the run SHALL
+  continue at the receiving step
+
+#### Scenario: A call suspends and resumes with the receipt
+
+- **WHEN** a step calls `host.store_records` with `{"table": "records"}`
+- **THEN** `run.next()` SHALL report `("call", "host.store_records", {"table": "records"})`, and a
+  `send(receipt)` SHALL make the receipt that step's product
+
+#### Scenario: A finished run stays finished
+
+- **WHEN** `run.next()` has reported `done`
+- **THEN** a later `run.next()` SHALL report the same `done` result
+
+### Requirement: The CLI accepts a story file
+
+`up2 lint` and `up2 trial` SHALL accept a story file — a JSON object carrying `steps` — in addition to a
+field-chain file. `lint` SHALL compile the story and report the step count. `trial` SHALL run the story
+to its first effect: a finished run SHALL print the product, and a suspension SHALL print the effect as
+a suspended run, because the CLI has no host to answer it. A story file SHALL reject `--global` and
+`--product`: the story carries its own `globals` and its own step names.
+
+#### Scenario: Linting a story
+
+- **WHEN** `up2 lint samples/books.toscrape.com/books/site.json` runs on a valid story
+- **THEN** it SHALL exit 0 and report the number of steps
+
+#### Scenario: Trialing a story with a request
+
+- **WHEN** `up2 trial <story> --input text=…` reaches a `Request` step
+- **THEN** it SHALL exit 0 and print the suspended state with the request it would have sent
+
+#### Scenario: A story with --product
+
+- **WHEN** `up2 trial <story> --product n=1` is invoked
+- **THEN** it SHALL fail with a usage error naming the unsupported flag

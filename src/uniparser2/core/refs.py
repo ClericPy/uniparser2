@@ -124,6 +124,10 @@ class Scope:
     field chain inside one step still sees the step's input, never the element ``each`` handed it).
     It stays ``MISSING`` when nothing was handed in.
 
+    ``iteration`` is which fan-out result this scope evaluates: the ordinal its fan-out operator
+    gave it for that element, or ``None`` at the top of a run. The trace reports it as ``item``
+    (`06` §5.1), which is what makes "the third result's title is missing" locatable.
+
     ``cache`` is the run's materialization cache (`03` §6), reached through :attr:`materializer`.
     It is created lazily by the scope that first needs it and shared down the lineage, so every
     operator of one run reaches the same cache and the cache is released with the run: a scope that
@@ -135,6 +139,7 @@ class Scope:
     locals: dict[str, Any] = field(default_factory=dict)
     parent: Scope | None = None
     step_input: Any = MISSING
+    iteration: int | None = None
     cache: Materializer | None = field(default=None, init=False, repr=False, compare=False)
     """The run's materialization cache (`03` §6); :attr:`materializer` owns every access to it."""
 
@@ -154,13 +159,19 @@ class Scope:
         self.cache = created
         return created
 
-    def child(self) -> Scope:
-        """A fresh scope for one iteration: same globals/products/input, outward reads."""
+    def child(self, iteration: int | None = None) -> Scope:
+        """A fresh scope for one iteration: same globals/products/input, outward reads.
+
+        ``iteration`` is the fan-out operator's own ordinal for this element — `each` walks its list
+        in input order, so it passes the element's position, which is the fan-out index the trace
+        reports (`06` §5.1). A caller with no fan-out position leaves it out.
+        """
         return Scope(
             globals=self.globals,
             products=self.products,
             parent=self,
             step_input=self.step_input,
+            iteration=iteration,
         )
 
     def read(self, ref: Ref) -> Outcome:

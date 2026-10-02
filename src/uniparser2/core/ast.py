@@ -89,10 +89,16 @@ class CompiledStage:
 
 @dataclass(frozen=True, slots=True)
 class CompiledField:
-    """One field chain (the smallest executable unit in L1)."""
+    """One field chain (the smallest executable unit in L1).
+
+    ``name`` is the field-map key this chain was compiled as, or ``""`` for a top-level chain. It is
+    what the trace reports as ``field`` (`06` §5.1), so a missing ``title`` inside an ``each`` field
+    map is distinguishable from a missing ``price`` inside the same map.
+    """
 
     stages: tuple[CompiledStage, ...]
     source: tuple[Stage, ...]
+    name: str = ""
 
     def dumps(self) -> str:
         return dumps(self.source)

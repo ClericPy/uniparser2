@@ -196,7 +196,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | Effects | `Request` / `RequestBatch` → the host's own answer (`03` §4.1); `call` → a receipt that is JSON; trace versus suspension |
 | materialization | the run-scoped, byte-capped cache (`03` §6) — load-bearing for acceptance item 7 (**landed** in `add-materialization-cache`) |
 | lint | every live rule of `03` §10, each with at least one test (L20 is retired with `presets`) |
-| trace | `up2 trial --trace --json` (the data structure of `06` §5.1) |
+| trace | `up2 trial --trace --json` (the data structure of `06` §5.1) — **landed** in `add-story-trace`: one event per evaluated stage (plus one per suspension), the compiled parameters, the `type` / `preview` / `size` value views with `get_value(seq)` on demand, and the fan-out `item`; O6 is settled as "a debugging aid, not the replay format" |
 | trial bench | `up2 studio` (pywebview three-column + trace + save as a snapshot), with TUI/CLI fallback |
 | cases | the two `ah.gov.cn` flows as **stories** (`03` §11) + samples + snapshots; a set of "pure structure" stories (multi-level nesting, a list of lists, a list turned into a dict) |
 
@@ -231,7 +231,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 |---|---|
 | Store | the `TemplateStore` protocol + `FileStore` + `SqliteStore` + fingerprints + auditing; `root_domain` / `tpl_key` are introduced for the first time |
 | publish gate | G1 mandatory lint, G2 snapshot regression, G3 coverage confirmation, no-op detection, `--skip-tests` leaving a trace |
-| SOP | `up2 snapshot` / `up2 test` / `up2 get` / `up2 list` / `up2 audit` / `up2 doctor`; `04` §7 written as an executable document |
+| SOP | `up2 snapshot` / `up2 test` / `up2 get` / `up2 audit` / `up2 doctor` (`up2 list` is **not** implemented: the `TemplateStore.list` method exists, no command prints it); `04` §7 written as an executable document |
 | host seam | a "consume the request dict" example (a step whose `type` is `Request` → the host HTTP layer, `03` §4.1); a "host implements TemplateStore (MySQL) + dispatches by key" example |
 
 **Acceptance**
@@ -242,17 +242,19 @@ This round started from "build the scaffold + the conformance mechanism first, a
 4. The audit chain can answer "who changed which chain to which fingerprint and when".
 5. **Regression assertion**: after deleting every concept of `04` from the code, the L1/L2 tests **still all pass** (proving that the first two layers really have zero business coupling).
 
-### L3 progress (first slice landed: the template store)
+### L3 progress (first slice: the template store; second slice: the SOP commands)
 
 | Item | Status | Measured |
 |---|---|---|
 | `store/` (models, fingerprint, `TemplateStore` Protocol, `FileStore`, `SqliteStore`, gates) | yes | `04` §1–§6 implemented; `core/` gained the five `UP2-E3001`–`UP2-E3005` codes and nothing else |
 | `up2 publish` / `get` / `audit` | yes | `UP2_STORE` (`file`/`sqlite`, default `file`) + `UP2_HOME`; `get` recompiles what it read |
+| acceptance item 1 above (`S0–S7` followable) | **yes** | `add-snapshot-runner-and-doctor`: `up2 snapshot` / `up2 test` (`cli/samples.py` over `samples/<domain>/<key>/<case>/`) make S2–S7 runnable as `04` §7 now spells them; the S0/S3/S4/S5/S7 commands the draft named wrongly were corrected in `04` (`up2 ops` instead of `up2 lint --ops`; no `up2 schemas`; at that point no `trial --trace`, which `add-story-trace` has since landed; `snapshot` takes `--domain`/`--key`; `doctor` added) |
+| G2 of `04` §6 | **yes** | `publish` regresses the key's sample set before it writes; a difference is a JSON Pointer difference and is refused with `UP2-E3005` (both stores), and only `--skip-tests --note` gets past it |
 | acceptance item 2 above | yes | the no-op writes nothing, a bad chain leaves no residue, both stores (parity cases) |
+| acceptance item 3 above | **yes** | `up2 doctor` reports the `inconsistencies()` findings and `--fix` writes the missing audit row (`repair_chain`, both stores; the synthesized row carries actor `doctor` and a note, because `04` §2.1 has nowhere else to say it was synthesized) |
 | acceptance item 4 above | yes | `up2 audit` / `audit(chain_id)` answer `old_hash → new_hash` per change |
-| acceptance item 3 above | **store layer only** | `inconsistencies()` reports both `UP2-E3003` shapes on both stores; the `doctor --fix` command is the next slice |
-| acceptance item 5 above | yes | run as the change's final experiment: with the store removed from the tree, the L1/L2 suites are green |
-| the `S0–S7` walkthrough and the sample runner | **next slice** | so G2 of `04` §6 currently regresses an empty sample set; only the `--skip-tests`/`--note` trace contract is enforced |
+| acceptance item 5 above | yes | run as the store change's final experiment: with the store removed from the tree, the L1/L2 suites are green |
+| the `S0–S7` walkthrough and the sample runner | **landed** | so G2 no longer regresses an empty set: a key with at least one case regresses it, and a key with no case at all stays green (`04` §6) |
 
 ---
 

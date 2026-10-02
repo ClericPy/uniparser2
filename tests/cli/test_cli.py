@@ -282,6 +282,81 @@ def test_trial_refuses_chain_only_flags_for_a_story(tmp_path: Path) -> None:
     assert main(["lint", str(path), "--product", "n1"]) == EXIT_USAGE
 
 
+# ---------------------------------------------------------------- the trace (06 §5.1)
+
+
+def test_trial_trace_reports_the_events_of_a_chain(tmp_path: Path, capsys) -> None:
+    path = write_chain(tmp_path, [["py", "urljoin", "$globals.base"]])
+    code = main(
+        [
+            "trial",
+            str(path),
+            "--input",
+            "text=page.html",
+            "--global",
+            "base=https://x/",
+            "--trace",
+            "--json",
+        ]
+    )
+    assert code == EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "ok" and payload["value"] == "https://x/page.html"
+    assert len(payload["trace"]) == 1
+    event = payload["trace"][0]
+    assert isinstance(event.pop("ms"), float)
+    assert event == {
+        "seq": 1,
+        "step": None,  # a plain field chain is not inside a story
+        "item": None,
+        "field": None,
+        "stage": 0,
+        "op": "py",
+        "action": "urljoin",
+        "params": {"base": {"kind": "ref", "target": "globals.base"}},
+        "input": {"type": "str", "preview": '"page.html"', "size": 11},
+        "output": {"type": "str", "preview": '"https://x/page.html"', "size": 21},
+        "state": "Ok",
+        "detail": None,
+    }
+
+
+def test_trial_trace_ends_at_the_suspension_of_a_story(tmp_path: Path, capsys) -> None:
+    """A CLI has no host, so the trace of a story ends at the effect that suspended it."""
+    path = write_chain(tmp_path, _story(), name="site.json")
+    code = main(["trial", str(path), "--input", "text=https://x/", "--trace", "--json"])
+    assert code == EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "suspended" and payload["effect"] == "request"
+    steps = [
+        (event["seq"], event["step"], event["field"], event.get("effect"))
+        for event in payload["trace"]
+    ]
+    assert steps == [(1, "seed", "url", None), (2, "seed", None, "request")]
+    assert payload["trace"][-1]["output"]["preview"] == '{"url": "https://x/"}'
+
+
+def test_trial_trace_is_one_line_per_event_without_json(tmp_path: Path, capsys) -> None:
+    path = write_chain(tmp_path, _story(), name="site.json")
+    assert main(["trial", str(path), "--input", "text=https://x/", "--trace"]) == EXIT_OK
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 3  # two events, then the run's state
+    assert "effect:request" in lines[1]
+    assert lines[2].startswith("[suspended] ")
+
+
+def test_trial_trace_carries_the_failing_stage(tmp_path: Path, capsys) -> None:
+    path = write_chain(tmp_path, [["py", "int", ""]])
+    code = main(["trial", str(path), "--input", "text=abc", "--trace", "--json"])
+    assert code == EXIT_FAILED
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "failed" and payload["code"] == "UP2-E2005"
+    event = payload["trace"][-1]
+    assert event["state"] == "Failed"
+    assert event["detail"]["code"] == "UP2-E2005"
+    assert event["output"]["type"] == "missing"
+
+
 # ---------------------------------------------------- the store commands (04 §4, §7-S6/S7)
 
 CHAIN = [["css1", "text", "h1"]]

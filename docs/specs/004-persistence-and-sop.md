@@ -5,12 +5,12 @@
 > **What this document answers**: what shape a chain is stored in, how a change leaves a trace, how a write is kept atomic, and by which steps an LLM turns a chain from a draft into a reusable, frozen chain.
 > **Where the data model comes from**: §1 of the `01` data-structure draft (the internal source material, not shipped in this repository) (`template` / `template_audit`), with the production-system columns (`task` / `doc` / EOS / Kafka / the Java backend) stripped out.
 >
-> **Implemented**: **§1–§6** landed with the change `add-template-store` (`src/uniparser2/store/`, the
-> `up2 publish` / `get` / `audit` commands, `UP2-E3001`–`UP2-E3005`), including the `S6`/`S7` write and
-> read paths. **Still design**: the `S0–S7` walkthrough as an executable document, the sample runner
-> (`up2 snapshot` / `up2 test`, §7-S4/S5, so G2 of §6 currently runs an empty regression), `up2 list`,
-> `up2 doctor` and its `--fix`. The notes marked *implemented* below record what the code settled where
-> this draft was silent or sharper than the code could be.
+> **Implemented**: **§1–§10**. `add-template-store` landed §1–§6 (`src/uniparser2/store/`, the
+> `up2 publish` / `get` / `audit` commands, `UP2-E3001`–`UP2-E3005`), and `add-snapshot-runner-and-doctor`
+> landed §7-S4/S5 as running commands (`up2 snapshot` / `up2 test`, `cli/samples.py`) and §10's `up2 doctor`
+> with its `--fix`. **Still design**: `up2 list` (the `TemplateStore.list` method exists; no command
+> prints it), and the trial UI of `06`. The notes marked *implemented* below record what the code settled
+> where this draft was silent or sharper than the code could be.
 
 ---
 
@@ -159,8 +159,13 @@ which keeps the designed layout and row shape and keeps an audit row reachable a
 is gone (the reason §4.2 refuses a foreign key). The cost is proportional to the number of audit rows,
 which the applicability above tolerates; a host that outgrows it implements `TemplateStore`.
 
-**Implemented — `samples/`**: the directory is reserved by this layout, but the runner that reads it
-is the SOP slice (§7-S4/S5). Nothing writes or reads it yet.
+**Implemented — `samples/`**: the runner that reads this layout is `cli/samples.py`, driven by
+`up2 snapshot` (§7-S4) and `up2 test` (§7-S5). The root is `--tests-root` (default `samples`, the
+repository's own directory per `05` §3), so `$UP2_HOME/samples/` is the "temporary samples that are
+not ready to be committed" of `05` §3 and `<repo>/samples/` the committed contract. A **case** is a
+directory carrying `input.txt`; `up2 snapshot --accept` writes its `expected.json`, and a case that
+carries an input but no snapshot is a **failure** of G2 rather than a silent pass, because "every
+case under `samples/` for this `tpl_key`" is what the gate promises.
 
 ### 4.2 `SqliteStore`
 
@@ -248,16 +253,16 @@ audit line was lost" look the same.
 |---|---|---|
 | `UP2-E3001` | fingerprint conflict: the `graph` written under the same `(root_domain, tpl_key)` does not match the expected fingerprint | run `up2 get` again and compare; make sure there is no concurrent writer |
 | `UP2-E3002` | the `tpl_key` character set is illegal, or `root_domain` is empty | report the character-set regex and the actual value |
-| `UP2-E3003` | chain and audit are inconsistent (a chain without an audit row / an audit row without a chain) | `up2 doctor --fix` |
+| `UP2-E3003` | chain and audit are inconsistent (a chain without an audit row / an audit row without a chain) | `up2 doctor --fix` (which writes the missing audit row; re-publishing is the other remedy) |
 | `UP2-E3004` | the Store write failed (permissions / disk / SQLite lock / a missing directory) | report the path and the underlying error |
 | `UP2-E3005` | the `publish` gate did not pass (the G2 snapshot regression failed, or `--skip-tests` came without `--note`) | run `up2 test` or supply `--note` |
 
-**Implemented**: the five codes are declared in `core/errors.py` with exactly these triggers. Three
-of the fix hints are sharper in the code than in the table, because the command they name does not
-exist yet: `UP2-E3003` advises re-publishing the chain (the missing audit row is what `doctor --fix`
-will write), and `UP2-E3004` is raised for a **read** that cannot reach the store as well as for a
-write. `UP2-E3005` currently has one reachable branch — `--skip-tests` without `--note`; the
-regression branch joins it with the runner (§7-S5).
+**Implemented**: the five codes are declared in `core/errors.py` with exactly these triggers, and
+both `UP2-E3005` branches are now reachable: `--skip-tests` without `--note` is refused by
+`store/gates.py`, and a failed regression by the runner. `UP2-E3004` is raised for a **read** that
+cannot reach the store as well as for a write, and the `UP2-E3003` diagnostic carries the
+`chain_id` a finding is about, so `up2 doctor --fix` knows which row to repair without parsing the
+message.
 
 ---
 
@@ -275,11 +280,14 @@ The design intent of `--skip-tests`: it allows the realistic case of "store the 
 
 **Implemented**: G1 is the store's own `compile` of step 2, so no flag can skip it. G2/G3 are checked
 by the CLI before it calls the store, so a refusal writes nothing: `--skip-tests` without `--note` is
-`UP2-E3005` and a `ready` row needs `--confirm-overwrite`. Two edges of this section are not yet what
-the table implies: **G2 regresses an empty sample set**, because the runner is §7-S5 and lands with the
-SOP slice (only the trace contract is enforced now); and an unconfirmed overwrite exits `2` as a
-**usage** error, because §5.1 assigns that refusal no code and minting one would have taken a number
-this design reserved for something else.
+`UP2-E3005`, a failed regression is the same `UP2-E3005` carrying the JSON Pointer difference, and a
+`ready` row needs `--confirm-overwrite`. G2 regresses the cases of the key the publish names, rooted
+at `--tests-root` (default `samples`); a key with **no** case at all is green, which is what keeps
+"store the chain first, the samples are not ready yet" workable through `--skip-tests --note`, and a
+case that carries an input but no `expected.json` is red rather than silently absent. One edge of
+this section is not what the table implies: an unconfirmed overwrite exits `2` as a **usage** error,
+because §5.1 assigns that refusal no code and minting one would have taken a number this design
+reserved for something else.
 
 ---
 
@@ -296,12 +304,16 @@ this design reserved for something else.
 | Product target | confirm the `type` of each step, above all the one `exit` names (a host-registered type, or a built-in one; `03` §3) |
 | Sample input | **at least 1 real input**, placed at `samples/<root_domain>/<tpl_key>/<case>/input.txt` |
 
-**Acceptance**: `up2 lint --ops` can list the available operators and actions (read it before drafting; do not write action names from memory).
+**Acceptance**: `up2 ops` can list the available operators and actions (read it before drafting; do not write action names from memory).
 
 ```bash
-up2 ops --json > ops.json          # operators / actions / arity and slot roles / argument schema / dependency availability
-up2 schemas --json > schemas.json  # registered schema names
+up2 ops --json      # operators / actions / arity and slot roles / argument schema / dependency availability
 ```
+
+> **Corrected**: the earlier draft wrote `up2 lint --ops` and a `up2 schemas --json` command. There is
+> no `--ops` flag on `lint` (`up2 ops` is its own command, and `lint` takes a chain file), and there
+> is no `schemas` command: the registered *type* names are the `type` a step declares (`03` §3), and
+> `up2 ops` is the single capability self-description of `08` §1.
 
 ### S1 · Drafting
 
@@ -325,31 +337,43 @@ up2 lint chain.json --json
 ### S3 · In-place trial (no store write, no network)
 
 ```bash
-up2 trial chain.json --input text=@samples/<domain>/<tpl_key>/<case>/input.txt --trace --json
+up2 trial chain.json --input text=@samples/<domain>/<tpl_key>/<case>/input.txt --json
+up2 trial chain.json --input text=@… --trace --json    # the per-stage trace (06 §5.1)
 ```
 
-**Acceptance**: the product matches expectations; in `--trace`, every field shows "which stage produced what value / at which stage `Missing` began".
+**Acceptance**: the product matches expectations.
 
 **S3 is the only step in the SOP that needs a person (or the semantic judgement of an LLM)** — a chain that runs is not a chain that extracted the right content.
+
+> **Corrected again** (change `add-story-trace`): the earlier note said `--trace` "does not exist",
+> and that was true when it was written. It exists now: `up2 trial --trace` prints the run's
+> `TraceEvent`s in evaluation order, as one JSON document with `--json` and one line per event
+> without it, and the events are the trial bench's own data structure (`06` §5.1), so the CLI and
+> the UI cannot disagree. A story file is accepted too, and is run to its first effect: a suspension
+> is reported as `suspended` with the effect, because a CLI has no host to answer a request — the
+> trace then ends at the effect event that suspended it. A `Missing` outcome is still reported as
+> `{"state": "missing", "reason": …}`.
 
 ### S4 · Freezing the snapshot
 
 ```bash
-up2 snapshot chain.json --case <case> --accept     # write the current product as expected.json
+up2 snapshot chain.json --domain <domain> --key <tpl_key> --case <case> --accept
 ```
 
-**Acceptance**: `samples/<domain>/<tpl_key>/<case>/expected.json` is generated, and its content has been confirmed by a person in S3.
+**Acceptance**: `<tests-root>/<domain>/<tpl_key>/<case>/expected.json` is generated (the root is
+`--tests-root`, default `samples`), and its content has been confirmed by a person in S3.
 
-> `--accept` is the **only way to write a snapshot**; `up2 trial` never writes one automatically, which avoids "recording a wrong product as the right one because it ran once".
+> `--accept` is the **only way to write a snapshot**; `up2 trial` never writes one automatically, which avoids "recording a wrong product as the right one because it ran once". The command name in the earlier draft had no `--domain` / `--key`, and the case cannot be placed without them: the layout is keyed by the business identity (`05` §3).
 
 ### S5 · Regression
 
 ```bash
-uv run pytest tests/snapshots -q          # in-project snapshot tests
-up2 test <domain> <tpl_key>               # run the frozen chain in the Store plus its samples once
+up2 test <domain> <tpl_key>          # every sample of that key against the chain in the Store
+up2 test <domain> <tpl_key> --case <case>   # or just one
+uv run pytest tests/snapshots -q     # the in-project snapshot cases (05 §4)
 ```
 
-**Acceptance**: all green. On failure, a **structured difference** is printed (JSON Pointer + expected value + actual value), not a string diff.
+**Acceptance**: all green. On failure, a **structured difference** is printed (JSON Pointer + expected value + actual value), not a string diff — and `publish` refuses the same way (G2 of §6). A story that suspends cannot be regressed here: a snapshot runner has no host to answer a `Request`, and it says so instead of guessing (`03` §4.1).
 
 ### S6 · Publish
 
@@ -357,19 +381,22 @@ up2 test <domain> <tpl_key>               # run the frozen chain in the Store pl
 up2 publish chain.json --domain ah.gov.cn --key \u653f\u5e9c\u6587\u4ef6\u5217\u8868 --actor llm:claude --source agent
 ```
 
-**Acceptance**: it prints `PublishResult{chain_id, changed: true, new_hash}`; `up2 get` reads the chain back with a matching fingerprint.
+**Acceptance**: it prints `PublishResult{chain_id, changed: true, new_hash}`; `up2 get` reads the chain back with a matching fingerprint. It runs G2 first, so a red snapshot is refused unless `--skip-tests --note` says why.
 
 ### S7 · Review and rollback
 
 ```bash
-up2 audit ah.gov.cn \u653f\u5e9c\u6587\u4ef6\u5217\u8868          # the fingerprint chain: who changed what, and when
-up2 get ah.gov.cn \u653f\u5e9c\u6587\u4ef6\u5217\u8868 --graph > backup.json   # backup (rollback material)
+up2 audit <domain> <tpl_key>                 # the fingerprint chain: who changed what, and when
+up2 get <domain> <tpl_key> --graph > backup.json   # backup (rollback material) -- the chain data only
 up2 publish backup.json --domain … --key … --actor ops:me --source human --note "roll back to <hash>"
+up2 doctor [--fix]                           # chains and audit correspond? --fix writes the missing row
 ```
 
 > `--graph` is the flag the implementation settled on: the plain `up2 get` prints the stored row
 > together with its fingerprint (the S6 acceptance above), and only the graph is publishable again.
-> The walkthrough of S0–S7 as an executable document is still the next slice.
+> `up2 doctor` is where §10's consistency check-up lives; `--fix` repairs "a chain without an audit
+> row" and leaves "an audit row without a chain" as a finding, because there is no chain to write.
+> The walkthrough of S0–S7 is executable as written from S2 on.
 
 **Rollback introduces no special mechanism**: audit rows hold only fingerprints, so rollback relies on **an external backup + publishing once more** (the trade-off of draft `01` Q18). Hence the backup action of S7 must appear explicitly in the SOP.
 
@@ -378,8 +405,8 @@ up2 publish backup.json --domain … --key … --actor ops:me --source human --n
 | Step | Failure symptom | Handling |
 |---|---|---|
 | S2 | a compile error (`UP2-E1xxx`) | fix the chain per `fix`; the lint rules **must not** be changed or skipped |
-| S3 | `Failed` (`UP2-E2xxx`) | use `trace` to locate the concrete stage; usually a misspelt selector or a type mismatch |
-| S3 | too many fields produce `Missing` | check whether the field chain that carries the `each` stage produced the elements you thought, and whether the selectors match the current page version |
+| S3 | `Failed` (`UP2-E2xxx`) | the diagnostic names the stage it failed at (its JSON Pointer) and the `fix`; usually a misspelt selector or a type mismatch; `up2 trial --trace` names the step, the field and the stage that failed and carries its `code` / `reason` as data (`06` §5.1; a `Missing` outcome is the `{"state": "missing"}` result) |
+| S3 | too many fields produce `Missing` | check whether the field chain that carries the `each` stage produced the elements you thought, and whether the selectors match the current page version; `--trace` shows the `Missing` starting point and the `item` it belongs to |
 | S5 | a snapshot difference | first decide whether "the chain regressed" or "the page changed"; the latter needs updated samples, a fresh `--accept`, and a statement of that in the audit `note` |
 | S6 | `UP2-E3002` | the `tpl_key` character set is illegal |
 | S6 | `UP2-E3003` | chain and audit are inconsistent (leftovers of a file-Store crash) → `up2 doctor --fix` |
@@ -393,7 +420,7 @@ up2 publish backup.json --domain … --key … --actor ops:me --source human --n
 | **Capability self-description** | `up2 ops --json` prints, for every operator: name, alias, arity (`arity`) and slot roles (`action_slot` / `slots`), the enumeration of legal actions, the argument schema (including kind), whether the dependency is available, and the install command for a missing dependency. An LLM reads it before drafting and **does not write action names from memory** |
 | **Deterministic error codes** | every diagnostic carries `UP2-E<section><number>`; the code tables are in `02` §7 (compile time), `02` §7.1 (runtime) and §5.1 of this file (storage); **the same cause gets the same code**, so an LLM can write "error → fix" as a fixed mapping |
 | **Fix hints** | every diagnostic carries `fix` (one sentence) and `allowed` (the list of allowed values), so an LLM need not infer "which options exist" |
-| **Structured output** | `lint` / `trial` / `test` all support `--json`; `trial --trace` prints every step's intermediate value, so an LLM can locate itself |
+| **Structured output** | `lint` / `trial` / `publish` / `get` / `audit` / `test` / `doctor` all support `--json`, and `test` reports each failure as `{pointer, reason, expected, actual}`, so an LLM reads a difference as data. `trial --trace --json` adds the run's per-stage trace to the same document (`06` §5.1): one event per evaluated stage, with the compiled parameters, the input / output views and the failing stage's code and reason |
 | **A single source of truth** | the chain JSON is the only source of truth; every step of the SOP only reads or writes that file or the Store, so there is no "hidden state inside an editor" |
 | **Reproducibility** | the chain path has no IO (`N1`); the same sample input always yields the same product, which makes snapshot comparison possible |
 
@@ -430,7 +457,7 @@ up2 publish backup.json --domain … --key … --actor ops:me --source human --n
 | Asking "who changed what" | `up2 audit <domain> <key>` prints the fingerprint chain: `at / actor / source / old_hash → new_hash / note` |
 | Asking "did this chain change" | as above, comparing the series of `new_hash`; the no-op of `publish` guarantees "no change produces no row" |
 | Rollback | **relies on an external backup** (S7's `up2 get --graph > backup.json`) plus one more `publish`. Audit rows record only fingerprints, so a rollback itself also leaves an audit row |
-| Consistency check-up | `up2 doctor`: checks whether `chains` and `audit` correspond one-to-one, whether `tpl_key` is legal, and whether `graph` compiles; `--fix` writes the missing audit rows. **Implemented as a store-layer method** (`inconsistencies()` on both stores, `UP2-E3003` findings: a chain with no audit row at all, and an audit row with no chain); the `doctor` command and `--fix` are the next slice |
+| Consistency check-up | `up2 doctor`: checks whether `chains` and `audit` correspond one-to-one, whether `tpl_key` is legal, and whether `graph` compiles; `--fix` writes the missing audit rows. **Implemented as a store-layer method** (`inconsistencies()` on both stores, `UP2-E3003` findings: a chain with no audit row at all, and an audit row with no chain) plus the `up2 doctor` command with `--fix` (the `07` §3 acceptance item 3). **Not implemented from this row**: the `tpl_key` re-check and the `graph` recompile — the first can only fail on a hand-edited row the store's own step 1 refuses to write, and the second is what every read path already does (`up2 get`, `publish` step 3) |
 | Backup advice | in production, snapshot `UP2_HOME` (or the SQLite file) periodically; this design **ships no built-in backup mechanism** (that is an operations concern) |
 
 ---

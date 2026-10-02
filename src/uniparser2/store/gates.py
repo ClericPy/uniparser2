@@ -4,12 +4,11 @@ G1 is not here: the store's ``publish`` compiles the graph before it writes, so 
 skipped. These two functions are the rest of the gate, as pure functions, so a refusal happens
 **before** any IO and is testable without a store:
 
-- **G2** the regression of the snapshots that already exist. The runner itself belongs to the SOP
-  slice (``up2 test``, `04` §7-S5), so what this slice enforces is the trace contract that makes the
-  bypass auditable: ``--skip-tests`` without ``--note`` is ``UP2-E3005``, and with a note the text
-  travels into the audit row. Until the runner lands, a publish without ``--skip-tests`` regresses
-  the snapshots that exist -- an empty set -- and the runner raises the same ``UP2-E3005`` for a
-  mismatch.
+- **G2** the regression of the snapshots that already exist. The runner is `cli/samples.py`
+  (``up2 test``, `04` §7-S5), and this module keeps the pure half of the gate: the trace contract
+  that makes a bypass auditable -- ``--skip-tests`` without ``--note`` is ``UP2-E3005``, and with a
+  note the text travels into the audit row. A regression that fails raises the same ``UP2-E3005``,
+  built by the runner so the refusal carries the JSON Pointer difference.
 - **G3** overwriting a row whose ``status`` is ``ready`` needs ``--confirm-overwrite``. `04` §5.1
   assigns that refusal no code, so it is a usage message and the CLI exits ``2``.
 """

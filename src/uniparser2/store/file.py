@@ -100,12 +100,20 @@ class FileStore:
         return sorted(rows, key=lambda row: row.seq)
 
     def inconsistencies(self) -> builtins.list[Diagnostic]:
-        """The `UP2-E3003` findings (`04` §5.1, §10); the repair is the later `doctor` slice."""
+        """The `UP2-E3003` findings (`04` §5.1, §10); repaired by :func:`repair_chain`."""
         chains = self._chain_ids()
         audited = {row.chain_id for row in self._audit_files_rows()}
         return [chain_without_audit(chain_id) for chain_id in sorted(chains - audited)] + [
             audit_without_chain(chain_id) for chain_id in sorted(audited - chains)
         ]
+
+    def find_chain(self, chain_id: str) -> Template | None:
+        """The row one ``chain_id`` names, if this store holds it (`up2 doctor --fix`)."""
+        for path in self._chain_files():
+            template = _template_from_json(_load_json(path))
+            if template.chain_id == chain_id:
+                return template
+        return None
 
     def chain_path(self, root_domain: str, tpl_key: str) -> Path:
         """Where one chain's ``Template`` JSON lives (`04` §4.1)."""

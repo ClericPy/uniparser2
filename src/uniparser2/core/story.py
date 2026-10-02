@@ -16,6 +16,11 @@ itself a request nest correctly, since the nested suspension travels out through
 A ``Failed`` stage **raises** ``Up2Error`` carrying the stage's diagnostic: the effect vocabulary
 has no failure member, and a run that could not produce a step's product must not hand the host a
 plausible-looking effect.
+
+A caller may pass a ``trace`` (`06` §5.1): every evaluated stage of every step is then recorded, the
+step's name and its field-map key included, and every suspension is recorded as an effect event
+carrying what the kernel handed the host. The trace is a debugging aid and never changes a run
+(`03` §13 O6).
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from .evaluator import eval_field, resolve_params
 from .export import pack
 from .limits import MAX_STORY_STEPS
 from .refs import RESERVED_ROOTS, Scope, is_ref_text, parse_ref
+from .trace import EFFECT_BATCH, EFFECT_CALL, EFFECT_REQUEST, Trace, elapsed_ms, stamp
 from .types import (
     UNREGISTERED_FIX,
     TypeConstructionError,
@@ -53,6 +59,12 @@ _PRODUCT_UNAVAILABLE: Final = object()
 """The value that travels beside "this step produced nothing" (a `Missing` product, `03` §9)."""
 _BUNDLE_KEYS: Final = frozenset({"globals", "steps", "exit"})
 _STEP_KEYS: Final = frozenset({"name", "type", "parse", "call", NEXT_KEY, "with"})
+_UNVISITED: Final = 0
+"""The flow node a walk has not reached yet."""
+_ON_PATH: Final = 1
+"""The flow node the walk is standing on: a step it enters again closes a loop."""
+_WALKED: Final = 2
+"""The flow node whose whole subtree the walk has already left -- it cannot close a loop."""
 
 type Effect = (
     tuple[Literal["request"], Mapping[str, Any], str]
@@ -141,6 +153,7 @@ def compile_story(bundle: Any, /, *, pointer: str = "") -> CompiledStory:
         for position, (raw, name) in enumerate(zip(raw_steps, names, strict=True))
     )
     exit_name = _exit_name(bundle.get("exit"), names, pointer=f"{pointer}/exit")
+    _lint_flow(steps)
     logger.debug("compiled story: steps=%d exit=%s", len(steps), exit_name)
     return CompiledStory(
         globals=globals_map,
@@ -151,9 +164,22 @@ def compile_story(bundle: Any, /, *, pointer: str = "") -> CompiledStory:
     )
 
 
-def start(bundle: Any, value: Any = None, /) -> StoryRun:
-    """Compile a story and run it to the first suspension (`03` §5)."""
-    return StoryRun(compile_story(bundle), value)
+def start(bundle: Any, value: Any = None, /, *, trace: Trace | None = None) -> StoryRun:
+    """Compile a story and run it to the first suspension (`03` §5).
+
+    ``trace`` is where the run records its events (`06` §5.1); a run without one records nothing.
+    """
+    return StoryRun(compile_story(bundle), value, trace=trace)
+
+
+@dataclass(slots=True)
+class _RunState:
+    """What every step of one run shares: the story, its scope, the output and the trace."""
+
+    story: CompiledStory
+    scope: Scope
+    output: list[Any]
+    trace: Trace | None = None
 
 
 class StoryRun:
@@ -166,20 +192,24 @@ class StoryRun:
     long as the run does.
     """
 
-    __slots__ = ("_done", "_drive", "_effect", "_scope", "_story", "_value")
+    __slots__ = ("_done", "_drive", "_effect", "_state", "_value")
 
-    def __init__(self, story: CompiledStory, value: Any) -> None:
-        self._story = story
+    def __init__(self, story: CompiledStory, value: Any, *, trace: Trace | None = None) -> None:
         self._value = value
-        self._scope = Scope(globals=story.globals, step_input=value)
-        self._drive = _drive(story, value, self._scope)
+        self._state = _RunState(
+            story=story,
+            scope=Scope(globals=story.globals, step_input=value),
+            output=[],
+            trace=trace,
+        )
+        self._drive = _drive(self._state, value)
         self._effect: Effect = next(self._drive)
         self._done = self._effect[0] == "done"
 
     @property
     def story(self) -> CompiledStory:
         """The compiled story this run executes."""
-        return self._story
+        return self._state.story
 
     @property
     def value(self) -> Any:
@@ -189,7 +219,12 @@ class StoryRun:
     @property
     def scope(self) -> Scope:
         """The run's evaluation scope, which carries the run's materialization cache (`03` §6)."""
-        return self._scope
+        return self._state.scope
+
+    @property
+    def trace(self) -> Trace | None:
+        """The trace this run records into, or ``None`` when the caller asked for none."""
+        return self._state.trace
 
     def next(self) -> Effect:
         """The current effect: the suspension the host must answer, or ``("done", product)``.
@@ -214,25 +249,23 @@ class StoryRun:
 # ---------------------------------------------------------------- the run loop
 
 
-def _drive(story: CompiledStory, value: Any, scope: Scope) -> Generator[Effect, Any, None]:
+def _drive(state: _RunState, value: Any) -> Generator[Effect, Any, None]:
     """The run loop: step through the bundle until it passes the last step.
 
-    ``scope`` is the run's own scope, re-pointed at each step's input; it carries the run's
+    ``state.scope`` is the run's own scope, re-pointed at each step's input; it carries the run's
     materialization cache, so the cache lives exactly as long as the run (`03` §6).
     """
-    output: list[Any] = []
     pc = 0
-    while pc < len(story.steps):
-        pc, value, _ = yield from _step_product(story, pc, value, scope, output)
-    yield ("done", output)
+    while pc < len(state.story.steps):
+        pc, value, _ = yield from _step_product(state, pc, value)
+    yield ("done", state.output)
 
 
 def _step_product(
-    story: CompiledStory,
+    state: _RunState,
     pc: int,
     value: Any,
-    scope: Scope,
-    output: list[Any],
+    item: int | None = None,
 ) -> Generator[Effect, Any, tuple[int, Any, bool]]:
     """Run the step at ``pc``, resolving every suspension it causes.
 
@@ -240,51 +273,130 @@ def _step_product(
     whether the step produced a product at all (``False`` when its chain product was missing, `03`
     §9). A receiving step that itself produces a request is handled here, which is what makes a
     nested fan-out resume inside the same run.
+
+    ``item`` is the fan-out result this evaluation belongs to (`06` §5.1): the position of a batch
+    answer for a receiving step, and ``None`` for a step the linear flow reaches.
     """
-    step = story.steps[pc]
+    step = state.story.steps[pc]
+    scope = state.scope
+    trace = state.trace
     # `$in` names **this** step's input; a receiving step evaluated inside a fan-out sets it too,
     # which is why it is recorded here rather than by the loop that drives the run.
     scope.step_input = value
+    if trace is not None:
+        trace.enter(step.name, item=item)
     if step.call is not None:
-        product = yield ("call", step.call, _call_arguments(step, value, scope))
+        started_at = stamp(trace)
+        arguments = _call_arguments(step, value, scope)
+        _record_effect(
+            trace,
+            EFFECT_CALL,
+            step=step.name,
+            action=step.call,
+            params=step.with_,
+            incoming=value,
+            handed_out=arguments,
+            started_at=started_at,
+        )
+        product = yield ("call", step.call, arguments)
     else:
-        product = _parse_product(step, value, scope)
+        product = _parse_product(step, value, scope, trace)
     if product is _PRODUCT_UNAVAILABLE:
         # A missing value is not a product (`03` §9): the step is skipped, exactly as a missing
         # field is absent from a field map — never `null` (`01` §4.2).
         return pc + 1, _PRODUCT_UNAVAILABLE, False
     product = _built_product(step, product)
     scope.products = {**scope.products, step.name: product}
-    if step.name == story.exit:
-        output.append(product)
+    if step.name == state.story.exit:
+        state.output.append(product)
     if not step.is_request:
         return pc + 1, product, True
-
     if step.type == REQUEST_TYPE:
-        request = _single_request(step, product)
-        receiver = _receiver(story, step, product, position=0)
-        answer = yield ("request", request, receiver)
-        # The receiving step may itself produce nothing: `next` names the step after it, so the run
-        # continues there instead of at a value that does not exist.
-        continued: tuple[int, Any, bool] = yield from _step_product(
-            story, story.index[receiver], answer, scope, output
-        )
-        return continued
+        return (yield from _request_effect(state, step, value, product, item))
+    return (yield from _batch_effect(state, step, value, product))
 
-    tasks, receivers = _batch_tasks(story, step, product)
+
+def _request_effect(
+    state: _RunState,
+    step: StoryStep,
+    value: Any,
+    product: Any,
+    item: int | None,
+) -> Generator[Effect, Any, tuple[int, Any, bool]]:
+    """Hand one request over, then let the step `next` names continue the run (`03` §4.1).
+
+    The receiving step may itself produce nothing: `next` names the step after it, so the run
+    continues there instead of at a value that does not exist.
+    """
+    started_at = stamp(state.trace)
+    request = _single_request(step, product)
+    receiver = _receiver(state.story, step, product, position=0)
+    _record_effect(
+        state.trace,
+        EFFECT_REQUEST,
+        step=step.name,
+        incoming=value,
+        handed_out=request,
+        started_at=started_at,
+    )
+    answer = yield ("request", request, receiver)
+    return (yield from _step_product(state, state.story.index[receiver], answer, item))
+
+
+def _batch_effect(
+    state: _RunState, step: StoryStep, value: Any, product: Any
+) -> Generator[Effect, Any, tuple[int, Any, bool]]:
+    """Hand one batch of tasks over, then run the receiving step once per answer (`03` §4.1.1).
+
+    The run continues past **everything** the fan-out ran: with a per-task `next` the receiving
+    steps differ, so "the step after the default" could re-run a step that already answered.
+    """
+    started_at = stamp(state.trace)
+    tasks, receivers = _batch_tasks(state.story, step, product)
+    _record_effect(
+        state.trace,
+        EFFECT_BATCH,
+        step=step.name,
+        incoming=value,
+        handed_out=tasks,
+        started_at=started_at,
+    )
     answer = yield ("batch", tasks, step.next or "")
     answers = _batch_answers(step, tasks, answer)
     received_products: list[Any] = []
     continuations: list[int] = []
-    for task_answer, receiver in zip(answers, receivers, strict=True):
+    for position, (task_answer, receiver) in enumerate(zip(answers, receivers, strict=True)):
         next_pc, received, _ = yield from _step_product(
-            story, story.index[receiver], task_answer, scope, output
+            state, state.story.index[receiver], task_answer, position
         )
         received_products.append(received)
         continuations.append(next_pc)
-    # The run continues past **everything** the fan-out ran: with a per-task `next` the receiving
-    # steps differ, so "the step after the default" could re-run a step that already answered.
     return max(continuations), received_products, True
+
+
+def _record_effect(
+    trace: Trace | None,
+    kind: str,
+    *,
+    step: str,
+    incoming: Any,
+    handed_out: Any,
+    started_at: float,
+    action: str | None = None,
+    params: Mapping[str, Param] | None = None,
+) -> None:
+    """One suspension as a trace event; a run without a trace records nothing (`06` §5.1)."""
+    if trace is None:
+        return
+    trace.effect(
+        kind,
+        step=step,
+        action=action,
+        params=params,
+        incoming=incoming,
+        handed_out=handed_out,
+        ms=elapsed_ms(started_at),
+    )
 
 
 def _built_product(step: StoryStep, product: Any) -> Any:
@@ -428,17 +540,17 @@ def _is_sequence(value: Any) -> bool:
 # ---------------------------------------------------------------- one step's work
 
 
-def _parse_product(step: StoryStep, value: Any, scope: Scope) -> Any:
+def _parse_product(step: StoryStep, value: Any, scope: Scope, trace: Trace | None) -> Any:
     """Evaluate a step's `parse`: a chain produces one value, a field map one dictionary.
 
     ``scope`` is the run's scope, from which this step's field chains see the run's materialization
     cache (`03` §6) and the products the run has recorded so far.
     """
     if isinstance(step.parse, Mapping):
-        return _field_map_product(step, step.parse, value, scope)
+        return _field_map_product(step, step.parse, value, scope, trace)
     if step.parse is None:  # pragma: no cover - compile time guarantees parse or call
         raise _failed(step, "UP2-E1005", "the step has neither parse nor call", "declare one")
-    outcome = eval_field(step.parse, value, scope=scope)
+    outcome = eval_field(step.parse, value, scope=scope, trace=trace)
     if isinstance(outcome, Failed):
         raise _from_failed(step, outcome)
     if isinstance(outcome, Missing):
@@ -453,11 +565,16 @@ def _field_map_product(
     fields: Mapping[str, CompiledField],
     value: Any,
     scope: Scope,
+    trace: Trace | None,
 ) -> dict[str, Any]:
-    """One dictionary from a field map: a `_` field is a local, a missing field is dropped."""
+    """One dictionary from a field map: a `_` field is a local, a missing field is dropped.
+
+    Every chain of the map was compiled with its own field name, which is what the trace reports as
+    `field` (`06` §5.1), so the two fields of one map stay apart.
+    """
     row: dict[str, Any] = {}
     for name, chain in fields.items():
-        outcome = eval_field(chain, value, scope=scope)
+        outcome = eval_field(chain, value, scope=scope, trace=trace)
         if isinstance(outcome, Failed):
             raise _from_failed(step, outcome)
         if isinstance(outcome, Missing):
@@ -646,6 +763,90 @@ def _exit_name(raw: Any, names: tuple[str, ...], *, pointer: str) -> str:
             )
         )
     return raw
+
+
+def _lint_flow(steps: tuple[StoryStep, ...]) -> None:
+    """Reject a story whose steps can lead the run back into a step it is already executing (`L12`).
+
+    The run's only way forward is the program counter: the step after this one, or the step a
+    request's `next` names. Both are drawn in one graph, over the steps and from the first one, and
+    a node the walk enters twice is a loop the run can take -- a story the host would have to
+    interrupt rather than finish. Every backward `next` the samples use (a fan-out whose answers
+    are parsed by a step written earlier, the task-override pattern) is accepted: its target cannot
+    reach the jumping step again, so no node is entered twice.
+    """
+    walk = _LoopWalk(steps)
+    for position in range(len(steps)):
+        closed = walk.enter(position)
+        if closed is not None:
+            raise _cycle(steps, closed)
+
+
+class _LoopWalk:
+    """One depth-first walk of a story's flow: the positions of the first loop found, or ``None``.
+
+    ``flow`` holds the program counter's own edge per step (see ``_lint_flow``); ``path`` is the
+    steps the walk is currently standing on, so a successor already on it closes a loop and a
+    successor it has left cannot.
+    """
+
+    __slots__ = ("_colour", "_flow", "_index", "_path")
+
+    def __init__(self, steps: tuple[StoryStep, ...]) -> None:
+        self._flow = [
+            [step.next]
+            if step.next is not None
+            else ([steps[position + 1].name] if position + 1 < len(steps) else [])
+            for position, step in enumerate(steps)
+        ]
+        self._index = {step.name: position for position, step in enumerate(steps)}
+        self._colour = [_UNVISITED] * len(steps)
+        self._path: list[int] = []
+
+    def enter(self, node: int) -> list[int] | None:
+        """Walk ``node`` unless it has been walked already; the loop's positions, or ``None``."""
+        if self._colour[node] != _UNVISITED:
+            return None
+        return self._walk(node)
+
+    def _walk(self, node: int) -> list[int] | None:
+        self._colour[node] = _ON_PATH
+        self._path.append(node)
+        loop = self._first_loop(node)
+        self._path.pop()
+        self._colour[node] = _WALKED
+        return loop
+
+    def _first_loop(self, node: int) -> list[int] | None:
+        """The loop one of ``node``'s successors closes, in travel order, or ``None``."""
+        for successor in self._flow[node]:
+            target = self._index[successor]
+            if self._colour[target] == _ON_PATH:
+                return [*self._path[self._path.index(target) :], target]
+            closed = self._walk(target) if self._colour[target] == _UNVISITED else None
+            if closed is not None:
+                return closed
+        return None
+
+
+def _cycle(steps: tuple[StoryStep, ...], closed: list[int]) -> Up2Error:
+    """The diagnostic for one loop: where it closes, and every step the run passes in order."""
+    loop = [steps[position] for position in sorted(set(closed))]
+    travel = " -> ".join([*(step.name for step in loop), loop[0].name])
+    # The pointer names the backward jump: of the loop's jumps, the one latest in array order is the
+    # one that runs into the region it came from -- the transition to break.
+    jumper = [step for step in loop if step.next is not None][-1]
+    return Up2Error(
+        diag(
+            "UP2-E1017",
+            f"the flow of this story closes a loop: {travel}",
+            fix=(
+                f"point `next` at a step that runs after {jumper.name!r}, or take the step that "
+                "closes the loop out of it"
+            ),
+            pointer=f"{jumper.pointer}/{NEXT_KEY}",
+        )
+    )
 
 
 def _globals(raw: Any, *, pointer: str) -> Mapping[str, Any]:

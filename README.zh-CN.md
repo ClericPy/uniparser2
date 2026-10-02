@@ -5,7 +5,7 @@
 声明式、确定性、可序列化的**文本解析引擎**：把「输入文本 → 指定结构」的解析过程写成 JSON 数据（**解析链**），
 由人或 LLM 离线生成，运行时只做确定性求值。
 
-> **状态**：`0.4.0`。**L1**（DSL 算子层）已完成：**11 个算子**——`css` / `css1`（HTML 选择器，前者取全部、
+> **状态**：`0.5.0`。**L1**（DSL 算子层）已完成：**11 个算子**——`css` / `css1`（HTML 选择器，前者取全部、
 > 后者只取首个，selectolax）、`xpath`（XML，lxml）、`json`（jmespath）、`re`、`py`（42 个白名单函数）、
 > `udf`（宿主注册，链里不含代码）、`code`（链内代码，语言级沙箱，**默认不存在**，见「安全提示」），
 > 外加作用域算子 `ctx`、积木 `const` 与迭代算子 `each`，共 73 对 `(算子, 动作)`。**L2 已起步**：站点包
@@ -18,8 +18,12 @@
 > 已落地（`MAX_MATERIALIZE_BYTES` / `MAX_MATERIALIZE_ITEMS`，LRU）：同一份文档在一次运行里只解析一次，
 > 无论多少个字段读它。**L3 已起步**：**模板仓库**（`04` §1–§6）把链绑定到 `(root_domain, tpl_key)`
 > 业务身份——一条链一行、`blake2s` 指纹、只增不改的审计表，同一个 `TemplateStore` 协议下两种实现（文件仓库
-> 与 SQLite），命令为 `up2 publish` / `get` / `audit`；样本回归器与 `up2 doctor` 属于下一片。就地验证台尚未
-> 实现。进度与验收标准见设计稿的路线图；想直接跑起来看算子层（需在源码检出
+> 与 SQLite），命令为 `up2 publish` / `get` / `audit`，并有围绕它的 **SOP 命令**：`up2 snapshot` 冻结某个
+> 样例的产物、`up2 test` 用冻结的链回归该 key 的全部样例（不一致时打印 JSON Pointer 差异），`publish`
+> 写库前先跑这套回归，`up2 doctor --fix` 修复「有链无审计」的不一致。`04` §7 的 `S0–S7` 从 S2 起可按文档
+> 逐步执行，`up2 trial --trace` 可打印一次运行的逐阶段 trace（`06` §5.1）；`up2 list` 与就地验证台尚未
+> 实现。进度与验收标准见设计稿的路线图；想直接
+> 跑起来看算子层（需在源码检出
 > 目录内）：`uv run python demo.py`。（`demo.py` 与 `tools/demo_report.py` 只存在于仓库里：
 > wheel 与 sdist 都不含它们。）
 
@@ -64,14 +68,16 @@
 
 算子层已完成，**第一版 story 执行器**、**类型注册表**、**运行作用域物化缓存**与**模板仓库**（`04`
 §1–§6：`Template` / `template_audit` 记录、`blake2s` 指纹、`TemplateStore` 协议下的 `FileStore` 与
-`SqliteStore`、`publish` 三道门与 `up2 publish` / `get` / `audit`）也已落地；设计里 L2/L3 的其余部分
-还没实现：没有 `up2 trial --trace`，没有 `up2 studio` 验证台，
-没有样本回归器（`up2 snapshot` / `up2 test`），没有 `up2 list`、也没有 `up2 doctor`，因此 `S0–S7`
-发布 SOP 还不完整；ADR 也还没写。没有 `seed` /
+`SqliteStore`、`publish` 三道门与 `up2 publish` / `get` / `audit`）也已落地，SOP 命令
+`up2 snapshot` / `test` / `doctor` 与随仓库提交的样例 `samples/local/demo/` 一并可用；设计里 L2/L3
+的其余部分还没实现：没有 `up2 studio` 验证台，没有 `up2 list`
+（`TemplateStore.list` 方法已在，只是没有命令打印它）；ADR 也还没写。没有 `seed` /
 `parse` / `emit` 节点类型，也没有 `routes`——那套模型已随 story 模型退役，剩下的就是上面这张清单。
-CLI 是 `ops` / `conformance` / `lint` / `trial` / `publish` / `get` / `audit`；公开 API 是
+CLI 是 `ops` / `conformance` / `lint` / `trial` / `snapshot` / `test` / `publish` / `get` / `audit` /
+`doctor`；公开 API 是
 `compile_field` /
-`compile_stage` / `compile_story` / `start` / `eval_field` 加值域、作用域类型（模板仓库是独立一层，
+`compile_stage` / `compile_story` / `start` / `eval_field` 加值域、作用域与 trace 类型
+（`Trace` / `TraceEvent`，即 `up2 trial --trace` 打印的东西；模板仓库是独立一层，
 `uniparser2.store`）。分层、各层交付物与验收
 标准见 [`docs/specs/007` §3](docs/specs/007-source-decisions-and-roadmap.md)。
 
@@ -177,6 +183,20 @@ uv run up2 audit ah.gov.cn 政府文件列表                        # 谁在什
 `--skip-tests` 必须与 `--note` 同时给（备注会写进审计行）；覆盖 `status` 为 `ready` 的行需要
 `--confirm-overwrite`。
 
+**`samples/` 下的快照就是发布门跑的回归**（`04` §6 G2、§7-S4/S5）。一个样例就是一个目录——`input.txt`
+加上由 `--accept` 冻结的 `expected.json`：
+
+```bash
+uv run up2 snapshot link.json --domain ah.gov.cn --key 政府文件列表 --case list-2026-09 --accept
+uv run up2 test ah.gov.cn 政府文件列表          # 该 key 的全部样例；不一致会打印如 /0/title 的指针
+uv run up2 publish link.json --domain ah.gov.cn --key 政府文件列表   # 回归不绿则拒绝：UP2-E3005
+uv run up2 doctor [--fix]                       # 链与审计是否对得上？--fix 补写缺失的审计行
+```
+
+有 `input.txt` 却没有快照的样例算**红**，所以链不会悄悄失去回归；`--skip-tests --note "…"` 是文档给出的
+绕过方式，备注就是审计行记录下来的内容。随仓库提交的示例见
+[`samples/local/demo/`](samples/local/demo/site.json)。
+
 Python API：
 
 ```python
@@ -252,7 +272,7 @@ uniparser2/
 │   │   └── （零第三方依赖、无 IO、无协程）
 │   ├── ops/            算子实现（basic · regex · pyops · ctx；每个算子自声明动作与依赖）
 │   ├── store/          模板仓库（Template + 指纹 + FileStore / SqliteStore + publish 三道门）
-│   ├── cli/            up2 命令（ops / conformance / lint / trial / publish / get / audit）
+│   ├── cli/            up2 命令（ops / conformance / lint / trial / snapshot / test / publish / get / audit / doctor）与快照回归器
 │   └── py.typed        PEP 561 类型标记
 ├── tests/              算子行为字典 · 编译期/运行期/存储层错误码 · 序列化往返 · CLI 端到端 · 一致性审计
 ├── tools/              本地开发脚本（生成目录的工具；不随发行物发布）

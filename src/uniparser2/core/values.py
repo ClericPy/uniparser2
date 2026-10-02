@@ -94,29 +94,37 @@ def is_json_value(value: object) -> bool:
     return False
 
 
-def preview(value: object, limit: int = _PREVIEW_LIMIT) -> str:
-    """Short display for diagnostics and traces (not used in business logic).
+def text_of(value: object) -> str:
+    """The value's **whole** display text: its JSON text, or a rendering of what is not JSON.
 
-    A **host object** is previewed as its type name plus a truncated ``repr``: the kernel cannot
-    render it as JSON, and the class name is what tells the reader which host library it came from.
+    A **host object** is rendered as its type name plus ``repr``: the kernel cannot render it as
+    JSON, and the class name is what tells the reader which host library it came from. This is the
+    one rendering ``preview`` truncates and the trace measures as a value's ``size`` (`06` §5.1).
     """
     if value is MISSING:
         return "<MISSING>"
     if isinstance(value, Opaque):
         return f"<opaque {type(value).__name__}>"
     if value is not None and not isinstance(value, (str, bool, int, float, list, dict)):
-        # A host object: the JSON encoder would stringify it through ``repr`` and lose the type
-        # name, so it is rendered explicitly (and truncated before it can flood a diagnostic).
-        return _truncate(f"{type_name(value)} {value!r}", limit)
+        return f"{type_name(value)} {value!r}"
     try:
-        text = json.dumps(value, ensure_ascii=False, default=repr)
+        return json.dumps(value, ensure_ascii=False, default=repr)
     except (TypeError, ValueError):  # pragma: no cover - default=repr already covers it
-        text = repr(value)
-    return _truncate(text, limit)
+        return repr(value)
 
 
-def _truncate(text: str, limit: int) -> str:
+def preview(value: object, limit: int = _PREVIEW_LIMIT) -> str:
+    """Short display for diagnostics and traces (not used in business logic)."""
+    return truncate(text_of(value), limit)
+
+
+def truncate(text: str, limit: int = _PREVIEW_LIMIT) -> str:
+    """Cut display text to ``limit`` characters; the marker says how much was dropped.
+
+    The marker is **ASCII-only**, because previews and trace events are printed to consoles of every
+    encoding. A caller that already rendered the text (the trace measures its length too, `06` §5.1)
+    calls this directly instead of rendering the value twice.
+    """
     if len(text) > limit:
-        # ASCII-only marker: previews are printed to consoles of every encoding.
         return text[:limit] + f"...(+{len(text) - limit})"
     return text

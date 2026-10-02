@@ -100,8 +100,10 @@ class Each(Op):
             )
         fields: Mapping[str, CompiledField] = call.payload
         rows: list[dict[str, Any]] = []
-        for element in value:
-            scope = call.scope.child()
+        for position, element in enumerate(value):
+            # The element's own position is what the trace reports as the fan-out index (`06` §5.1),
+            # and each element gets its own scope so a field can stash a local for a later one.
+            scope = call.scope.child(position)
             row: dict[str, Any] = {}
             for name, chain in fields.items():
                 outcome = call.run_chain(chain, element, scope)

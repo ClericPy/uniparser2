@@ -14,8 +14,8 @@
 > **Implemented**: the operator layer (`02`), the field-chain evaluator (`compile_field` + `eval_field`),
 > the **first story executor** (`core/story.py`: `compile_story` / `start` / `run.next` / `run.send`),
 > which `up2 lint` and `up2 trial` both reach, the **type registry** the step boundary builds from
-> (`core/types.py`, §3.2), and the **run-scoped materialization cache** (`core/materialize.py`, §6).
-> The trace (`06`) is still to come.
+> (`core/types.py`, §3.2), the **run-scoped materialization cache** (`core/materialize.py`, §6), and the
+> **trace** (`core/trace.py`, §4.4) that `up2 trial --trace` reports.
 
 ---
 
@@ -334,11 +334,17 @@ run** — there is no hand-off.
 
 | | What it carries | Who consumes it |
 |---|---|---|
-| **trace event** | one per **step**: its name, its product type, a product summary, timing | audit, the trial UI (`06`), debugging, `up2 trial --trace` |
+| **trace event** | one per **evaluated stage**, plus one per suspension: the step, the field-map key, the fan-out index, the stage's operator / action, its **compiled** parameters, the input and output views (`type` / `preview` / `size`), the state and the timing | debugging, the trial UI (`06` §5.1), `up2 trial --trace` |
 | **suspension** | a `Request` / `RequestBatch` (the host sends; the kernel routes the answers) or a `call` (the host returns a receipt) | the host, which must `send` an answer before the run continues |
 
 The host sees every step's product and has to answer at every suspension. With the answers recorded, a flow
-replays deterministically: the kernel never performs IO, so replayability (`01` §1) is kept.
+replays deterministically: the kernel never performs IO, so replayability (`01` §1) is kept. **The trace is
+not that recording** — it is lossy by construction (previews, not values) and it holds no answer; the
+replay format is the host's own log of the suspensions it answered (`13` O6).
+
+A trace is collected only when the caller asks for one (`start(bundle, value, trace=…)` /
+`eval_field(…, trace=…)`), it lives in memory for as long as the run does, and it never changes what a
+run does; the structure is `06` §5.1.
 
 ---
 
@@ -601,6 +607,7 @@ know.
 | L9 | every `next` (step-level and per task) and `exit` resolves to a step of the bundle | new (`UP2-E1016`) |
 | L10 | no resource limit is exceeded (`01` §9) | existing (`UP2-E1012`) |
 | L11 | an operator's optional dependency is installed | existing (`UP2-E1107`) |
+| L12 | the story's **flow is acyclic**: drawn over the steps from the first one, with the program counter's own edges — the next step in array order, or the step a request step's `next` names — no step is entered twice | new (`UP2-E1017`, §12.5) |
 | ~~L20~~ | **withdrawn** with `presets` (`02` §6.9); the number stays retired rather than reused | — |
 
 L5 is checked against every other step's name rather than "an earlier step": with `next` a jump may reach a
@@ -615,10 +622,17 @@ The v0.1 graph rules are gone with the graph: `entry`/`nodes`/`output` shape che
 mutual exclusion, `routes` ⇒ `default_route`, target existence, reachability/orphans, acyclicity,
 in-degree ≤ 1, terminal count, `route_field`, `seed.inject` coverage, the `result`-template rules. The
 `UP2-E1101`–`E1106` codes they used are **retired, not reused** (`02` §7.1's rule), which is a change to
-`02`'s error table and lands with the implementation change.
+`02`'s error table and lands with the implementation change. **Acyclicity is the one rule of that family
+that came back**, and it did not reuse a retired number: it is L12 / `UP2-E1017` (§12.5), it is drawn over
+the flow the executor actually walks rather than over a node graph with routes and terminals, and it
+rejects a story that *loops*, not one that merely jumps backwards.
 
-**Not implemented yet**: nothing detects a **cycle** among steps (`next` may point backwards), and the
-trace of §4.4. Neither is needed to run a story; both are recorded in §13.
+**A loop among steps is `UP2-E1017`** (§12.5): `next` may name any step, including one written earlier, and
+the samples' own fan-out shape does exactly that — but the run may not come back to a step it is already
+executing. The rule walks the flow §5's loop walks: the step after this one, or the step a request step's
+`next` names.
+
+The trace of §4.4 has landed (change `add-story-trace`).
 
 ---
 
@@ -851,10 +865,28 @@ sites through the first executor exposed why each of those could not stand:
 | J7 | a `call`'s arguments are the `with` keys, and the step's input travels explicitly (`"rows": "$in"`) | an effect carrying the input implicitly: the host function's signature would then depend on the step's position, not on what the bundle says |
 | J8 | what a step product may be is unchanged: **JSON** (`03` §3.3) — the executor packs every product at the step boundary | letting a product be an object: snapshots, the exit and the request dictionary would all have to accept something the host cannot serialize |
 
-**What is still rejected** (the part of v0.2's R15 that stands): `next` is **not** a general goto. It exists
-only on a `Request` / `RequestBatch` step and only to name the receiver of the responses it produces, so a
-story remains a linear flow with a routing edge per effect. A cycle among steps is therefore possible but is
-an authoring error, not a feature: no lint detects it yet (§13).
+### 12.5 `D-03-5` — a story's flow is acyclic, and the graph reading that is rejected (change `add-story-cycle-lint`)
+
+`D-03-4` noted that a cycle among steps is possible but is an authoring error, and left it undetected
+(§13 O9). It is now `UP2-E1017`, at compile time, with the travel path in the message:
+
+| # | Ruling | Rejected, and why |
+|---|---|---|
+| C1 | the lint is drawn over the **program counter's own edges**, one per step, over the steps and from the first one: the step at the next array position, or — for a request step, whose `next` is required (`L2`) — the step `next` names | the **union** reading, which draws a step's fall-through edge and its receiver edges *at the same time*: it refuses the committed samples. `samples/books.toscrape.com` fans out at `channels`, whose receiver `shelf_page` falls through to `shelf`, whose own `next` is `book` — a union cycle through steps each of which runs exactly once. The samples are the acceptance case for the format, and the union graph says "the format's central shape is illegal" |
+| C2 | a step entered twice is the failure, and a backward `next` that cannot re-enter its own jump is legal | forbidding a backward `next` outright: it is the samples' own spelling (`fan.next: "left"`, both written later), and §10 L5's "checked against every other step, not an earlier one" says the target is *any* step |
+| C3 | `exit` is not an edge: a run ends when the program counter passes the last step, whatever `exit` names | making the exit a graph node: `exit` names the step whose products leave, and a step whose products are only collected when the flow reaches it — the flow ends by running off the array, not by arriving at a node |
+
+The rule is **equivalent to "no backward jump that loops"**, and the equivalence is provable rather than
+empirical: in a cycle, the step whose array position is greatest is entered by the fall-through edge (the
+only edge that increases the position), so it must be entered by a jump — every cycle contains a forward
+jump. A backward jump is therefore always a link of some cycle, and the check above finds a loop exactly
+when the run can come back to a step it is already executing. That is the reason the *committed* samples
+pass while the pathological `a → … → a` fails, and it is why the rule is not "no backward `next`".
+
+**What `MAX_STORY_STEPS` (64) bounds**: the graph the lint walks, not the number of steps a run may take.
+A **forward** jump (`a`'s `next` naming a later step) is legal without qualification — the committed
+samples use it (`channels.next: "shelf_page"`, `shelf.next: "book"`) — and it may make a step run more
+than once, since the program counter only ever increases on a transition the lint accepted.
 
 ### 12.2 `D-03-2` — materialization is on demand (unchanged from v0.1)
 
@@ -881,10 +913,10 @@ argument shape of `each`.
 | O3 | is `name` required on every step, or only when something references it? | **settled: required** — `next` and `exit` name steps, and `exit` is required, so a name is never optional in practice; a missing or duplicated name is `UP2-E1009` |
 | O4 | may a step override the chain-level `policy`? | **settled: the question is gone** — the settlement policy is retired (`01` `D-01-1`, `02` §5), so there is no chain-level policy and nothing to override; a field-level fallback is written at the action level |
 | O5 | an explicit "return the input unchanged" action | **settled** (change `story-jump-and-naming`): `["py","id",""]` takes no argument and copies nothing, and its product *is* its input; §11.1 uses it for the seed step, and `$in` covers the read case (`$in.url`) |
-| O6 | how far the trace goes (`06` §5.1's structure) and whether a recorded run is the replay format | open, belongs with the trial UI |
+| O6 | how far the trace goes (`06` §5.1's structure) and whether a recorded run is the replay format | **settled** (change `add-story-trace`): the trace is **a debugging aid, not the replay format**. It records one event per evaluated stage (plus one per suspension), and it is lossy by construction — every value is a `type` / `preview` / `size` view whose whole value is read back by `seq` from the trace object's memory — so it can neither replay a run nor serve as a contract; what replays a run is the host's own log of the suspensions it answered (the request it sent, the answer it got, the receipt returned) together with the run's input, which belongs to the host (`01` §1) and is not defined here. How far it goes is settled the same way: the **evaluated** stage is the unit, because a step's field map hides which chain failed, and a suspension is a second event kind because "it handed the host these 20 tasks here" is not a stage's product |
 | O7 | the name of the batch product type | **settled**: `RequestBatch` (v0.1's name, and its items *are* requests); the coinage `TaskList` was dropped |
 | O8 | how a task's receiving step is chosen when it **varies per item** | **settled** (change `story-jump-and-naming`): the task's own `next` overrides the step's, so a chain can compute one from the item's own data and one step can route several channels; "route by URL shape" still needs a mechanism or stays a host table |
-| O9 | a cycle among steps (a `next` that points backwards) | **open, small**: execution ends when the program counter passes the last step, so a cycle runs forever; no lint forbids it yet, and the v0.1 reachability/acyclicity lints were retired with the graph |
+| O9 | a cycle among steps (a `next` that points backwards) | **settled** (change `add-story-cycle-lint`): the story's **flow must be acyclic** — drawn over the steps from the first one, with one edge per step (the next array position, or the step a request step's `next` names), a step entered twice is rejected at compile time with `UP2-E1017` and the travel path in the message. `next` stays free to name **any** step, including one written earlier: the samples' own fan-out shape does that, and a backward jump is legal as long as the region it enters cannot reach the jumping step again. The rule and the stronger reading it rejects (the union graph, which refuses the samples) are §12.5 |
 | O10 | does a `Failed` stage inside a story raise, and is that the host-facing contract? | **settled for now**: the effect vocabulary has no failure member, so a run that cannot produce a step's product raises `Up2Error` carrying the stage's code and the step's pointer; `up2 trial` prints it as a failed state |
 | O11 | a `Missing` chain product at the step boundary | **settled** (change `close-story-open-questions`): a step whose chain product is `Missing` is **skipped** — no product is recorded, and the exit collects nothing for it (§9). A field map drops a missing field and a batch item is skipped (`01` §4.2); the step boundary now applies the same rule instead of inventing a `null` |
 | O12 | does a dotted reference refuse a callable attribute, as `py.getattr` does? | **settled** (change `close-story-open-questions`): yes — a callable attribute is `UP2-E2002` with `py.getattr`'s own message shape and its fix hint. `$resp.json` resolved to a bound method, which could not leave the run anyway (`pack`, `UP2-E2003`); refusing it at the reference makes the failure early and clear |

@@ -14,6 +14,13 @@ import logging
 from . import ops as _ops  # noqa: F401  register built-in operators (explicit registry)
 from .core import (
     CODES,
+    EFFECT_BATCH,
+    EFFECT_CALL,
+    EFFECT_REQUEST,
+    PREVIEW_LIMIT,
+    STATE_FAILED,
+    STATE_MISSING,
+    STATE_OK,
     CompiledField,
     CompiledStory,
     Diagnostic,
@@ -28,11 +35,14 @@ from .core import (
     Scope,
     StoryRun,
     StoryStep,
+    Trace,
+    TraceEvent,
     TypeConstructionError,
     TypeConstructor,
     UnknownTypeError,
     Up2Error,
     Value,
+    ValueView,
     compile_field,
     compile_stage,
     compile_story,
@@ -46,11 +56,12 @@ from .core import (
     start,
     type_names,
     unregister_type,
+    value_view,
 )
 from .core.udfs import get_udf, register_udf, udf_names, unregister_udf
 from .host import load_entry_point_udfs
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 """The single source of the version: ``[tool.hatch.version]`` in ``pyproject.toml`` reads it."""
 
 logger = logging.getLogger("uniparser2")
@@ -64,6 +75,13 @@ _ENV_UDFS = load_entry_point_udfs()
 
 __all__ = [
     "CODES",
+    "EFFECT_BATCH",
+    "EFFECT_CALL",
+    "EFFECT_REQUEST",
+    "PREVIEW_LIMIT",
+    "STATE_FAILED",
+    "STATE_MISSING",
+    "STATE_OK",
     "CompiledField",
     "CompiledStory",
     "Diagnostic",
@@ -78,11 +96,14 @@ __all__ = [
     "Scope",
     "StoryRun",
     "StoryStep",
+    "Trace",
+    "TraceEvent",
     "TypeConstructionError",
     "TypeConstructor",
     "UnknownTypeError",
     "Up2Error",
     "Value",
+    "ValueView",
     "__version__",
     "compile_field",
     "compile_stage",
@@ -103,4 +124,5 @@ __all__ = [
     "udf_names",
     "unregister_type",
     "unregister_udf",
+    "value_view",
 ]

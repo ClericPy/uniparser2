@@ -26,7 +26,7 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 | Form | Command | Positioning |
 |---|---|---|
 | **pywebview trial UI** | `up2 studio` | **primary**: three-column editing + single-step trace + a closed snapshot loop |
-| **CLI** | `up2 lint` / `up2 trial --trace` / `up2 snapshot` | **baseline**: GUI-less environments, CI, scripted calls; every capability of the trial UI is implemented in the CLI first |
+| **CLI** | `up2 lint` / `up2 trial --trace` / `up2 snapshot` | **baseline**: GUI-less environments, CI, scripted calls; every capability of the trial UI is implemented in the CLI first — `--trace` landed with the trace itself (`03` §4.4), the rest of the bench has not |
 | **TUI** | `up2 repl` | **fallback**: usable when there is no webview engine; details pending (§9) |
 
 **Why pywebview is the primary option**:
@@ -128,7 +128,7 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 | `list_samples(domain, tpl_key)` | — | the list of case names |
 | `load_sample(domain, tpl_key, case)` | — | sample text + sniffed format |
 | `lint(text)` | chain text | `{errors: Diagnostic[], warnings: Diagnostic[]}` |
-| `start(text, value, trace: bool)` | chain text, the run's input | a **resumable run** (`03` §5): the UI answers the effects itself (the trial bench plays the host) and collects `TraceEvent[]` |
+| `start(text, value, trace: bool)` | chain text, the run's input | a **resumable run** (`03` §5): the UI answers the effects itself (the trial bench plays the host) and collects `TraceEvent[]` (§5.1; `get_value(seq)` then reads one value in full) |
 | `snapshot(text, domain, tpl_key, case)` | — | `{ok, path}` |
 
 `Diagnostic` (exactly the same as `04` §8; the UI and the CLI share this one data structure):
@@ -146,30 +146,57 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 
 ### 5.1 `TraceEvent`
 
+One event per **evaluated stage** (a stage the tri-state short-circuit skips records nothing), plus one
+per **suspension**. A stage event:
+
 ```jsonc
 {
   "seq": 4,
-  "step": "reqs",            // the step key (`03` §2.1)
+  "step": "reqs",            // the step key (`03` §2.1); null outside a story
   "item": 0,                 // which result when fanning out (null when there is no fan-out)
-  "field": "url",
+  "field": "url",            // the field-map key the chain was compiled as
   "stage": 1,                // the index of the stage inside its chain
   "op": "py",
   "action": "urljoin",
   "params": {"arg": {"kind": "ref", "target": "globals.base_url"}},
   "input":  {"type": "str", "preview": "\"/public/1681/1.html\"", "size": 21},
   "output": {"type": "str", "preview": "\"https://www.ah.gov.cn/public/1681/1.html\"", "size": 44},
-  "state": "Ok",             // Ok | Missing | Failed; an effect event carries "effect": "request"|"call"
+  "state": "Ok",             // Ok | Missing | Failed
   "detail": null,            // carries code/reason when Failed
   "ms": 0.31
 }
 ```
 
+A suspension event carries the same sequence and the same `input` / `output` shape, with `stage` / `op` /
+`field` null and `effect` naming what was handed over; it is `Ok`, because a suspension is not an error
+(`03` §5):
+
+```jsonc
+{
+  "seq": 5,
+  "step": "reqs",
+  "item": 0,
+  "field": null,
+  "stage": null,
+  "op": null,
+  "action": null,                          // a `call` puts the host function here
+  "params": null,                          // a `call` puts its compiled `with` tree here
+  "input":  {"type": "str", "preview": "\"<html>…\"", "size": 190464},
+  "output": {"type": "list", "preview": "[{\"url\": \"https://…\"}, …]", "size": 2410},
+  "state": "Ok",
+  "detail": null,
+  "ms": 0.05,
+  "effect": "batch"         // request | batch | call: it suspended here, and this is what it handed out
+}
+```
+
 | Design point | Content |
 |---|---|
-| **Values are not sent back in full** | A large value (an HTML document, a long body) returns only `type` / `preview` (the first 200 characters) / `size`; expanding it calls `get_value(seq)` for the whole thing on demand |
-| **Parameters are already compiled** | `params` are the **compiled** named parameters (the named AST of `02`), so the UI shows "what the engine actually understands" rather than the chain author's original wording — **this is the only effective way to investigate "what I wrote is not what it understood"** |
-| **Fan-out is visible** | The `item` field makes a problem such as "the title of the 3rd result is missing" locatable |
-| **`Missing` has a starting point** | Within one trace it is obvious from which **stage** a field starts to be `Missing` (the acceptance of `04` §7-S3 depends on it) |
+| **Values are not sent back in full** | A large value (an HTML document, a long body) returns only `type` / `preview` (the value's display text cut to 200 characters, with the `...(+N)` marker saying how much was dropped) / `size` (the length of the whole text); expanding it calls `get_value(seq)` for the whole thing on demand — `get_value(seq, side="input")` for the other side of the row (the default is the event's output). A stage that produced no value (a `Missing`, and a `Failed` too) shows the missing sentinel, and a failure is named by `state` + `detail` |
+| **Parameters are already compiled** | `params` are the **compiled** named parameters (the named AST of `02`), so the UI shows "what the engine actually understands" rather than the chain author's original wording — **this is the only effective way to investigate "what I wrote is not what it understood"**. A leaf says what it is (`{"kind": "ref", "target": "globals.base_url"}` / `{"kind": "lit", "value": …}`), an `each` carries its compiled field map (`{"kind": "fields", …}`) and a `call` its `with` tree |
+| **Fan-out is visible** | The `item` field makes a problem such as "the title of the 3rd result is missing" locatable. It has two sources, because a story fans out in two places: `each` numbers the element (its position in input order) and a `RequestBatch` numbers the answer its receiving step is running (its position in task order). When one fan-out sits inside the other the **innermost** index wins, because the event is about the field chain that is running |
+| **`Missing` has a starting point** | Within one trace it is obvious from which **stage** a field starts to be `Missing` (the acceptance of `04` §7-S3 depends on it). `field` is what keeps two fields of one map apart, so the row that ends missing names the chain it belonged to |
+| **It is a debugging aid, not the replay format** | A trace is collected only when the caller asks for one, it lives in memory for as long as the run does, and it holds no answer. What replays a run is the host's log of the suspensions it answered (`03` §13 O6) |
 
 ---
 
@@ -246,7 +273,7 @@ up2 studio
 | 1 | `up2 studio` starts in a network-less environment | the page is fully functional after unplugging the network |
 | 2 | Open a frozen chain + one sample | all three columns have content |
 | 3 | Mistype one action name | `UP2-E1002` and `fix` appear in column ② within 10 seconds |
-| 4 | Click run | column ④ shows a trace **exactly the same** as `up2 trial --trace` (the same data structure) |
+| 4 | Click run | column ④ shows a trace **exactly the same** as `up2 trial --trace` (the same data structure; the flag is implemented, the column is not) |
 | 5 | Click save as snapshot | the file lands on disk and `up2 test` can immediately run it |
 | 6 | When pywebview is not installed | it suggests the install command and falls back to the TUI without raising a stack trace |
 | 7 | `tests/ui` smoke | it skips automatically in a GUI-less environment and does not block CI |

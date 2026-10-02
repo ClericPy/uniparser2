@@ -1,13 +1,20 @@
 """``up2`` command line: operator introspection / conformance audit / compile check / local trial
-run (design docs 04 §7-S0–S3, 05 §5), plus the template store's own three commands (04 §4–§6).
+run (design docs 04 §7-S0–S3, 05 §5), the template store's own commands (04 §4–§6), and the SOP
+commands around them: the snapshot runner of G2 (``up2 snapshot`` / ``up2 test``, 04 §7-S4/S5) and
+``up2 doctor`` with its ``--fix`` (04 §10, 07 §3 acceptance item 3).
 
 Exit codes: ``0`` ok (including ``Missing`` — missing is not an error, 01 §4.1); ``1`` compile or
 run failed; ``2`` usage error.
 
-Two file shapes are accepted by ``lint`` / ``trial`` / ``publish``: a **field chain** (a JSON array
-of stages) and a **story** (a JSON object carrying ``steps``). A story is compiled and run with the
-story layer; a suspension is reported as such, because a CLI has no host to answer a request (§12 of
-``03``).
+Two file shapes are accepted by ``lint`` / ``trial`` / ``publish`` / ``snapshot``: a **field chain**
+(a JSON array of stages) and a **story** (a JSON object carrying ``steps``). A story is compiled and
+run with the story layer; a suspension is reported as such, because a CLI has no host to answer a
+request (§12 of ``03``).
+
+``up2 trial --trace`` reports the run's per-stage trace (``06`` §5.1): the events in evaluation
+order, as one JSON document with ``--json`` and as one line per event without it. A trace changes
+nothing about the run, and a story still stops at its first suspension -- the trace then ends at the
+effect event that suspended it, which is what the trial bench displays as "it handed this out here".
 
 Value conventions:
 - ``--global K=V`` / ``--product K=V``: ``V`` is parsed as JSON and falls back to a string.
@@ -16,7 +23,8 @@ Value conventions:
 
 The store commands take their implementation from ``UP2_STORE`` and their location from ``UP2_HOME``
 (04 §4.1); ``get`` recompiles what it read back, because a stored chain is data and is never trusted
-as a compilation product (01 §8).
+as a compilation product (01 §8). The sample commands take their root from ``--tests-root``
+(default ``samples``, where 05 §3 puts a chain's behavioral contract).
 """
 
 from __future__ import annotations
@@ -36,25 +44,44 @@ from uniparser2 import (
     Ok,
     Outcome,
     Scope,
+    Trace,
+    TraceEvent,
     Up2Error,
+    ValueView,
     compile_field,
     compile_story,
     eval_field,
     pack,
     start,
 )
-from uniparser2.core import registry
+from uniparser2.core import compare_products, registry
 from uniparser2.core.conformance import check
 from uniparser2.store import (
+    AuditRow,
     audit_row_dict,
     gate_overwrite,
     gate_skip_tests,
     lint_graph,
     open_store,
+    repair_chain,
     template_dict,
 )
 
 from .conformance import DEFAULT_TESTS_ROOT, scan_tests
+from .samples import (
+    DEFAULT_SAMPLES_ROOT,
+    RegressionFailure,
+    SampleCase,
+    case_directory,
+    check_case_name,
+    failure_line,
+    find_cases,
+    read_expected,
+    read_input,
+    record_expected,
+    regression_message,
+    run_graph,
+)
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -63,7 +90,10 @@ MAIN_INPUT_KEY = "text"
 STORY_KEY = "steps"
 UNKNOWN_ACTOR = "unknown"
 AGENT_SOURCE = "agent"
+DOCTOR_ACTOR = "doctor"
+DOCTOR_NOTE = "written by `up2 doctor --fix`: this chain had no audit row"
 SOURCES = ("human", "agent", "import")
+_G2_FIX = "run `up2 test` for the full difference list, or pass --skip-tests --note"
 _JSON_CONTAINER_PREFIXES = ("{", "[")
 
 
@@ -135,6 +165,11 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="NAME=JSON",
         help="inject outputs of preceding nodes",
     )
+    trial.add_argument(
+        "--trace",
+        action="store_true",
+        help="report the per-stage trace of this run (06 §5.1)",
+    )
     trial.add_argument("--json", action="store_true", help="output JSON")
     trial.set_defaults(handler=_cmd_trial)
 
@@ -159,8 +194,48 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="replace a chain whose status is already ready",
     )
+    publish.add_argument(
+        "--tests-root",
+        default=str(DEFAULT_SAMPLES_ROOT),
+        help="root of the sample cases G2 regresses (default: samples)",
+    )
     publish.add_argument("--json", action="store_true", help="output JSON")
     publish.set_defaults(handler=_cmd_publish)
+
+    snapshot = sub.add_parser("snapshot", help="record a case's product as its expected product")
+    snapshot.add_argument("file", help="chain file (JSON)")
+    snapshot.add_argument("--domain", required=True, help="site identity, e.g. ah.gov.cn")
+    snapshot.add_argument("--key", dest="tpl_key", required=True, help="business name")
+    snapshot.add_argument("--case", required=True, help="sample case name (a directory)")
+    snapshot.add_argument(
+        "--accept",
+        action="store_true",
+        help="confirm the product and write samples/.../expected.json",
+    )
+    snapshot.add_argument(
+        "--tests-root",
+        default=str(DEFAULT_SAMPLES_ROOT),
+        help="root of the sample cases (default: samples)",
+    )
+    snapshot.add_argument("--json", action="store_true", help="output JSON")
+    snapshot.set_defaults(handler=_cmd_snapshot)
+
+    test = sub.add_parser("test", help="run the frozen chain of a key plus its samples (04 §7-S5)")
+    test.add_argument("domain", help="site identity")
+    test.add_argument("key", help="business name")
+    test.add_argument("--case", default=None, help="run one case only")
+    test.add_argument(
+        "--tests-root",
+        default=str(DEFAULT_SAMPLES_ROOT),
+        help="root of the sample cases (default: samples)",
+    )
+    test.add_argument("--json", action="store_true", help="output JSON")
+    test.set_defaults(handler=_cmd_test)
+
+    doctor = sub.add_parser("doctor", help="check the store for inconsistencies and repair them")
+    doctor.add_argument("--fix", action="store_true", help="write the audit rows that are missing")
+    doctor.add_argument("--json", action="store_true", help="output JSON")
+    doctor.set_defaults(handler=_cmd_doctor)
 
     get = sub.add_parser("get", help="print a stored chain with its fingerprint")
     get.add_argument("domain", help="site identity")
@@ -262,8 +337,9 @@ def _cmd_trial(args: argparse.Namespace) -> int:
     if error is not None:
         print(error, file=sys.stderr)
         return EXIT_USAGE
+    trace = Trace() if args.trace else None
     if _is_story(source):
-        return _trial_story(source, args)
+        return _trial_story(source, args, trace)
     names, products, error = _split_assignments(args.product, need_value=True)
     if error is not None:
         print(error, file=sys.stderr)
@@ -283,10 +359,11 @@ def _cmd_trial(args: argparse.Namespace) -> int:
         return EXIT_USAGE
     scope = Scope(globals=globals_map, products=products)
     value = inputs.get(MAIN_INPUT_KEY, inputs)
-    return _report_outcome(eval_field(compiled, value, scope=scope), args.json)
+    outcome = eval_field(compiled, value, scope=scope, trace=trace)
+    return _report_outcome(outcome, args.json, trace=trace)
 
 
-def _trial_story(source: Any, args: argparse.Namespace) -> int:
+def _trial_story(source: Any, args: argparse.Namespace, trace: Trace | None) -> int:
     """Run a story to its first effect. Without a host there is nothing to answer a request."""
     if args.product or args.global_vars:
         print(
@@ -301,22 +378,24 @@ def _trial_story(source: Any, args: argparse.Namespace) -> int:
         return EXIT_USAGE
     value = inputs.get(MAIN_INPUT_KEY, inputs)
     try:
-        effect = start(source, value).next()
+        effect = start(source, value, trace=trace).next()
     except Up2Error as exc:
-        _print_diagnostic(exc.diagnostic, as_json=args.json)
+        if trace is None:
+            _print_diagnostic(exc.diagnostic, as_json=args.json)
+            return EXIT_FAILED
+        # The trace is the point of asking for one: the failing stage's own event (its code and
+        # reason) is what says where the run stopped.
+        _emit_state({"state": "failed", **exc.diagnostic.to_dict()}, as_json=args.json, trace=trace)
         return EXIT_FAILED
     if effect[0] == "done":
-        return _report_outcome(Ok(effect[1]), args.json)
+        return _report_outcome(Ok(effect[1]), args.json, trace=trace)
     payload: dict[str, Any] = {
         "state": "suspended",
         "effect": effect[0],
         "detail": list(effect[1:]),
         "note": "a suspension is not an error; a host answers it with run.send(answer)",
     }
-    if args.json:
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-    else:
-        print(f"[suspended] {json.dumps(payload, ensure_ascii=False)}")
+    _emit_state(payload, as_json=args.json, trace=trace)
     return EXIT_OK
 
 
@@ -338,6 +417,19 @@ def _cmd_publish(args: argparse.Namespace) -> int:
     if skipped is not None:
         _print_diagnostic(skipped, as_json=args.json)
         return EXIT_FAILED
+    if not args.skip_tests:
+        # G2: the snapshots that already exist are regressed before anything is written, so a
+        # refusal leaves the store untouched (04 §6). This mirrors `up2 test`, so both report the
+        # same JSON Pointer difference for the same red case.
+        failures = _run_cases(
+            _cases_root(args.tests_root), args.domain, args.tpl_key, graph, case=None
+        )
+        if failures:
+            _print_diagnostic(
+                Diagnostic(code="UP2-E3005", message=regression_message(failures), fix=_G2_FIX),
+                as_json=args.json,
+            )
+            return EXIT_FAILED
     try:
         result = store.publish(
             graph,
@@ -365,6 +457,160 @@ def _cmd_publish(args: argparse.Namespace) -> int:
             f"{result.old_hash} -> {result.new_hash} audit_seq={result.audit_seq}"
         )
     return EXIT_OK
+
+
+def _cmd_snapshot(args: argparse.Namespace) -> int:
+    """S4: freeze one case's product as its expected product (04 §7-S4).
+
+    ``--accept`` is the only way a snapshot is written: a person confirms in S3 that the product is
+    right, and `up2 trial` never writes one automatically, so "it ran once" cannot record a wrong
+    product as the right one.
+    """
+    if not args.accept:
+        print(
+            "usage error: writing a snapshot needs --accept (04 §7-S4: a snapshot is frozen only "
+            "after a person confirmed the product in S3)",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    invalid = check_case_name(args.case)
+    if invalid is not None:
+        print(f"usage error: {invalid}", file=sys.stderr)
+        return EXIT_USAGE
+    graph, error = _load_chain(args.file)
+    if error is not None:
+        print(error, file=sys.stderr)
+        return EXIT_USAGE
+    case = SampleCase(
+        name=args.case,
+        path=case_directory(_cases_root(args.tests_root), args.domain, args.tpl_key, args.case),
+    )
+    value, error = read_input(case)
+    if error is not None:
+        print(error, file=sys.stderr)
+        return EXIT_USAGE
+    result = run_graph(graph, value)
+    if not result.ok:
+        print(result.error, file=sys.stderr)
+        return EXIT_FAILED
+    error = record_expected(case, result.value)
+    if error is not None:
+        print(error, file=sys.stderr)
+        return EXIT_FAILED
+    payload: dict[str, Any] = {
+        "case": case.name,
+        "expected": str(case.expected_path),
+        "value": result.value,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"recorded {case.expected_path}")
+    return EXIT_OK
+
+
+def _cmd_test(args: argparse.Namespace) -> int:
+    """S5: run a key's frozen chain over every sample once (04 §7-S5)."""
+    store = open_store()
+    template = store.get(args.domain, args.key)
+    if template is None:
+        print(f"no chain {args.domain}/{args.key}", file=sys.stderr)
+        return EXIT_FAILED
+    try:
+        # A stored chain is data (`01` §8): compile the row before regressing anything with it, so a
+        # hand-edited chain is reported once by the compiler instead of once per case.
+        lint_graph(template.graph)
+    except Up2Error as exc:
+        _print_diagnostic(exc.diagnostic, as_json=args.json)
+        return EXIT_FAILED
+    failures = _run_cases(
+        _cases_root(args.tests_root), args.domain, args.key, template.graph, case=args.case
+    )
+    if args.json:
+        payload = {
+            "ok": not failures,
+            "domain": args.domain,
+            "key": args.key,
+            "failures": [item.to_dict() for item in failures],
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    elif failures:
+        for failure in failures:
+            print(failure_line(failure))
+    else:
+        print(f"OK: {args.domain}/{args.key} matches its samples")
+    return EXIT_FAILED if failures else EXIT_OK
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """04 §10: check that chains and audit correspond, and repair what --fix can (E3003)."""
+    store = open_store()
+    findings = store.inconsistencies()
+    fixed: list[AuditRow] = []
+    if args.fix:
+        for finding in findings:
+            row = repair_chain(store, finding.chain_id, actor=DOCTOR_ACTOR, note=DOCTOR_NOTE)
+            if row is not None:
+                fixed.append(row)
+        remaining = store.inconsistencies()
+    else:
+        remaining = findings
+    payload: dict[str, Any] = {
+        "ok": not remaining,
+        "findings": [finding.to_dict() for finding in findings],
+        "fixed": [audit_row_dict(row) for row in fixed],
+        "remaining": [finding.to_dict() for finding in remaining],
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        for finding in findings:
+            print(str(finding), file=sys.stderr)
+        for row in fixed:
+            print(f"fixed {row.chain_id}: wrote audit row {row.seq}")
+        print(
+            "OK: no inconsistency"
+            if not remaining
+            else f"{len(remaining)} finding(s) remain; run `up2 doctor --fix`"
+        )
+    return EXIT_OK if not remaining else EXIT_FAILED
+
+
+def _cases_root(tests_root: str) -> Path:
+    """Where the sample cases live: ``--tests-root``, defaulting to the repository's ``samples``."""
+    return Path(tests_root)
+
+
+def _run_cases(
+    root: Path, root_domain: str, tpl_key: str, graph: Any, *, case: str | None
+) -> list[RegressionFailure]:
+    """Regress every sample of one key (or one ``--case``) against the graph it was frozen with.
+
+    A missing snapshot is a failure of the gate rather than a silent pass: G2 promises to regress
+    "every case under ``samples/`` for this ``tpl_key``" (04 §6), and a chain with no recorded
+    snapshot has nothing to regress.
+    """
+    cases = find_cases(root, root_domain, tpl_key)
+    if case is not None:
+        cases = [item for item in cases if item.name == case]
+    failures: list[RegressionFailure] = []
+    for item in cases:
+        value, error = read_input(item)
+        if error is not None:
+            failures.append(RegressionFailure(case=item.name, error=error))
+            continue
+        expected, error = read_expected(item)
+        if error is not None:
+            failures.append(RegressionFailure(case=item.name, error=error))
+            continue
+        result = run_graph(graph, value)
+        if not result.ok:
+            failures.append(RegressionFailure(case=item.name, error=result.error))
+            continue
+        differences = compare_products(expected, result.value)
+        if differences:
+            failures.append(RegressionFailure(case=item.name, differences=differences))
+    return failures
 
 
 def _cmd_get(args: argparse.Namespace) -> int:
@@ -402,11 +648,11 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _report_outcome(outcome: Outcome, as_json: bool) -> int:
+def _report_outcome(outcome: Outcome, as_json: bool, *, trace: Trace | None = None) -> int:
     if isinstance(outcome, Ok):
         packed = pack(outcome.value)
         if isinstance(packed, Failed):
-            return _report_outcome(packed, as_json)
+            return _report_outcome(packed, as_json, trace=trace)
         payload: dict[str, Any] = {"state": "ok", "value": outcome.value}
         code = EXIT_OK
     elif isinstance(outcome, Missing):
@@ -420,11 +666,50 @@ def _report_outcome(outcome: Outcome, as_json: bool) -> int:
             "fix": outcome.fix,
         }
         code = EXIT_FAILED
-    if as_json:
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-    else:
-        print(f"[{payload['state']}] " + json.dumps(payload, ensure_ascii=False))
+    _emit_state(payload, as_json=as_json, trace=trace)
     return code
+
+
+def _emit_state(payload: dict[str, Any], *, as_json: bool, trace: Trace | None) -> None:
+    """Print one run's state, and its trace when the caller asked for one.
+
+    The trace is a key of the JSON document (so one call answers both), and one line per event in
+    the text output -- printing it twice would be unreadable for a long run.
+    """
+    if as_json:
+        if trace is not None:
+            payload["trace"] = trace.to_list()
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    if trace is not None:
+        _print_trace(trace)
+    print(f"[{payload['state']}] " + json.dumps(payload, ensure_ascii=False))
+
+
+def _print_trace(trace: Trace) -> None:
+    """One line per trace event: the trial bench (`06` §3) renders the same events as a table."""
+    for event in trace.events:
+        print(_trace_line(event))
+
+
+def _trace_line(event: TraceEvent) -> str:
+    where = event.step or "-"
+    if event.field:
+        where = f"{where}.{event.field}"
+    item = "-" if event.item is None else str(event.item)
+    stage = "-" if event.stage is None else str(event.stage)
+    doing = f"effect:{event.effect}" if event.effect else f"{event.op}.{event.action}"
+    return (
+        f"{event.seq:>4}  {where:<24} item={item:<4} stage={stage:<3} {doing:<22} "
+        f"{event.state:<8}{event.ms:>8.3f}ms  "
+        f"{_view_text(event.input)} -> {_view_text(event.output)}"
+    )
+
+
+def _view_text(view: ValueView) -> str:
+    """One event side, compactly: the type and size, then the preview's beginning."""
+    text = view.preview if len(view.preview) <= 48 else view.preview[:48] + "..."
+    return f"{view.type}({view.size}) {text}"
 
 
 def _print_diagnostic(diagnostic: Diagnostic, *, as_json: bool) -> None:

@@ -193,6 +193,131 @@ def test_next_must_resolve_to_a_step() -> None:
     assert _compile_error(story) == "UP2-E1016"
 
 
+def _cycle_error(story: dict[str, Any]) -> Any:
+    with pytest.raises(Up2Error) as info:
+        compile_story(story)
+    assert info.value.diagnostic.code == "UP2-E1017"
+    return info.value.diagnostic
+
+
+def test_a_backward_next_that_closes_a_loop_is_rejected_at_compile_time() -> None:
+    """`next` may point at any step; a loop is an authoring error the run could never finish."""
+    diagnostic = _cycle_error(
+        _parse_story(
+            steps=[
+                {
+                    "name": "feed",
+                    "parse": {"url": [["py", "id", ""]]},
+                    "type": "Request",
+                    "next": "page",
+                },
+                {"name": "page", "parse": {"n": [["py", "len", ""]]}, "type": "dict"},
+                {
+                    "name": "again",
+                    "parse": {"url": [["py", "id", ""]]},
+                    "type": "Request",
+                    "next": "feed",
+                },
+            ],
+            exit="page",
+        )
+    )
+    # The message carries the travel path, and the pointer names the jump that closes the loop.
+    assert "feed -> page -> again -> feed" in diagnostic.message
+    assert diagnostic.pointer == "/steps/2/next"
+
+
+def test_a_step_that_jumps_to_itself_is_a_loop() -> None:
+    diagnostic = _cycle_error(
+        _parse_story(
+            steps=[
+                {
+                    "name": "bad",
+                    "parse": {"url": [["py", "id", ""]]},
+                    "type": "Request",
+                    "next": "bad",
+                }
+            ],
+            exit="bad",
+        )
+    )
+    assert "bad -> bad" in diagnostic.message
+
+
+def test_a_backward_next_into_a_region_that_cannot_reach_it_compiles() -> None:
+    """A fan-out whose answers are parsed by a step written **earlier** is the samples' own shape.
+
+    `fan`'s jump points backwards, but no path leads from `left` back to `fan`: the flow stays a
+    chain of distinct steps, so the story compiles and runs.
+    """
+    story = {
+        "steps": [
+            {
+                "name": "seed",
+                "parse": {"url": [["py", "id", ""]]},
+                "type": "Request",
+                "next": "fan",
+            },
+            {
+                "name": "fan",
+                "parse": {
+                    "items": [
+                        ["const", [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}]]
+                    ]
+                },
+                "type": "RequestBatch",
+                "next": "left",
+            },
+            {"name": "left", "parse": {"side": [["const", "left"]]}, "type": "dict"},
+            {"name": "right", "parse": {"side": [["const", "right"]]}, "type": "dict"},
+            {"name": "joined", "parse": {"n": [["py", "len", ""]]}, "type": "dict"},
+        ],
+        "exit": "joined",
+    }
+    run = start(story, "seed")
+    assert run.next() == ("request", {"url": "seed"}, "fan")
+    effect = run.send(Answer("home"))
+    assert effect[0] == "batch"
+    assert run.send([Answer("x"), Answer("y")]) == ("done", [{"n": 2}])
+
+
+def test_a_backward_next_followed_by_a_forward_jump_compiles() -> None:
+    """The books-sample shape: the region a jump enters ends forward, so the flow never loops."""
+    story = {
+        "steps": [
+            {
+                "name": "seed",
+                "parse": {"url": [["py", "id", ""]]},
+                "type": "Request",
+                "next": "shelf_page",
+            },
+            {
+                "name": "shelf_page",
+                "parse": {"page": [["py", "getattr", "text"]]},
+                "type": "Page",
+            },
+            {
+                "name": "shelf",
+                "parse": {
+                    "items": [
+                        ["const", ["u"]],
+                        ["each", {"url": [["py", "id", ""]]}],
+                    ]
+                },
+                "type": "RequestBatch",
+                "next": "record",
+            },
+            {"name": "record", "parse": {"body": [["py", "getattr", "text"]]}, "type": "Record"},
+        ],
+        "exit": "record",
+    }
+    run = start(story, "seed")
+    assert run.next() == ("request", {"url": "seed"}, "shelf_page")
+    effect: Any = run.send(Answer("list"))
+    assert effect[0] == "batch"
+    assert run.send([Answer("body")]) == ("done", [{"body": "body"}])
+
+
 def test_the_step_limit_is_enforced() -> None:
     steps = [{"name": f"s{index}", "parse": {"u": [["py", "id", ""]]}} for index in range(65)]
     assert _compile_error({"steps": steps, "exit": "s0"}) == "UP2-E1012"
@@ -515,8 +640,9 @@ def test_a_batch_product_without_items_is_a_story_error() -> None:
                 "name": "bad",
                 "parse": {"nope": [["py", "id", ""]]},
                 "type": "RequestBatch",
-                "next": "bad",
-            }
+                "next": "sink",
+            },
+            {"name": "sink", "parse": {"seen": [["py", "id", ""]]}, "type": "dict"},
         ],
         exit="bad",
     )
@@ -537,8 +663,9 @@ def test_a_task_routing_to_an_unknown_step_fails() -> None:
                 "name": "fan",
                 "parse": {"items": [["const", [{"url": "a", "next": "gone"}]]]},
                 "type": "RequestBatch",
-                "next": "fan",
+                "next": "sink",
             },
+            {"name": "sink", "parse": {"seen": [["py", "id", ""]]}, "type": "dict"},
         ],
         exit="fan",
     )
@@ -551,7 +678,10 @@ def test_a_task_routing_to_an_unknown_step_fails() -> None:
 
 def test_a_request_product_that_is_not_an_object_is_a_story_error() -> None:
     story = _parse_story(
-        steps=[{"name": "bad", "parse": [["const", 7]], "type": "Request", "next": "bad"}],
+        steps=[
+            {"name": "bad", "parse": [["const", 7]], "type": "Request", "next": "sink"},
+            {"name": "sink", "parse": {"seen": [["py", "id", ""]]}, "type": "dict"},
+        ],
         exit="bad",
     )
     assert _run_error(story, "ignored") == "UP2-E2005"
@@ -564,8 +694,9 @@ def test_a_batch_task_that_is_not_an_object_is_a_story_error() -> None:
                 "name": "bad",
                 "parse": {"items": [["const", [7]]]},
                 "type": "RequestBatch",
-                "next": "bad",
-            }
+                "next": "sink",
+            },
+            {"name": "sink", "parse": {"seen": [["py", "id", ""]]}, "type": "dict"},
         ],
         exit="bad",
     )

@@ -6,7 +6,7 @@ A declarative, deterministic, serializable **text parsing engine**: it turns the
 input text to a specified structure into JSON data (a **parse chain**), generated offline by a human
 or an LLM, with nothing but deterministic evaluation at runtime.
 
-> **Status**: `0.4.0`. **L1** (the DSL operator layer) is complete: **11 operators** —
+> **Status**: `0.5.0`. **L1** (the DSL operator layer) is complete: **11 operators** —
 > `css` / `css1` (HTML selectors — all matches vs. first match only, selectolax), `xpath` (XML, lxml),
 > `json` (jmespath), `re`, `py` (42 allowlist functions), `udf` (host-registered, no code in the
 > chain), `code` (in-chain code, language-level sandbox, **not present by default** — see the
@@ -24,10 +24,14 @@ or an LLM, with nothing but deterministic evaluation at runtime.
 > LRU): one document is parsed once per run, however many fields read it. **L3 has started**: the
 > **template store** (`04` §1–§6) binds a chain to a `(root_domain, tpl_key)` identity — one row per
 > chain, a `blake2s` fingerprint, an append-only audit, and two implementations behind one
-> `TemplateStore` protocol (a file store and SQLite) — with `up2 publish` / `get` / `audit` over it;
-> the sample runner and `up2 doctor` are the next slice. The in-place trial UI is not
-> there yet. For progress and acceptance criteria see the roadmap in the design notes; to see the
-> operator layer run right now, in a source checkout: `uv run python demo.py`. (`demo.py` and
+> `TemplateStore` protocol (a file store and SQLite) — with `up2 publish` / `get` / `audit` over it,
+> and the **SOP commands around it**: `up2 snapshot` freezes a case's product, `up2 test` regresses the
+> frozen chain over every sample (a mismatch prints a JSON Pointer difference), `publish` regresses that
+> set before it writes, and `up2 doctor --fix` repairs a chain that has no audit row. The `S0–S7`
+> walkthrough of `04` §7 is runnable from S2 on, and `up2 trial --trace` reports a run's per-stage
+> trace (`06` §5.1). `up2 list` and the in-place trial UI are not there yet. For progress and
+> acceptance criteria see the roadmap in the design notes; to
+> see the operator layer run right now, in a source checkout: `uv run python demo.py`. (`demo.py` and
 > `tools/demo_report.py` live in the repository only: neither the wheel nor the sdist ships them.)
 
 ## Why it exists
@@ -78,15 +82,18 @@ chain.
 The operator layer is complete and a **first story executor** exists, with the type registry and the
 run-scoped materialization cache behind it, and the **template store** (`04` §1–§6) has landed: the
 `Template` / `template_audit` records, the `blake2s` fingerprint, the `TemplateStore` protocol with
-`FileStore` and `SqliteStore`, the `publish` gates and `up2 publish` / `get` / `audit`. The rest of the
-design's L2/L3 is unimplemented: no `up2 trial --trace`, no `up2 studio` bench, no sample runner
-(`up2 snapshot` / `up2 test`), no `up2 list` and no `up2 doctor`, and therefore no complete `S0–S7`
-publishing SOP; the ADRs have not been written either. There are no `seed` / `parse` /
+`FileStore` and `SqliteStore`, the `publish` gates and `up2 publish` / `get` / `audit`, plus the SOP
+commands `up2 snapshot` / `test` / `doctor` and the committed sample case `samples/local/demo/`. The
+rest of the design's L2/L3 is unimplemented: no `up2 studio` bench and no
+`up2 list` (the `TemplateStore.list` method exists, no command prints it); the ADRs have not been
+written either. There are no `seed` / `parse` /
 `emit` node types and no `routes` — that model was retired with the story model, so what is left to
 build is the list above.
-The CLI is exactly `ops` / `conformance` / `lint` / `trial` / `publish` / `get` / `audit`, and the
+The CLI is exactly `ops` / `conformance` / `lint` / `trial` / `snapshot` / `test` / `publish` / `get` /
+`audit` / `doctor`, and the
 public API is `compile_field` /
-`compile_stage` / `compile_story` / `start` / `eval_field` plus the value and scope types (the store is
+`compile_stage` / `compile_story` / `start` / `eval_field` plus the value, scope and trace types
+(`Trace` / `TraceEvent`, what `up2 trial --trace` reports; the store is
 its own layer, `uniparser2.store`). The layers,
 their deliverables and their acceptance criteria are in
 [`docs/specs/007` §3](docs/specs/007-source-decisions-and-roadmap.md).
@@ -206,6 +213,21 @@ uv run up2 audit ah.gov.cn 政府文件列表                        # who chang
 `--skip-tests` is accepted only with `--note` (the note lands on the audit row), and replacing a row
 whose `status` is `ready` needs `--confirm-overwrite`.
 
+**The snapshots in `samples/` are the regression the publish gate runs** (`04` §6 G2, §7-S4/S5). A
+sample case is a directory — `input.txt` plus the `expected.json` that `--accept` freezes:
+
+```bash
+uv run up2 snapshot link.json --domain ah.gov.cn --key 政府文件列表 --case list-2026-09 --accept
+uv run up2 test ah.gov.cn 政府文件列表          # every case of that key; a mismatch prints, e.g. /0/title
+uv run up2 publish link.json --domain ah.gov.cn --key 政府文件列表   # refuses a red set: UP2-E3005
+uv run up2 doctor [--fix]                       # chains and audit in step? --fix writes a missing audit row
+```
+
+A case that carries an `input.txt` but no snapshot is **red**, so a chain cannot quietly stop being
+regressed; passing `--skip-tests --note "…"` is the documented way past a red set, and the note is
+what the audit row records. The committed example is
+[`samples/local/demo/`](samples/local/demo/site.json).
+
 Python API:
 
 ```python
@@ -284,9 +306,9 @@ uniparser2/
 │   │   └── (zero third-party dependencies, no IO, no coroutines)
 │   ├── ops/            operator implementations (basic · regex · pyops · ctx; each operator declares its own actions and dependencies)
 │   ├── store/          the template store (Template + fingerprint + FileStore / SqliteStore + the publish gates)
-│   ├── cli/            the up2 command (ops / conformance / lint / trial / publish / get / audit)
+│   ├── cli/            the up2 command (ops / conformance / lint / trial / snapshot / test / publish / get / audit / doctor) and the snapshot runner
 │   └── py.typed        PEP 561 type marker
-├── tests/              operator behavior dictionary · compile-time/runtime/storage error codes · serialization round-trip · CLI end-to-end · conformance audit
+├── tests/              operator behavior dictionary · compile-time/runtime/storage error codes · serialization round-trip · CLI end-to-end · snapshot cases · conformance audit
 ├── tools/              local development scripts (the generated catalogue; not shipped)
 ├── docs/               index, the design notes (`docs/specs/0NN-*.md`), the operator reference and the generated catalogue
 ├── .github/workflows/  CI and release

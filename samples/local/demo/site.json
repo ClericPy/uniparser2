@@ -1,0 +1,15 @@
+{
+  "steps": [
+    {
+      "name": "record",
+      "parse": {
+        "headings": [
+          ["css", "text", "h2"],
+          ["py", "uniq", ""]
+        ]
+      },
+      "type": "dict"
+    }
+  ],
+  "exit": "record"
+}

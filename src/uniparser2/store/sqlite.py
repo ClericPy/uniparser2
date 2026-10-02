@@ -136,7 +136,7 @@ class SqliteStore:
         return [_audit_of(row) for row in rows]
 
     def inconsistencies(self) -> builtins.list[Diagnostic]:
-        """The `UP2-E3003` findings (`04` §5.1, §10); the repair is the later `doctor` slice."""
+        """The `UP2-E3003` findings (`04` §5.1, §10); repaired by :func:`repair_chain`."""
         with self._connection() as conn:
             missing = [
                 row[0]
@@ -155,6 +155,16 @@ class SqliteStore:
         return [chain_without_audit(chain_id) for chain_id in missing] + [
             audit_without_chain(chain_id) for chain_id in orphan
         ]
+
+    def find_chain(self, chain_id: str) -> Template | None:
+        """The row one ``chain_id`` names, if this store holds it (`up2 doctor --fix`)."""
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT chain_id, root_domain, tpl_key, status, source, graph, create_time, "
+                "update_time FROM template WHERE chain_id = ?",
+                (chain_id,),
+            ).fetchone()
+        return None if row is None else _template_of(row)
 
     # -- the StoreBackend seam (04 §5) ---------------------------------------------------------
 

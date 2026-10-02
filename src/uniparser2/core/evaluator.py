@@ -4,6 +4,9 @@ The semantics in one sentence: ``Ok`` continues; ``Missing`` short-circuits the 
 stays missing (the value is not there); ``Failed`` stops the chain and is reported with its code.
 An action that declares ``accepts_missing`` (``py.default``, for example) can catch the ``MISSING``
 sentinel as input; that is the only exception to the short-circuit rule.
+
+A caller may pass a ``trace`` (`06` §5.1): then every **evaluated** stage records one event. A stage
+the short-circuit skips records nothing, so the last event of a chain is the stage that ended it.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from . import registry
 from .ast import CompiledField, CompiledStage, Lit, Param, Ref
 from .errors import Failed, Missing, Ok, Outcome
 from .refs import Scope
+from .trace import Trace, elapsed_ms, stamp
 from .values import MISSING
 
 logger = logging.getLogger("uniparser2")
@@ -29,14 +33,16 @@ def eval_field(
     /,
     *,
     scope: Scope | None = None,
+    trace: Trace | None = None,
 ) -> Outcome:
     """Evaluate one field chain stage by stage.
 
     Nothing settles a missing or a failed value: the outcome is returned as it stands, so the caller
-    drops a missing field from its product and stops on a failure.
+    drops a missing field from its product and stops on a failure. ``trace`` collects one event per
+    evaluated stage; without it nothing is measured or recorded.
     """
     active_scope = scope if scope is not None else Scope()
-    run_chain = _subchain_runner()
+    run_chain = _subchain_runner(trace)
     current: Outcome = Ok(value)
     for stage in compiled.stages:
         if isinstance(current, Failed):
@@ -44,21 +50,33 @@ def eval_field(
         if isinstance(current, Missing):
             if not stage.accepts_missing:
                 return current
-            current = _invoke(stage, MISSING, active_scope, run_chain)
+            incoming: Any = MISSING
         else:
-            current = _invoke(stage, current.value, active_scope, run_chain)
+            incoming = current.value
+        started_at = stamp(trace)
+        current = _invoke(stage, incoming, active_scope, run_chain)
+        if trace is not None:
+            trace.stage(
+                stage,
+                field=compiled.name or None,
+                incoming=incoming,
+                outcome=current,
+                scope=active_scope,
+                ms=elapsed_ms(started_at),
+            )
     return current
 
 
-def _subchain_runner() -> registry.ChainRunner:
+def _subchain_runner(trace: Trace | None) -> registry.ChainRunner:
     """How a structural operator evaluates a compiled sub-chain (design D2 of the L2 change).
 
     A sub-chain is an ordinary field chain, so ``each`` applies the same rule per element instead of
-    inventing one of its own.
+    inventing one of its own -- and it is traced like one, with the element's own scope (hence its
+    fan-out index) and the name the field map compiled the sub-chain as.
     """
 
     def run(chain: CompiledField, value: Any, scope: Scope) -> Outcome:
-        return eval_field(chain, value, scope=scope)
+        return eval_field(chain, value, scope=scope, trace=trace)
 
     return run
 

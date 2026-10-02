@@ -18,7 +18,15 @@ import os
 from pathlib import Path
 from typing import Final, Literal
 
-from .base import StoreBackend, TemplateStore, Transaction, lint_graph, publish_into
+from .base import (
+    DoctorBackend,
+    StoreBackend,
+    TemplateStore,
+    Transaction,
+    lint_graph,
+    publish_into,
+    repair_chain,
+)
 from .file import FileStore
 from .fingerprint import canonical_graph, graph_hash
 from .gates import gate_overwrite, gate_skip_tests
@@ -49,6 +57,7 @@ __all__ = [
     "SQLITE_FILE_NAME",
     "STORE_ENV",
     "AuditRow",
+    "DoctorBackend",
     "FileStore",
     "Graph",
     "PublishResult",
@@ -72,6 +81,7 @@ __all__ = [
     "new_chain_id",
     "open_store",
     "publish_into",
+    "repair_chain",
     "template_dict",
     "utc_now",
 ]

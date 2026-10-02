@@ -12,6 +12,76 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Added
 
+- **A story's flow is now acyclic, checked at compile time** (`03` §10 L12, §12.5; closes `03` §13 O9):
+  `next` stays free to name any step, including one written *earlier* — the samples' own fan-out shape
+  does that — but a run may not come back to a step it is already executing, and the new `UP2-E1017`
+  refuses it at compile time, carrying the travel path (`the flow of this story closes a loop: feed ->
+  page -> again -> feed`) and a pointer at the backward `next`. The lint is drawn over the flow the
+  executor actually walks: **one edge per step**, the next array position or the step a request step's
+  `next` names. The stronger "union reachability" reading (a step's fall-through edge and its receiver
+  edges at the same time) was rejected because it refuses `samples/books.toscrape.com`: `channels` fans
+  out to `shelf_page`, which falls through to `shelf`, whose own `next` is `book` — every one of those
+  steps runs exactly once, yet the union graph calls the format's central shape a cycle. `MAX_STORY_STEPS`
+  (64) bounds that graph, not the number of steps a run may take: a forward jump remains legal.
+
+- **The trace, and `up2 trial --trace`** (`06` §5.1, `03` §4.4): a run can now be read stage by stage.
+  `Trace` collects one event per **evaluated stage** (a stage the tri-state short-circuit skips records
+  nothing) plus one per **suspension**, each carrying `seq`, `step`, `item`, `field`, `stage`, `op`,
+  `action`, `params`, `input`, `output`, `state`, `detail` and `ms`. `params` are the **compiled** named
+  parameters, so a default the author never wrote — or an `each`'s compiled field map — is visible;
+  `input` / `output` are `type` / `preview` (200 characters) / `size` views whose whole value is fetched
+  on demand by `get_value(seq)`; and `item` is the fan-out index, which is the `each` element's position
+  or the position of the answer a `RequestBatch`'s receiving step is running — what makes "the third
+  result's title is missing" locatable. A suspension is an event too (`"effect": "request" | "batch" |
+  "call"`, carrying what the kernel handed the host, with a `call`'s function name in `action`), so a UI
+  can show "it suspended here, and this is what it handed out". `up2 trial --trace [--json]` reports the
+  events in evaluation order, and a run that asks for no trace behaves exactly as before: `start(bundle,
+  value, trace=…)` and `eval_field(…, trace=…)` are the only two injection points, no clock is read
+  without one, and `core/` stays stdlib-only, IO-free and synchronous. `003` §13 O6 is settled with it:
+  **the trace is a debugging aid, not the replay format** — it is lossy by construction and holds no
+  answer, while what replays a run is the host's own log of the suspensions it answered. Conformance is
+  untouched: 73 declared pairs, 35 implemented error codes, each with a case.
+
+- **A run-scoped materialization cache, so one document is parsed once** (`03` §6): `css` / `css1`,
+  `xpath` and `json` no longer each build their own tree, so twenty fields over one page cost one
+  parse instead of twenty (measured on a 5 MB page: 1976.7 ms → 48.6 ms). The cache is **not an
+  optimization but correctness-of-performance** — `007` §3's "500 items × 20 fields within 3 s" is
+  unreachable without it — so it is bounded and asserted: `MAX_MATERIALIZE_BYTES` (64 MiB, accounted
+  in materialized bytes) and `MAX_MATERIALIZE_ITEMS` (8 artifacts), both with LRU eviction, one
+  over-cap artifact retained while it is in use ("one document, one parse" always holds). It belongs
+  to the run's evaluation scope, is inherited by nested field-map / `each` scopes, and is released
+  with the run: nothing is shared across runs, and a cached tree is never mutated in place.
+
+- **A step's `type` is now built, not just declared**: `register_type(name, constructor)` (with
+  `unregister_type` / `type_names` / `get_type`) lands, and the kernel builds the declared type from
+  the product **at the step boundary**, where the author can see which key is wrong. An unregistered
+  name is `UP2-E1011` at that step, listing the registered names; a constructor that refuses the
+  product is the new `UP2-E2019`, carrying the constructor's own exception text. The constructor is a
+  **validator, not a container** — the product continues as JSON, so the single exit still holds —
+  and the JSON basics (`null` / `bool` / `str` / `int` / `float` / `list` / `dict`) and the effect
+  types (`Request` / `RequestBatch`) are registered for free, with a host registration winning over a
+  built-in name.
+
+- **The first story executor, and the naming that makes a story readable** (`03` §2, §5): a bundle is
+  a linear sequence of typed steps, driven by `start(bundle, value)` → `run.next()` / `run.send(answer)`.
+  A `Request` / `RequestBatch` step **suspends** the run and the answer resumes the same run, so the
+  kernel still performs no IO. A step's keys are `name` and `type` (they were `key` / `out`); the
+  `chains` table is gone, because a parse rule is a step; a request step declares **`next`**, the step
+  that receives the answers (a single task may override it, and the kernel strips it before the host
+  sees the request); and a top-level **`exit`** names the step whose products are the run's output.
+  `$in` names this step's own input, so `["py","id",""]` replaces the `["py","str",""]` workaround.
+  `up2 lint` and `up2 trial` accept a story file and report a suspension as such.
+
+- **A host object is a value**: a value that flows through a chain may be an object — an HTTP
+  response, a `udf` result, a DOM handle — because the kernel already carried third-party objects.
+  **Step products must still be JSON** (`export.pack` still rejects anything else, and the
+  host-registered type constructor converts at the step boundary), so the single exit is unchanged.
+  `Response` stops being a type: the answer to a request is whatever the host `send`s back, unwrapped,
+  and it is read with the new **`py.getattr`** action (an absent attribute fails with the exception
+  class in `reason`; a **callable** attribute fails with a pointer at the operator or `udf` to use
+  instead, so a method never turns into a value silently). Dotted references now walk objects with
+  `getattr` and containers with `getitem`, so `$in.request.url` and `$resp.headers` work.
+
 - **The template store (`04` §1–§6), the first slice of L3**: a chain is bound to a business identity
   (`root_domain` / `tpl_key`), which appears nowhere in L1/L2. One row per chain (`Template`:
   `chain_id` from one pure `new_chain_id()`, the tri-state `status`, the three-value `source`, the
@@ -27,8 +97,21 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   (`--skip-tests` needs `--note`, which the audit row records) is refused with `UP2-E3005`, and a `ready`
   row needs `--confirm-overwrite`; `up2 get` prints the row with its fingerprint (`--graph` prints the
   chain data, the backup material) and **recompiles** what it read, because a stored graph is data and
-  is never trusted (`01` §8). The regression runner (`up2 snapshot` / `up2 test`) and `up2 doctor` are
-  the next slice. Conformance: 73 declared pairs, 35 implemented error codes, each with a case.
+  is never trusted (`01` §8). The regression the gate runs, and the repair command, are in the entry
+  below. Conformance: 73 declared pairs, 35 implemented error codes, each with a case.
+
+- **The publish gate is real, and the SOP around it runs** (`04` §6, §7): `up2 snapshot` freezes one
+  case's product as `expected.json` — and `--accept` is the **only** way to write one, so "it ran
+  once" cannot record a wrong product as the right one — while `up2 test <domain> <tpl_key>` runs the
+  frozen chain over every case under `samples/<domain>/<tpl_key>/<case>/` and prints each mismatch as
+  a **JSON Pointer difference** (`/0/title expect "a" got "b"`), never a text diff. `publish` now
+  regresses that same set **before it writes**, so a red snapshot refuses the write with `UP2-E3005`
+  unless `--skip-tests --note` says why; a case that carries an input but no snapshot is red, and a
+  key with no case at all is green. `up2 doctor` reports the `UP2-E3003` inconsistencies, and
+  `up2 doctor --fix` writes the audit row a chain is missing (the row records actor `doctor` and a
+  note, because an audit row has nowhere else to say it was synthesized). `samples/local/demo/` is
+  the committed example of the layout, and `04` §7 was corrected wherever it named a command that
+  does not exist.
 
 - **Predicate actions on `py`, spelled the way Python spells them**: `==` / `!=` / `<` / `<=` / `>` /
   `>=` / `in` answer with a boolean in one stage, and `or` / `and` follow Python's **value** semantics
@@ -78,6 +161,22 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Changed
 
+- Version `0.3.0` → `0.4.0` → `0.5.0` (`005` §7: a new capability bumps the minor). Both bumps belong
+  to this unreleased section: `0.4.0` with the L2 story model and the materialization cache, `0.5.0`
+  with the type registry, the template store and the SOP commands.
+- **A missing value has one outcome and a failure has one outcome**: the settlement policy is retired,
+  so `eval_field` no longer takes `policy`, the `policy` block is gone from a story bundle, and
+  `up2 trial` lost `--on-missing` / `--on-error` (they are rejected as unknown flags rather than
+  silently ignored). A miss is "not there" — the key is absent from a field-map product, the item is
+  skipped in a batch, and no `""` or `null` is invented — while a failure always raises, carrying its
+  code and its JSON Pointer.
+- **`py.get` is merged into `py.getitem`**: there is one subscript action now, and it follows Python
+  semantics — a list / tuple by index, a dict by key, a string by character. Its parameter is named
+  `at` and takes a reference, so a computed key works (`["py","getitem","$globals.field"]`, where a
+  literal alone was required before), and a key or index that is not there is now an **error**
+  (`UP2-E2018`, carrying the exception class and the key) instead of a `Missing` value, with no
+  coercion (a string index on a list is never converted to an integer). `py.getattr` stays separate:
+  a response object is not subscriptable, so only `getattr` reads its attributes.
 - Version `0.2.0` → `0.3.0` (`005` §7: a new capability bumps the minor). Conformance: 60 → 61 pairs;
   implemented error codes: 25 → 26.
 - The ambiguous slash writings are decided by one documented knob. Measured before: `03/04/2026` gave
@@ -92,6 +191,10 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Removed
 
+- **`Response` is no longer a type**: the answer to a request is whatever the host hands back, and a
+  chain reads it, so the built-in `Response` key table went with it. A bundle whose step declares
+  `"type": "Response"` now fails at that step with `UP2-E1011`; declare a host-registered type, or the
+  built-in `dict` when the answer needs no validation.
 - The chain layer's iteration construct is now **one operator** instead of three mechanisms: the
   node-level `select` fan-out, the `callback` operator with its named `presets` chains and the `$map`
   result-template directive are all retired (an inline field map plus the input from the stage above

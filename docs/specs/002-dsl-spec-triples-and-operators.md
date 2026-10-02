@@ -720,6 +720,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E1014` | a `_`-prefixed local key was referenced **across steps** | hint that a local value does not leave its step; inside the same step use `$fields.<key>` |
 | `UP2-E1015` | `ctx.set`/`del` wrote a path outside `locals.` | hint that the write surface is limited to `locals` |
 | `UP2-E1016` | a `next` / `exit` target is not a step of the story | list the declared step names (`03` §10 L9) |
+| `UP2-E1017` | the story's flow closes a loop of steps (`03` §10 L12) | give the travel path and point at the jump that closes it: name a step that runs after it, or take the looping step out (`03` §12.5) |
 | ~~`UP2-E1101`~~ … ~~`UP2-E1106`~~, ~~`UP2-E1108`~~ | **retired with the v0.1 node model** (`03` §12.1) | they policed a graph that no longer exists (`next`/`routes`/`default_route`, node existence, reachability, cycles, in-degree > 1, `route_field`, the `result` template). The numbers are **retired, not reused**, so older references keep pointing at the same rule |
 | `UP2-E1107` | an operator's optional dependency is missing | give the install command (e.g. `uv add selectolax`) |
 

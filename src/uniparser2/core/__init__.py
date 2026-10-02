@@ -11,11 +11,24 @@ from .compile import compile_field, compile_field_map, compile_stage
 from .conformance import ConformanceReport, check
 from .errors import CODES, Diagnostic, Failed, Missing, Ok, Outcome, Up2Error, diag
 from .evaluator import eval_field, resolve_params
-from .export import pack
+from .export import ProductDifference, compare_products, pack, render_difference
 from .limits import MAX_MATERIALIZE_BYTES, MAX_MATERIALIZE_ITEMS, MAX_STEPS_PER_FIELD
 from .materialize import HTML, JSON, XML, Materialize, MaterializedArtifact, Materializer
 from .refs import Scope, is_ref_text, parse_path_text, parse_ref
 from .story import CompiledStory, StoryRun, StoryStep, compile_story, start
+from .trace import (
+    EFFECT_BATCH,
+    EFFECT_CALL,
+    EFFECT_REQUEST,
+    PREVIEW_LIMIT,
+    STATE_FAILED,
+    STATE_MISSING,
+    STATE_OK,
+    Trace,
+    TraceEvent,
+    ValueView,
+    value_view,
+)
 from .types import (
     BUILTIN_TYPES,
     TypeConstructionError,
@@ -31,12 +44,19 @@ from .values import MISSING, JsonValue, Opaque, Value, is_json_value, is_opaque,
 __all__ = [
     "BUILTIN_TYPES",
     "CODES",
+    "EFFECT_BATCH",
+    "EFFECT_CALL",
+    "EFFECT_REQUEST",
     "HTML",
     "JSON",
     "MAX_MATERIALIZE_BYTES",
     "MAX_MATERIALIZE_ITEMS",
     "MAX_STEPS_PER_FIELD",
     "MISSING",
+    "PREVIEW_LIMIT",
+    "STATE_FAILED",
+    "STATE_MISSING",
+    "STATE_OK",
     "XML",
     "CompiledField",
     "CompiledStage",
@@ -54,17 +74,22 @@ __all__ = [
     "Opaque",
     "Outcome",
     "Param",
+    "ProductDifference",
     "Ref",
     "Scope",
     "Stage",
     "StoryRun",
     "StoryStep",
+    "Trace",
+    "TraceEvent",
     "TypeConstructionError",
     "TypeConstructor",
     "UnknownTypeError",
     "Up2Error",
     "Value",
+    "ValueView",
     "check",
+    "compare_products",
     "compile_field",
     "compile_field_map",
     "compile_stage",
@@ -82,9 +107,11 @@ __all__ = [
     "parse_ref",
     "preview",
     "register_type",
+    "render_difference",
     "resolve_params",
     "start",
     "type_name",
     "type_names",
     "unregister_type",
+    "value_view",
 ]

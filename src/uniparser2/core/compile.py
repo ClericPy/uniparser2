@@ -26,13 +26,20 @@ _NO_PARAM_PLACEHOLDERS = (None, "")
 
 
 def compile_field(
-    source: Any, /, *, products: Iterable[str] = (), depth: int = 0, pointer: str = ""
+    source: Any,
+    /,
+    *,
+    products: Iterable[str] = (),
+    depth: int = 0,
+    pointer: str = "",
+    name: str = "",
 ) -> CompiledField:
     """Compile a stage array / field chain / JSON string / compiled field into ``CompiledField``.
 
-    ``depth`` counts the enclosing ``each`` field maps and ``pointer`` is the JSON Pointer prefix
-    this chain sits at inside the chain being compiled; both stay at their defaults for a top-level
-    chain and are non-default only for a sub-chain.
+    ``depth`` counts the enclosing ``each`` field maps, ``pointer`` is the JSON Pointer prefix this
+    chain sits at inside the chain being compiled, and ``name`` is the field-map key it is compiled
+    as (the trace's ``field``, `06` §5.1); all three stay at their defaults for a top-level chain,
+    and are non-default only for a sub-chain.
     """
     if depth > MAX_EACH_DEPTH:
         raise Up2Error(
@@ -61,7 +68,7 @@ def compile_field(
         for index, stage in enumerate(source_stages)
     )
     logger.debug("compiled field: steps=%d ops=%s", len(stages), [item.op_name for item in stages])
-    return CompiledField(stages=stages, source=source_stages)
+    return CompiledField(stages=stages, source=source_stages, name=name)
 
 
 def compile_stage(
@@ -426,7 +433,11 @@ def compile_field_map(
     _check_field_map(raw, pointer=pointer)
     return {
         str(field): compile_field(
-            item, products=products, depth=depth + 1, pointer=f"{pointer}/{field}"
+            item,
+            products=products,
+            depth=depth + 1,
+            pointer=f"{pointer}/{field}",
+            name=str(field),
         )
         for field, item in raw.items()
     }

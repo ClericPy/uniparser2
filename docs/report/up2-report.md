@@ -2,7 +2,7 @@
 
 Input → triple chain → output repr: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `--md --check` fails when it is stale. The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
 
-Generated from `uniparser2` 0.4.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
+Generated from `uniparser2` 0.5.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
 
 ## Coverage check
 

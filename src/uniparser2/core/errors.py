@@ -34,6 +34,7 @@ CODES: Final[dict[str, str]] = {
     "UP2-E1014": "cross-node reference to a local key prefixed with `_`",
     "UP2-E1015": "ctx.set/del wrote a path outside locals",
     "UP2-E1016": "a `next`/`exit` target is not a step of the story",
+    "UP2-E1017": "the story's flow closes a loop of steps",
     "UP2-E1107": "operator unavailable (optional dependency missing)",
     # ---- runtime (UP2-E2xxx) ----
     "UP2-E2001": "reference path cannot be read at runtime (shallower than declared)",
@@ -63,13 +64,19 @@ CODES: Final[dict[str, str]] = {
 
 @dataclass(frozen=True, slots=True)
 class Diagnostic:
-    """A human-facing diagnostic. ``fix`` must be a fix that can be carried out in one sentence."""
+    """A human-facing diagnostic. ``fix`` must be a fix that can be carried out in one sentence.
+
+    ``chain_id`` is set by the storage layer's ``UP2-E3003`` findings only (`04` §5.1): an
+    inconsistency is *about* a chain, and ``up2 doctor --fix`` has to know which one without
+    parsing the message back out of it.
+    """
 
     code: str
     message: str
     fix: str = ""
     pointer: str = ""
     allowed: tuple[str, ...] = ()
+    chain_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"code": self.code, "message": self.message}
@@ -79,6 +86,8 @@ class Diagnostic:
             payload["pointer"] = self.pointer
         if self.allowed:
             payload["allowed"] = list(self.allowed)
+        if self.chain_id:
+            payload["chain_id"] = self.chain_id
         return payload
 
     def __str__(self) -> str:
@@ -98,6 +107,7 @@ def diag(
     fix: str = "",
     pointer: str = "",
     allowed: Iterable[str] = (),
+    chain_id: str = "",
 ) -> Diagnostic:
     """Build a diagnostic, rejecting codes outside the table.
 
@@ -105,7 +115,14 @@ def diag(
     """
     if code not in CODES:
         raise ValueError(f"unknown error code {code!r}; declare it in errors.CODES first")
-    return Diagnostic(code=code, message=message, fix=fix, pointer=pointer, allowed=tuple(allowed))
+    return Diagnostic(
+        code=code,
+        message=message,
+        fix=fix,
+        pointer=pointer,
+        allowed=tuple(allowed),
+        chain_id=chain_id,
+    )
 
 
 class Up2Error(Exception):

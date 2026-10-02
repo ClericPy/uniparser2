@@ -181,11 +181,12 @@ def publish_into(
 
 
 def chain_without_audit(chain_id: str) -> Diagnostic:
-    """One half of `UP2-E3003` (`04` §5.1, §10)."""
+    """One half of `UP2-E3003`, repaired by :func:`repair_chain` (`04` §5.1, §10)."""
     return diag(
         "UP2-E3003",
         f"the chain {chain_id} has no audit row",
-        fix="re-publish the chain so its audit row is appended",
+        fix="re-publish the chain so its audit row is appended, or run `up2 doctor --fix`",
+        chain_id=chain_id,
     )
 
 
@@ -195,6 +196,53 @@ def audit_without_chain(chain_id: str) -> Diagnostic:
         "UP2-E3003",
         f"the audit row of {chain_id} has no chain",
         fix="this chain was deleted outside the store; archive or remove its audit file",
+        chain_id=chain_id,
+    )
+
+
+class DoctorBackend(Protocol):
+    """The store surface `up2 doctor --fix` needs to write the audit row a chain is missing.
+
+    Only the two things a repair is made of: find the row its ``chain_id`` names, and append one
+    audit row through the store's own write scope (`04` §5 step 6) -- so a repair runs inside the
+    same atomicity a publish does.
+    """
+
+    def find_chain(self, chain_id: str) -> Template | None:
+        """The row one ``chain_id`` names, so a repair can write beside it (`04` §10)."""
+        ...
+
+    def transaction(self) -> AbstractContextManager[Transaction]:
+        """The write scope of one repair: SQLite opens its own, the file store has none."""
+        ...
+
+
+def repair_chain(
+    backend: DoctorBackend, chain_id: str, *, actor: str, note: str
+) -> AuditRow | None:
+    """`up2 doctor --fix`: write the audit row of a chain that has none (`04` §7.1, §10).
+
+    ``old_hash`` is ``None`` and ``new_hash`` is the fingerprint of the **stored** graph: the row
+    says "this chain exists as this graph and had no audit row", which is exactly the finding. The
+    ``actor`` and ``note`` the CLI passes are what mark the row as synthesized, because `04` §2.1
+    gives the audit row nowhere else to say it. ``None`` means there is nothing to repair: the
+    ``chain_id`` a finding named has no row in this store.
+    """
+    template = backend.find_chain(chain_id)
+    if template is None:
+        return None
+    new_hash = graph_hash(template.graph)
+    with backend.transaction() as tx:
+        seq = tx.append_audit(template, actor=actor, old_hash=None, new_hash=new_hash, note=note)
+    return AuditRow(
+        seq=seq,
+        chain_id=chain_id,
+        at=utc_now(),
+        actor=actor,
+        source=template.source,
+        old_hash=None,
+        new_hash=new_hash,
+        note=note,
     )
 
 

@@ -227,7 +227,9 @@ def _story(*, request: bool = True) -> dict[str, object]:
         {
             "name": "records",
             "parse": {"body": body},
-            "type": "Record",
+            # A built-in type name: the CLI registers nothing, so a story file it runs declares a
+            # shape the kernel already knows (03 §3.1).
+            "type": "dict",
         }
     ]
     if request:
@@ -278,3 +280,136 @@ def test_trial_refuses_chain_only_flags_for_a_story(tmp_path: Path) -> None:
     assert main(["trial", str(path), "--input", "text=x", "--product", "n1=1"]) == EXIT_USAGE
     assert main(["trial", str(path), "--input", "text=x", "--global", "a=1"]) == EXIT_USAGE
     assert main(["lint", str(path), "--product", "n1"]) == EXIT_USAGE
+
+
+# ---------------------------------------------------- the store commands (04 §4, §7-S6/S7)
+
+CHAIN = [["css1", "text", "h1"]]
+OTHER_CHAIN = [["css1", "text", "h2"]]
+DOMAIN = "ah.gov.cn"
+KEY = "政府文件列表"
+
+
+def store_home(monkeypatch, tmp_path: Path) -> Path:
+    """``tmp_path`` is ``UP2_HOME`` (04 §4.1); the store kind stays whatever the case sets."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("UP2_HOME", str(home))
+    monkeypatch.delenv("UP2_STORE", raising=False)
+    return home
+
+
+def publish(tmp_path: Path, payload: object, *extra: str) -> int:
+    path = write_chain(tmp_path, payload, name="chain.json")
+    return main(["publish", str(path), "--domain", DOMAIN, "--key", KEY, *extra])
+
+
+def test_publish_get_and_audit_end_to_end(tmp_path: Path, monkeypatch, capsys) -> None:
+    store_home(monkeypatch, tmp_path)
+    assert publish(tmp_path, CHAIN, "--actor", "llm:claude", "--note", "first", "--json") == EXIT_OK
+    result = json.loads(capsys.readouterr().out)
+    assert result["changed"] is True
+    assert result["old_hash"] is None and result["audit_seq"] == 1
+
+    assert main(["get", DOMAIN, KEY]) == EXIT_OK
+    stored = json.loads(capsys.readouterr().out)
+    assert stored["graph_hash"] == result["new_hash"]
+    assert stored["graph"] == CHAIN
+    assert (stored["status"], stored["source"]) == ("draft", "agent")
+    assert stored["chain_id"] == result["chain_id"]
+
+    assert main(["get", DOMAIN, KEY, "--graph"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out) == CHAIN
+
+    assert main(["audit", DOMAIN, KEY, "--json"]) == EXIT_OK
+    rows = json.loads(capsys.readouterr().out)
+    assert len(rows) == 1
+    assert rows[0]["actor"] == "llm:claude"
+    assert rows[0]["note"] == "first"
+    assert rows[0]["new_hash"] == result["new_hash"]
+
+
+def test_re_publishing_the_same_graph_is_a_no_op(tmp_path: Path, monkeypatch, capsys) -> None:
+    store_home(monkeypatch, tmp_path)
+    assert publish(tmp_path, CHAIN, "--json") == EXIT_OK
+    capsys.readouterr()
+    assert publish(tmp_path, CHAIN, "--json") == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["changed"] is False
+    assert main(["audit", DOMAIN, KEY, "--json"]) == EXIT_OK
+    assert len(json.loads(capsys.readouterr().out)) == 1
+
+
+def test_publish_refuses_a_bad_chain(tmp_path: Path, monkeypatch, capsys) -> None:
+    store_home(monkeypatch, tmp_path)
+    assert publish(tmp_path, [["nosuchoperator", "x", "y"]], "--json") == EXIT_FAILED
+    assert json.loads(capsys.readouterr().out)["code"] == "UP2-E1001"
+    assert main(["get", DOMAIN, KEY]) == EXIT_FAILED
+
+
+def test_publish_skip_tests_without_a_note_is_refused(tmp_path: Path, monkeypatch, capsys) -> None:
+    store_home(monkeypatch, tmp_path)
+    assert publish(tmp_path, CHAIN, "--skip-tests", "--json") == EXIT_FAILED
+    assert json.loads(capsys.readouterr().out)["code"] == "UP2-E3005"
+    assert main(["get", DOMAIN, KEY]) == EXIT_FAILED
+
+
+def test_publish_skip_tests_records_the_note(tmp_path: Path, monkeypatch, capsys) -> None:
+    store_home(monkeypatch, tmp_path)
+    assert publish(tmp_path, CHAIN, "--skip-tests", "--note", "samples not ready") == EXIT_OK
+    capsys.readouterr()
+    assert main(["audit", DOMAIN, KEY, "--json"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)[0]["note"] == "samples not ready"
+
+
+def test_publish_needs_a_confirmation_to_overwrite_a_ready_chain(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = store_home(monkeypatch, tmp_path)
+    assert publish(tmp_path, CHAIN) == EXIT_OK
+    capsys.readouterr()
+    path = home / "chains" / DOMAIN / f"{KEY}.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["status"] = "ready"
+    path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8", newline="\n")
+    assert publish(tmp_path, OTHER_CHAIN) == EXIT_USAGE
+    assert "confirm-overwrite" in capsys.readouterr().err
+    assert publish(tmp_path, OTHER_CHAIN, "--confirm-overwrite", "--json") == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["changed"] is True
+    assert main(["get", DOMAIN, KEY, "--graph"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out) == OTHER_CHAIN
+
+
+def test_get_recompiles_what_it_read(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A stored chain is data: reading it back compiles it again (04 §1, 01 §8)."""
+    home = store_home(monkeypatch, tmp_path)
+    assert publish(tmp_path, CHAIN) == EXIT_OK
+    capsys.readouterr()
+    path = home / "chains" / DOMAIN / f"{KEY}.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["graph"] = [["nosuchoperator", "x", "y"]]
+    path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8", newline="\n")
+    assert main(["get", DOMAIN, KEY]) == EXIT_FAILED
+    assert "UP2-E1001" in capsys.readouterr().err
+
+
+def test_an_unknown_key_is_not_found(tmp_path: Path, monkeypatch, capsys) -> None:
+    store_home(monkeypatch, tmp_path)
+    for command in (["get", DOMAIN, "nope"], ["audit", DOMAIN, "nope"]):
+        assert main(command) == EXIT_FAILED
+        assert "no chain" in capsys.readouterr().err
+
+
+def test_the_store_kind_comes_from_the_environment(tmp_path: Path, monkeypatch, capsys) -> None:
+    store_home(monkeypatch, tmp_path)
+    for kind in ("file", "sqlite"):
+        monkeypatch.setenv("UP2_STORE", kind)
+        assert publish(tmp_path, CHAIN, "--json") == EXIT_OK
+        assert json.loads(capsys.readouterr().out)["changed"] is True
+        assert main(["get", DOMAIN, KEY]) == EXIT_OK
+        capsys.readouterr()
+    # The two stores are separate: the SQLite row is not visible to the file store.
+    monkeypatch.setenv("UP2_STORE", "file")
+    assert (tmp_path / "home" / "chains" / DOMAIN / f"{KEY}.json").is_file()
+    assert (tmp_path / "home" / "store.sqlite3").is_file()
+    monkeypatch.setenv("UP2_STORE", "mysql")
+    assert publish(tmp_path, CHAIN) == EXIT_USAGE
+    assert "UP2_STORE" in capsys.readouterr().err

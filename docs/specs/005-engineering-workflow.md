@@ -170,11 +170,11 @@ uniparser2/
 | **Operator behavior dictionary** | `tests/ops/` | One `input → output` assertion table per operator; sources = the 22 tests of the legacy v3 `test_parsers.py` + the behavior tables of draft `04` + the port list in `essence` §3.4 | ~120 entries | L1 |
 | **Compile-time error codes** | `tests/compile/` | At least one case for every `UP2-E1xxx` of `02` §7 (table-driven: bad chain → expected code + expected `fix` keyword) | ~30 entries | L1 |
 | **Runtime error codes** | `tests/runtime/` | At least one case for every `UP2-E2xxx` of `02` §7.1 (build an input that can trigger it → expected code) | ~15 entries | L1 |
-| **Store error codes** | `tests/store/` | At least one case for every `UP2-E3xxx` of `04` §5.1 (including `--skip-tests` without `--note`, and an inconsistent chain audit) | ~5 entries | L3 |
+| **Store error codes** | `tests/store/` | At least one case for every `UP2-E3xxx` of `04` §5.1 (including `--skip-tests` without `--note`, and an inconsistent chain audit); every case runs against **both** stores (file and SQLite parity for `publish` / `get` / `list` / `audit`), plus the no-op publish and recompile-on-read | ~20 entries | L3 |
 | **Chain (story) level** | `tests/chains/` | The step sequence (`name` / `type` / `next` / `exit`), `parse` / `call`, `each` iteration (including the per-element scope), the effects (`Request` / `RequestBatch` → the host's answer, `call` → receipt), the suspend/resume run loop, scope visibility | ~40 entries | L2 |
 | **Snapshots** | `tests/snapshots/` | The expected output of a chain × a sample (`04` §7-S4/S5); **structural comparison**, and a failure prints the JSON Pointer difference | ≥ 1 per chain | L2 |
 | **Serialization, character by character** | `tests/serialization/` | A **character-for-character** assertion of `dumps(loads(x)) == dumps(x)`; plus fingerprint stability assertions | ~10 entries | L1 |
-| **CLI end to end** | `tests/cli/` | `lint` / `trial` / `snapshot` / `publish` / `get` / `audit` / `doctor`, using `tmp_path` as `UP2_HOME` | ~20 entries | L2 (the last three are L3) |
+| **CLI end to end** | `tests/cli/` | `lint` / `trial` / `snapshot` / `publish` / `get` / `audit` / `doctor`, using `tmp_path` as `UP2_HOME` | ~20 entries | L2 (the half of the last row that is not `doctor` is L3; `snapshot` / `doctor` land with the SOP slice) |
 | **UI smoke** | `tests/ui/` | `pytest.skip` when pywebview is unavailable; when it is available, verify "the page starts and the three JS APIs can be called" | 1–2 entries | L2 |
 
 ### 4.1 The conformance audit — guaranteeing that "all syntax" is covered
@@ -209,7 +209,7 @@ up2 conformance --check          # a non-zero exit code means acceptance failed
 2. **A test must not contain the literal of a "deliberately nonexistent" code** (such as `UP2-E9999`): it too counts as a coverage declaration and pollutes the repository-level audit. Such a test has to build it as `"UP2-E" + "9999"`.
 3. **`tests/` must be a real package** (an `__init__.py` in every subdirectory): otherwise same-name test files in different directories shadow each other as far as mypy is concerned (`Duplicate module named "test_errors"`), and mypy's `module = ["tests.*"]` override rule fails to match (it requires fully qualified names).
 
-> This mechanism is the direct implementation of "the test cases that nail down all syntax at the DSL operator layer guarantee this part is complete and consistent": **completeness** is guaranteed by set coverage (declaration ⊆ coverage and coverage ⊆ declaration), and **consistency** by "parameterize the same group of assertions over every action" plus the engine contract assertions. The latest measurement round: 72 declared `(operator, action)` pairs = 72 covered pairs, all 26 implemented error codes have cases, and `up2 conformance --check` exits 0.
+> This mechanism is the direct implementation of "the test cases that nail down all syntax at the DSL operator layer guarantee this part is complete and consistent": **completeness** is guaranteed by set coverage (declaration ⊆ coverage and coverage ⊆ declaration), and **consistency** by "parameterize the same group of assertions over every action" plus the engine contract assertions. The latest measurement round (after the L3 store slice): 73 declared `(operator, action)` pairs = 73 covered pairs, all 35 implemented error codes have cases, and `up2 conformance --check` exits 0.
 
 ### 4.2 TDD rhythm (red-green-refactor)
 

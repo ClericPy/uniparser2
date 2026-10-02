@@ -86,6 +86,7 @@ def _invoke(
         payload=stage.payload,
         scope=scope,
         run_chain=run_chain,
+        cache=scope.materializer,
     )
     try:
         return instance.evaluate(call)

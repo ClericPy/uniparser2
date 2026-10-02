@@ -1,17 +1,22 @@
 """``up2`` command line: operator introspection / conformance audit / compile check / local trial
-run (design docs 04 §7-S0–S3, 05 §5).
+run (design docs 04 §7-S0–S3, 05 §5), plus the template store's own three commands (04 §4–§6).
 
 Exit codes: ``0`` ok (including ``Missing`` — missing is not an error, 01 §4.1); ``1`` compile or
 run failed; ``2`` usage error.
 
-Two file shapes are accepted by ``lint`` / ``trial``: a **field chain** (a JSON array of stages) and
-a **story** (a JSON object carrying ``steps``). A story is compiled and run with the story layer; a
-suspension is reported as such, because a CLI has no host to answer a request (§12 of ``03``).
+Two file shapes are accepted by ``lint`` / ``trial`` / ``publish``: a **field chain** (a JSON array
+of stages) and a **story** (a JSON object carrying ``steps``). A story is compiled and run with the
+story layer; a suspension is reported as such, because a CLI has no host to answer a request (§12 of
+``03``).
 
 Value conventions:
 - ``--global K=V`` / ``--product K=V``: ``V`` is parsed as JSON and falls back to a string.
 - ``--input K=V``: ``V`` is parsed as JSON only when it starts with ``{``/``[``; otherwise it stays
   a string (otherwise ``--input text=123`` would silently become an int).
+
+The store commands take their implementation from ``UP2_STORE`` and their location from ``UP2_HOME``
+(04 §4.1); ``get`` recompiles what it read back, because a stored chain is data and is never trusted
+as a compilation product (01 §8).
 """
 
 from __future__ import annotations
@@ -40,6 +45,14 @@ from uniparser2 import (
 )
 from uniparser2.core import registry
 from uniparser2.core.conformance import check
+from uniparser2.store import (
+    audit_row_dict,
+    gate_overwrite,
+    gate_skip_tests,
+    lint_graph,
+    open_store,
+    template_dict,
+)
 
 from .conformance import DEFAULT_TESTS_ROOT, scan_tests
 
@@ -48,6 +61,9 @@ EXIT_FAILED = 1
 EXIT_USAGE = 2
 MAIN_INPUT_KEY = "text"
 STORY_KEY = "steps"
+UNKNOWN_ACTOR = "unknown"
+AGENT_SOURCE = "agent"
+SOURCES = ("human", "agent", "import")
 _JSON_CONTAINER_PREFIXES = ("{", "[")
 
 
@@ -121,6 +137,44 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     trial.add_argument("--json", action="store_true", help="output JSON")
     trial.set_defaults(handler=_cmd_trial)
+
+    publish = sub.add_parser("publish", help="store a chain under a business identity (04 §5, §6)")
+    publish.add_argument("file", help="chain file (JSON)")
+    publish.add_argument("--domain", required=True, help="site identity, e.g. ah.gov.cn")
+    publish.add_argument("--key", dest="tpl_key", required=True, help="business name")
+    publish.add_argument(
+        "--actor", default=UNKNOWN_ACTOR, help="who publishes it (default unknown)"
+    )
+    publish.add_argument(
+        "--source", default=AGENT_SOURCE, choices=SOURCES, help="who wrote the chain"
+    )
+    publish.add_argument("--note", default=None, help="a remark recorded on the audit row")
+    publish.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="skip the snapshot regression; requires --note",
+    )
+    publish.add_argument(
+        "--confirm-overwrite",
+        action="store_true",
+        help="replace a chain whose status is already ready",
+    )
+    publish.add_argument("--json", action="store_true", help="output JSON")
+    publish.set_defaults(handler=_cmd_publish)
+
+    get = sub.add_parser("get", help="print a stored chain with its fingerprint")
+    get.add_argument("domain", help="site identity")
+    get.add_argument("key", help="business name")
+    get.add_argument(
+        "--graph", action="store_true", help="print only the chain data (backup material)"
+    )
+    get.set_defaults(handler=_cmd_get)
+
+    audit = sub.add_parser("audit", help="print the fingerprint chain of a stored chain")
+    audit.add_argument("domain", help="site identity")
+    audit.add_argument("key", help="business name")
+    audit.add_argument("--json", action="store_true", help="output JSON")
+    audit.set_defaults(handler=_cmd_audit)
 
     return parser
 
@@ -263,6 +317,88 @@ def _trial_story(source: Any, args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
     else:
         print(f"[suspended] {json.dumps(payload, ensure_ascii=False)}")
+    return EXIT_OK
+
+
+def _cmd_publish(args: argparse.Namespace) -> int:
+    """G1..G3, then the store's only write entry point (04 §5, §6)."""
+    graph, error = _load_chain(args.file)
+    if error is not None:
+        print(error, file=sys.stderr)
+        return EXIT_USAGE
+    store = open_store()
+    stored = store.get(args.domain, args.tpl_key)
+    refusal = gate_overwrite(
+        None if stored is None else stored.status, confirm=args.confirm_overwrite
+    )
+    if refusal is not None:
+        print(f"usage error: {refusal}", file=sys.stderr)
+        return EXIT_USAGE
+    skipped = gate_skip_tests(skip_tests=args.skip_tests, note=args.note)
+    if skipped is not None:
+        _print_diagnostic(skipped, as_json=args.json)
+        return EXIT_FAILED
+    try:
+        result = store.publish(
+            graph,
+            root_domain=args.domain,
+            tpl_key=args.tpl_key,
+            actor=args.actor,
+            source=args.source,
+            note=args.note,
+        )
+    except Up2Error as exc:
+        _print_diagnostic(exc.diagnostic, as_json=args.json)
+        return EXIT_FAILED
+    payload: dict[str, Any] = {
+        "chain_id": result.chain_id,
+        "old_hash": result.old_hash,
+        "new_hash": result.new_hash,
+        "changed": result.changed,
+        "audit_seq": result.audit_seq,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"changed={result.changed} chain_id={result.chain_id} "
+            f"{result.old_hash} -> {result.new_hash} audit_seq={result.audit_seq}"
+        )
+    return EXIT_OK
+
+
+def _cmd_get(args: argparse.Namespace) -> int:
+    """Read a chain back and recompile it before trusting it (01 §8)."""
+    template = open_store().get(args.domain, args.key)
+    if template is None:
+        print(f"no chain {args.domain}/{args.key}", file=sys.stderr)
+        return EXIT_FAILED
+    try:
+        lint_graph(template.graph)
+    except Up2Error as exc:
+        _print_diagnostic(exc.diagnostic, as_json=False)
+        return EXIT_FAILED
+    payload: object = template.graph if args.graph else template_dict(template)
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    return EXIT_OK
+
+
+def _cmd_audit(args: argparse.Namespace) -> int:
+    """The fingerprint chain of one key: who changed what, and when (04 §10)."""
+    store = open_store()
+    template = store.get(args.domain, args.key)
+    if template is None:
+        print(f"no chain {args.domain}/{args.key}", file=sys.stderr)
+        return EXIT_FAILED
+    rows = store.audit(template.chain_id)
+    if args.json:
+        print(json.dumps([audit_row_dict(row) for row in rows], indent=2, ensure_ascii=False))
+        return EXIT_OK
+    for row in rows:
+        print(
+            f"{row.seq}  {row.at}  {row.actor}  {row.source}  "
+            f"{row.old_hash} -> {row.new_hash}  {row.note or ''}".rstrip()
+        )
     return EXIT_OK
 
 

@@ -14,12 +14,21 @@ or an LLM, with nothing but deterministic evaluation at runtime.
 > operator `each` — 73 `(operator, action)` pairs in total. **L2 has started**: a site bundle (a
 > **story**) compiles and runs — `start(bundle, value)` / `run.next()` / `run.send(answer)`, where a
 > `Request` / `RequestBatch` / `call` suspends the run and its answer resumes the **same** run — and
-> both `samples/*/site.json` run end to end against their live sites. Try one from the CLI:
-> `uv run up2 lint samples/books.toscrape.com/books/site.json`. The materialization cache, the
-> registered-type constructor and the in-place trial UI are not there yet. For progress and
-> acceptance criteria see the roadmap in the design notes; to see the operator layer run right now,
-> in a source checkout: `uv run python demo.py`. (`demo.py` and `tools/demo_report.py` live in the
-> repository only: neither the wheel nor the sdist ships them.)
+> both `samples/*/site.json` run end to end against their live sites through the committed host
+> recipes (`samples/*/host.py`, which register the samples' own domain types with `register_type`).
+> Try one from the CLI: `uv run up2 lint samples/books.toscrape.com/books/site.json`, and the full
+> run with `uv run python samples/books.toscrape.com/host.py`. The **type registry** has landed too:
+> a host registers a name → constructor with `register_type(name, constructor)`, and the kernel builds
+> it from the product at the step boundary, so a declared shape is validated where the product is made.
+> The run-scoped **materialization cache** has landed as well (`MAX_MATERIALIZE_BYTES` / `MAX_MATERIALIZE_ITEMS`,
+> LRU): one document is parsed once per run, however many fields read it. **L3 has started**: the
+> **template store** (`04` §1–§6) binds a chain to a `(root_domain, tpl_key)` identity — one row per
+> chain, a `blake2s` fingerprint, an append-only audit, and two implementations behind one
+> `TemplateStore` protocol (a file store and SQLite) — with `up2 publish` / `get` / `audit` over it;
+> the sample runner and `up2 doctor` are the next slice. The in-place trial UI is not
+> there yet. For progress and acceptance criteria see the roadmap in the design notes; to see the
+> operator layer run right now, in a source checkout: `uv run python demo.py`. (`demo.py` and
+> `tools/demo_report.py` live in the repository only: neither the wheel nor the sdist ships them.)
 
 ## Why it exists
 
@@ -40,8 +49,11 @@ store rules as data and reuse them. uniparser2 solves all five at once:
 ## What you get today (L1)
 
 The **operator layer** is complete and mechanically audited: 11 operators, 73 `(operator, action)`
-pairs, each with a covering case (`uv run up2 conformance --check`), and 28 implemented error codes
-each asserted by a test.
+pairs, each with a covering case (`uv run up2 conformance --check`), and 35 implemented error codes
+each asserted by a test. The **store** (L3's first slice) has landed on top of it: `up2 publish` binds
+a chain to a `(root_domain, tpl_key)` identity, refuses a chain that does not lint, keeps its
+fingerprint history append-only, and `up2 get` / `up2 audit` read it back — over a file store or a
+SQLite one (`UP2_HOME`, `UP2_STORE`).
 
 | Operator | Engine (extra) | Actions |
 |---|---|---|
@@ -63,15 +75,19 @@ chain.
 
 ## Not there yet (L2–L4)
 
-The operator layer is complete and a **first story executor** exists; the rest of the design's L2 is
-unimplemented: no run-scoped materialization cache (so feeding the same text to several `css`/`json`
-stages parses it once per stage), no registered-type constructor (a step's `type` is a declared name,
-and the boundary check is "a product must be JSON"), no `up2 trial --trace`, no `up2 studio` bench,
-no Store (`FileStore` / `SqliteStore`), no fingerprints and no `S0–S7` publishing SOP; the ADRs have
-not been written either. There are no `seed` / `parse` / `emit` node types and no `routes` — that
-model was retired with the story model, so what is left to build is the list above.
-The CLI is exactly `ops` / `conformance` / `lint` / `trial`, and the public API is `compile_field` /
-`compile_stage` / `compile_story` / `start` / `eval_field` plus the value and scope types. The layers,
+The operator layer is complete and a **first story executor** exists, with the type registry and the
+run-scoped materialization cache behind it, and the **template store** (`04` §1–§6) has landed: the
+`Template` / `template_audit` records, the `blake2s` fingerprint, the `TemplateStore` protocol with
+`FileStore` and `SqliteStore`, the `publish` gates and `up2 publish` / `get` / `audit`. The rest of the
+design's L2/L3 is unimplemented: no `up2 trial --trace`, no `up2 studio` bench, no sample runner
+(`up2 snapshot` / `up2 test`), no `up2 list` and no `up2 doctor`, and therefore no complete `S0–S7`
+publishing SOP; the ADRs have not been written either. There are no `seed` / `parse` /
+`emit` node types and no `routes` — that model was retired with the story model, so what is left to
+build is the list above.
+The CLI is exactly `ops` / `conformance` / `lint` / `trial` / `publish` / `get` / `audit`, and the
+public API is `compile_field` /
+`compile_stage` / `compile_story` / `start` / `eval_field` plus the value and scope types (the store is
+its own layer, `uniparser2.store`). The layers,
 their deliverables and their acceptance criteria are in
 [`docs/specs/007` §3](docs/specs/007-source-decisions-and-roadmap.md).
 
@@ -173,6 +189,23 @@ uv run up2 trial date.json \
 # }
 ```
 
+**A finished chain is stored under a business identity** (`04` §1–§6): `publish` is the only write
+entry point, it lints the chain again before writing, it keeps one row per `(root_domain, tpl_key)`
+and appends a fingerprint to an append-only audit — re-publishing the same chain writes nothing.
+
+```bash
+export UP2_HOME=~/.uniparser2            # where the store lives (default); UP2_STORE=sqlite for SQLite
+uv run up2 publish link.json --domain ah.gov.cn --key 政府文件列表 --actor llm:claude --source agent
+# changed=True chain_id=… 8f8bf3ed… -> d53a2ae0… audit_seq=1
+
+uv run up2 get ah.gov.cn 政府文件列表 --graph > backup.json   # the chain data, as backup material
+uv run up2 get ah.gov.cn 政府文件列表                          # the row + its fingerprint
+uv run up2 audit ah.gov.cn 政府文件列表                        # who changed it to which fingerprint, and when
+```
+
+`--skip-tests` is accepted only with `--note` (the note lands on the audit row), and replacing a row
+whose `status` is `ready` needs `--confirm-overwrite`.
+
 Python API:
 
 ```python
@@ -197,6 +230,39 @@ match outcome:
         print(code, reason, fix)  # deterministic error code + one-line remedy; the run failed
 ```
 
+**A step's `type` is a shape** (`03` §3): the host registers name → constructor with
+`register_type(name, constructor)`, and the kernel builds it from the product at the **step boundary**.
+The constructor is a **validator, not a container** — the product keeps flowing as JSON: a dictionary
+product is `Cls(**payload)`, a list product `Cls(*items)`, an unregistered name is `UP2-E1011` at that
+step, and a constructor that raises is `UP2-E2019` with its own exception text in `reason`:
+
+```python
+from dataclasses import dataclass
+
+import uniparser2 as up2
+
+
+@dataclass
+class Article:  # the fields are the product's keys; a missing title fails here, not at the exit
+    url: str
+    title: str
+    pub_time: str = ""
+
+
+up2.register_type("Article", Article)
+bundle = {
+    "steps": [
+        {
+            "name": "record",
+            "parse": {"url": [["py", "getattr", "url"]], "title": [["css1", "text", "h1"]]},
+            "type": "Article",
+        }
+    ],
+    "exit": "record",
+}
+run = up2.start(bundle, response)  # a missing `title` fails here, not at the exit
+```
+
 A bad chain gets a deterministic diagnostic with a pointer at **compile time**, instead of exploding
 halfway through a run. The diagnostic is one line with a fixed shape — error code, message, position,
 remedy — and `lint` exits non-zero:
@@ -217,9 +283,10 @@ uniparser2/
 │   ├── core/           value domain / three states / references / registry / compilation / evaluation / exit boxing / conformance audit
 │   │   └── (zero third-party dependencies, no IO, no coroutines)
 │   ├── ops/            operator implementations (basic · regex · pyops · ctx; each operator declares its own actions and dependencies)
-│   ├── cli/            the up2 command (ops / conformance / lint / trial)
+│   ├── store/          the template store (Template + fingerprint + FileStore / SqliteStore + the publish gates)
+│   ├── cli/            the up2 command (ops / conformance / lint / trial / publish / get / audit)
 │   └── py.typed        PEP 561 type marker
-├── tests/              operator behavior dictionary · compile-time/runtime error codes · serialization round-trip · CLI end-to-end · conformance audit
+├── tests/              operator behavior dictionary · compile-time/runtime/storage error codes · serialization round-trip · CLI end-to-end · conformance audit
 ├── tools/              local development scripts (the generated catalogue; not shipped)
 ├── docs/               index, the design notes (`docs/specs/0NN-*.md`), the operator reference and the generated catalogue
 ├── .github/workflows/  CI and release

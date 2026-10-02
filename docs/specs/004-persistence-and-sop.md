@@ -4,6 +4,13 @@
 > **Layer**: **L3 (the business binding layer)**. L1/L2 **need no concept from this document** — the chain format has no `root_domain` / `tpl_key` (`03` §2); those two identifiers are **introduced here for the first time**, to bind an identity-free chain to a concrete site and business name (on the layering principle see `07` §3).
 > **What this document answers**: what shape a chain is stored in, how a change leaves a trace, how a write is kept atomic, and by which steps an LLM turns a chain from a draft into a reusable, frozen chain.
 > **Where the data model comes from**: §1 of the `01` data-structure draft (the internal source material, not shipped in this repository) (`template` / `template_audit`), with the production-system columns (`task` / `doc` / EOS / Kafka / the Java backend) stripped out.
+>
+> **Implemented**: **§1–§6** landed with the change `add-template-store` (`src/uniparser2/store/`, the
+> `up2 publish` / `get` / `audit` commands, `UP2-E3001`–`UP2-E3005`), including the `S6`/`S7` write and
+> read paths. **Still design**: the `S0–S7` walkthrough as an executable document, the sample runner
+> (`up2 snapshot` / `up2 test`, §7-S4/S5, so G2 of §6 currently runs an empty regression), `up2 list`,
+> `up2 doctor` and its `--fix`. The notes marked *implemented* below record what the code settled where
+> this draft was silent or sharper than the code could be.
 
 ---
 
@@ -104,6 +111,17 @@ class TemplateStore(Protocol):
 | `publish` | the **only write entry point**; atomic; returns `PublishResult(chain_id, old_hash, new_hash, changed, audit_seq)` |
 | `audit` | returns audit rows in ascending `seq` order |
 
+**Implemented**: `audit_seq` is the store's own sequence number; the file Store numbers the lines of
+one chain's audit file (so it restarts at 1 for every chain) while SQLite's
+`INTEGER PRIMARY KEY AUTOINCREMENT` numbers the whole table. Only the **order within one chain** is
+promised — a caller must not compare `seq` across chains or across stores.
+
+**Implemented**: `get` answers parsed JSON data, and the **callers** compile it: `publish` recompiles
+the row it read before trusting it (§5 step 3), and `up2 get` compiles the graph before printing it,
+so a hand-edited stored chain is reported by the compiler instead of being served as valid. `up2 get`
+prints the row **with its fingerprint**; `--graph` prints only the chain data, which is the backup
+material of S7.
+
 **Interface design constraint** (`Protocol` rather than a base class: cross-module injection, no reverse dependencies, see `~/.dsh/AGENTS.md` §5): the kernel imports no concrete Store; `cli` picks the implementation from configuration.
 
 ### 4.1 `FileStore` (the default)
@@ -128,6 +146,21 @@ $UP2_HOME/                     # default ~/.uniparser2; an environment variable 
 | Atomic write | write a temporary file → `os.replace()` (an atomic replacement within the same directory) |
 | Concurrency | no cross-process lock; the **single-writer assumption** is stated explicitly in the documentation (use SQLite for multiple writers) |
 | Version-control friendly | one file per chain, with canonical key order, so `git diff` is readable |
+
+**Implemented — configuration**: `UP2_HOME` (default `~/.uniparser2`) is the store's root, and
+`UP2_STORE` (`file` | `sqlite`, default `file`) picks the implementation the CLI opens (`04` §4 says
+"cli picks the implementation from configuration" without naming it; a flag on three commands would be
+a fourth spelling of the same fact).
+
+**Implemented — how `audit(chain_id)` finds its file**: the layout is keyed by
+`(root_domain, tpl_key)` while the method is keyed by `chain_id`, and §2.1's audit row carries no
+domain or key column. The file Store therefore scans `audit/**/*.jsonl` and filters by `chain_id`,
+which keeps the designed layout and row shape and keeps an audit row reachable after its template row
+is gone (the reason §4.2 refuses a foreign key). The cost is proportional to the number of audit rows,
+which the applicability above tolerates; a host that outgrows it implements `TemplateStore`.
+
+**Implemented — `samples/`**: the directory is reserved by this layout, but the runner that reads it
+is the SOP slice (§7-S4/S5). Nothing writes or reads it yet.
 
 ### 4.2 `SqliteStore`
 
@@ -163,6 +196,12 @@ CREATE INDEX idx_audit_chain ON template_audit(chain_id, seq);
 - Applicability: multiple writers, SQL queries / gate scans, sharing a database with the host.
 - **MySQL is not implemented in this project**: the `template` table of draft `01` is meant for a production database; a host simply implements `TemplateStore`, and this design only guarantees **consistent column semantics** (the column names and constraints of §2 are the vocabulary a host aligns to).
 
+**Implemented**: the database is `$UP2_HOME/store.sqlite3` (this section names no path; a fixed one
+keeps the two stores symmetric), and the schema above is created idempotently on the first operation,
+never in the constructor — a store object holds no open handle and touches nothing until it is used.
+The statements are the ones above with `IF NOT EXISTS`, so the column list, the unique constraint and
+the three indexes are exactly this section's.
+
 ---
 
 ## 5. Atomicity of writes
@@ -178,6 +217,7 @@ The fixed steps of `publish` (with identical semantics in both Stores):
 4. Write the template row (INSERT or an in-place UPDATE; update_time refreshed)
 5. Append one template_audit row
 6. Commit (SQLite: a single transaction BEGIN IMMEDIATE…COMMIT; file: write the chains temporary file first → commit → append the audit row)
+7. Read the row back and compare its fingerprint with new_hash  → mismatch is UP2-E3001
 ```
 
 | Guarantee | Implementation |
@@ -186,6 +226,19 @@ The fixed steps of `publish` (with identical semantics in both Stores):
 | "Resending the same chain produces no noise" | the no-op decision of step 3 |
 | "There is never a chain without an audit row, nor an audit row without a chain" | SQLite uses a single transaction; the file Store lands `chains` first and appends `audit` afterwards (if the second step crashes, "a chain without an audit row" appears, which `up2 doctor` detects and reports as `UP2-E3003`) |
 | "Concurrent writes to the same chain" | SQLite: `BEGIN IMMEDIATE` + `UNIQUE(root_domain, tpl_key)`; file: the single-writer assumption |
+| "What was written is what was meant" | step 7 |
+
+**Implemented — step 7**: §5.1 defines `UP2-E3001` as "the `graph` **written** under the same
+`(root_domain, tpl_key)` does not match the expected fingerprint" and its fix names a concurrent
+writer, so the code is a **read-back verification after the write**, not a second read before it. It
+catches both a write that silently did not land and a second writer that replaced the row.
+
+**Implemented — failure reporting**: any failure to reach the store (a read in step 3, a write in
+step 4, the verification read in step 7) is `UP2-E3004` carrying the underlying exception and the
+path, and a failure in step 5 leaves the chain file in place — that is the crash window this section
+describes, and `inconsistencies()` reports it. A lost audit row for a chain that **already had one**
+is not detectable: audit rows hold fingerprints only (§2.1), so "the row did not change" and "the
+audit line was lost" look the same.
 
 > **Origin**: the "transactional rule injection" of the old v3 (`essence` §A10: add first and validate afterwards, rolling back and re-raising on failure). This design moves validation ahead of the write (`N3`, a compile-time failure), leaving the transaction responsible only for the consistency of "chain + audit".
 
@@ -198,6 +251,13 @@ The fixed steps of `publish` (with identical semantics in both Stores):
 | `UP2-E3003` | chain and audit are inconsistent (a chain without an audit row / an audit row without a chain) | `up2 doctor --fix` |
 | `UP2-E3004` | the Store write failed (permissions / disk / SQLite lock / a missing directory) | report the path and the underlying error |
 | `UP2-E3005` | the `publish` gate did not pass (the G2 snapshot regression failed, or `--skip-tests` came without `--note`) | run `up2 test` or supply `--note` |
+
+**Implemented**: the five codes are declared in `core/errors.py` with exactly these triggers. Three
+of the fix hints are sharper in the code than in the table, because the command they name does not
+exist yet: `UP2-E3003` advises re-publishing the chain (the missing audit row is what `doctor --fix`
+will write), and `UP2-E3004` is raised for a **read** that cannot reach the store as well as for a
+write. `UP2-E3005` currently has one reachable branch — `--skip-tests` without `--note`; the
+regression branch joins it with the runner (§7-S5).
 
 ---
 
@@ -212,6 +272,14 @@ The fixed steps of `publish` (with identical semantics in both Stores):
 | G3 overwrite prompt | if the old row has `status = "ready"`, `--confirm-overwrite` is required | no |
 
 The design intent of `--skip-tests`: it allows the realistic case of "store the chain first, the samples are not ready yet", but **a trace must be left** — that is the cost of "the audit can answer 'who bypassed the tests, and when'".
+
+**Implemented**: G1 is the store's own `compile` of step 2, so no flag can skip it. G2/G3 are checked
+by the CLI before it calls the store, so a refusal writes nothing: `--skip-tests` without `--note` is
+`UP2-E3005` and a `ready` row needs `--confirm-overwrite`. Two edges of this section are not yet what
+the table implies: **G2 regresses an empty sample set**, because the runner is §7-S5 and lands with the
+SOP slice (only the trace contract is enforced now); and an unconfirmed overwrite exits `2` as a
+**usage** error, because §5.1 assigns that refusal no code and minting one would have taken a number
+this design reserved for something else.
 
 ---
 
@@ -295,9 +363,13 @@ up2 publish chain.json --domain ah.gov.cn --key \u653f\u5e9c\u6587\u4ef6\u5217\u
 
 ```bash
 up2 audit ah.gov.cn \u653f\u5e9c\u6587\u4ef6\u5217\u8868          # the fingerprint chain: who changed what, and when
-up2 get ah.gov.cn \u653f\u5e9c\u6587\u4ef6\u5217\u8868 > backup.json   # backup (rollback material)
+up2 get ah.gov.cn \u653f\u5e9c\u6587\u4ef6\u5217\u8868 --graph > backup.json   # backup (rollback material)
 up2 publish backup.json --domain … --key … --actor ops:me --source human --note "roll back to <hash>"
 ```
+
+> `--graph` is the flag the implementation settled on: the plain `up2 get` prints the stored row
+> together with its fingerprint (the S6 acceptance above), and only the graph is publishable again.
+> The walkthrough of S0–S7 as an executable document is still the next slice.
 
 **Rollback introduces no special mechanism**: audit rows hold only fingerprints, so rollback relies on **an external backup + publishing once more** (the trade-off of draft `01` Q18). Hence the backup action of S7 must appear explicitly in the SOP.
 
@@ -357,8 +429,8 @@ up2 publish backup.json --domain … --key … --actor ops:me --source human --n
 |---|---|
 | Asking "who changed what" | `up2 audit <domain> <key>` prints the fingerprint chain: `at / actor / source / old_hash → new_hash / note` |
 | Asking "did this chain change" | as above, comparing the series of `new_hash`; the no-op of `publish` guarantees "no change produces no row" |
-| Rollback | **relies on an external backup** (S7's `up2 get > backup.json`) plus one more `publish`. Audit rows record only fingerprints, so a rollback itself also leaves an audit row |
-| Consistency check-up | `up2 doctor`: checks whether `chains` and `audit` correspond one-to-one, whether `tpl_key` is legal, and whether `graph` compiles; `--fix` writes the missing audit rows |
+| Rollback | **relies on an external backup** (S7's `up2 get --graph > backup.json`) plus one more `publish`. Audit rows record only fingerprints, so a rollback itself also leaves an audit row |
+| Consistency check-up | `up2 doctor`: checks whether `chains` and `audit` correspond one-to-one, whether `tpl_key` is legal, and whether `graph` compiles; `--fix` writes the missing audit rows. **Implemented as a store-layer method** (`inconsistencies()` on both stores, `UP2-E3003` findings: a chain with no audit row at all, and an audit row with no chain); the `doctor` command and `--fix` are the next slice |
 | Backup advice | in production, snapshot `UP2_HOME` (or the SQLite file) periodically; this design **ships no built-in backup mechanism** (that is an operations concern) |
 
 ---

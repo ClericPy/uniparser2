@@ -47,6 +47,7 @@ from typing import Any, ClassVar, Final
 
 from ..core.ast import Lit, Param
 from ..core.errors import Failed, Missing, Ok, Outcome, Up2Error, diag
+from ..core.materialize import XML
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import Opaque, preview, type_name
 
@@ -135,7 +136,7 @@ class XPath(Op):
                 reason="xpath needs lxml",
                 fix=f'install it: uv add "uniparser2[{_XML_EXTRA}]"',
             )
-        context = _context_node(etree, call.value)
+        context = _context_node(etree, call)
         if isinstance(context, Failed):
             return context
         expr = str(call.params["expr"])
@@ -201,11 +202,14 @@ def _bad_namespace(pointer: str = "") -> Up2Error:
     )
 
 
-def _context_node(etree: Any, value: Any) -> Any:
+def _context_node(etree: Any, call: Call) -> Any:
     """Normalize the input into a context node.
 
-    XML text is parsed, an ``XPathNode`` is unwrapped, and anything else reports ``UP2-E2002``.
+    XML text is **materialized through the run's cache** (`03` §6), an ``XPathNode`` is unwrapped,
+    and anything else reports ``UP2-E2002``. An XPath query only reads the document, so the cached
+    tree is never mutated.
     """
+    value = call.value
     if isinstance(value, XPathNode):
         return value.raw
     if not isinstance(value, str):
@@ -219,13 +223,23 @@ def _context_node(etree: Any, value: Any) -> Any:
         )
     try:
         # Encode first: lxml rejects a unicode string carrying <?xml encoding=...?>.
-        return etree.fromstring(value.encode("utf-8"))
+        return _document(etree, call, value)
     except etree.XMLSyntaxError as exc:
         return Failed(
             code="UP2-E2005",
             reason=f"XML parsing failed: {exc}",
             fix="XML must be well-formed (single root, closed tags); use css for HTML",
         )
+
+
+def _document(etree: Any, call: Call, text: str) -> Any:
+    """The XML document for ``text``: one parse per run, through the materializer (`03` §6)."""
+
+    def build(source: str) -> tuple[Any, int]:
+        document = etree.fromstring(source.encode("utf-8"))
+        return document, len(etree.tostring(document))
+
+    return call.cache.get(XML, text, build)
 
 
 def _is_element(value: Any) -> bool:

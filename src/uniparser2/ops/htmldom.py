@@ -40,7 +40,9 @@ Four implementation disciplines:
 
 1. **``remove`` is pure** (``02`` §D-02-3): it returns a pruned copy and only affects this field's
    chain. Deleting in place would let one item's operation pollute the next when the same document
-   is parsed item by item.
+   is parsed item by item. It is also the contract the run-scoped materialization cache rests on
+   (`03` §6): a cached document MUST NOT be mutated, so ``remove`` and ``text`` (which needs the
+   noise tags stripped) both work on a copy.
 2. **Nodes are always wrapped in ``DomNode(Opaque)``**: native engine objects never enter the value
    domain, so the output of ``nodes`` / ``self`` is naturally rejected by export boxing
    (``UP2-E2003``).
@@ -68,6 +70,7 @@ from typing import Any, ClassVar, Final
 
 from ..core.ast import Lit, Param
 from ..core.errors import Failed, Missing, Ok, Outcome, Up2Error, diag
+from ..core.materialize import HTML
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import Opaque, type_name
 
@@ -128,6 +131,17 @@ class SelectolaxEngine:
     def parse(self, text: str) -> Any:
         return self._parser.HTMLParser(text)
 
+    def size(self, document: Any) -> int:
+        """The document's materialized size in bytes, for the run-scoped cache (`03` §6).
+
+        A selectolax tree lives in the C extension: the Python object is a 96-byte handle whatever
+        the document's size is (measured), so ``sys.getsizeof`` measures nothing. The document's own
+        markup is the measure that tracks the tree — measured, a DOM costs ~24x its text in resident
+        memory, and the serialization grows with the same node count. It is computed once per
+        materialization (a miss), against a parse of the same text.
+        """
+        return len(str(document.html or "").encode("utf-8"))
+
     def copy(self, node: Any) -> Any:
         return self._parser.HTMLParser(node.html)
 
@@ -165,20 +179,16 @@ class SelectolaxEngine:
         self.parse("<html></html>").css(selector)
 
 
-_ENGINE: SelectolaxEngine | None = None
-_ENGINE_PROBED = False
-
-
 def engine() -> SelectolaxEngine | None:
-    """The current engine (cached after the first probe); ``None`` when selectolax is missing."""
-    global _ENGINE, _ENGINE_PROBED
-    if not _ENGINE_PROBED:
-        try:
-            _ENGINE = SelectolaxEngine()
-        except ImportError:
-            _ENGINE = None
-        _ENGINE_PROBED = True
-    return _ENGINE
+    """The engine an operator builds with; ``None`` when selectolax is missing.
+
+    There is nothing to cache between runs here: the adapter is an import (a module lookup) plus an
+    object, while the **document** it parses is what the run-scoped cache of `03` §6 holds.
+    """
+    try:
+        return SelectolaxEngine()
+    except ImportError:
+        return None
 
 
 class _SelectorOp(Op):
@@ -244,7 +254,7 @@ class _SelectorOp(Op):
                 reason="css needs selectolax",
                 fix=f'install it: uv add "uniparser2[{_HTML_EXTRA}]"',
             )
-        context = _context_doc(active, call.value)
+        context = _context_doc(active, call)
         if isinstance(context, Failed):
             return context
         selector = str(call.params.get("selector") or "")
@@ -308,13 +318,17 @@ def _literal(params: Mapping[str, Param], name: str, *, pointer: str = "") -> st
     return text
 
 
-def _context_doc(active: SelectolaxEngine, value: Any) -> Any:
+def _context_doc(active: SelectolaxEngine, call: Call) -> Any:
     """Normalize the input into a context node.
 
-    A string is parsed, a ``DomNode`` is unwrapped, and anything else reports ``UP2-E2002``.
+    A string is **materialized through the run's cache** (`03` §6), a ``DomNode`` is unwrapped, and
+    anything else reports ``UP2-E2002``. The cached document is never mutated: the wrapping
+    ``DomNode`` is fresh per call, and every action that would change the tree works on a copy
+    (``remove`` and ``text`` both do).
     """
+    value = call.value
     if isinstance(value, str):
-        return DomNode(active.parse(value))
+        return DomNode(_document(active, call, value))
     if isinstance(value, DomNode):
         return value
     return Failed(
@@ -322,6 +336,16 @@ def _context_doc(active: SelectolaxEngine, value: Any) -> Any:
         reason=f"css needs a str or a node input, got {type_name(value)}",
         fix='per-item parsing belongs to the chain level: ["css","nodes",S] then ["each",{...}]',
     )
+
+
+def _document(active: SelectolaxEngine, call: Call, text: str) -> Any:
+    """The HTML document for ``text``: one parse per run, through the materializer (`03` §6)."""
+
+    def build(source: str) -> tuple[Any, int]:
+        document = active.parse(source)
+        return document, active.size(document)
+
+    return call.cache.get(HTML, text, build)
 
 
 def _prune(

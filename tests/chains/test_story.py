@@ -3,10 +3,16 @@
 A story is data, so every structural mistake must fail at **compile time** with a code and a JSON
 Pointer; the run then only evaluates. Two things are pinned here beyond the happy path: the shape of
 each effect, and the rule that an answer resumes the **same** run (no hand-off).
+
+A step's `type` is a declared **shape** whose registry is host state (`03` §3): the fixture below
+installs the two names these cases declare (`Record` / `Answer`) and puts the registry back
+afterwards, so one case can never see another one's types. What a *registered constructor* really
+does at the step boundary is the subject of `tests/chains/test_type_registry.py`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -20,11 +26,38 @@ from uniparser2 import (
     compile_field,
     compile_story,
     eval_field,
+    register_type,
     start,
+    unregister_type,
 )
 from uniparser2.core.refs import RESERVED_ROOTS
 
 _DOC = "<div><a href='/p/1'>one</a><a href='/p/2'>two</a></div>"
+_STORY_TYPES = ("Record", "Answer", "Page")
+
+
+def _identity(*args: Any, **kwargs: Any) -> Any:
+    """A stand-in host constructor: `Cls(**payload)` / `Cls(*items)` — it answers its input.
+
+    The two names this module declares (`Record` / `Answer`) are JSON shapes here, so the stub only
+    has to accept the payload; a real validating constructor is the subject of
+    `tests/chains/test_type_registry.py`.
+    """
+    if len(args) == 1 and not kwargs:
+        return args[0]
+    if kwargs:
+        return kwargs
+    return list(args)
+
+
+@pytest.fixture(autouse=True)
+def _types() -> Iterator[None]:
+    """The two type names these cases declare, registered only for the duration of the case."""
+    for name in _STORY_TYPES:
+        register_type(name, _identity)
+    yield
+    for name in _STORY_TYPES:
+        unregister_type(name)
 
 
 class Answer:
@@ -407,11 +440,46 @@ def test_a_failing_step_stops_the_run_with_its_code() -> None:
     assert info.value.diagnostic.pointer == "/steps/0"
 
 
-def test_a_missing_chain_product_is_null() -> None:
-    """A selector that matched nothing is not an error: the step produced nothing, and it flows as
-    null (an open question in the change's design)."""
+def test_a_missing_chain_product_is_skipped() -> None:
+    """A selector that matched nothing is not an error and not a product: the step is skipped
+    (03 §9), so it contributes nothing to the exit — exactly as a missing field is absent from a
+    field-map product, and never a null."""
     story = _parse_story(steps=[{"name": "a", "parse": [["css1", "text", "div.nope"]]}], exit="a")
-    assert start(story, _DOC).next() == ("done", [None])
+    assert start(story, _DOC).next() == ("done", [])
+
+
+def test_a_missing_product_is_not_recorded() -> None:
+    """Nothing was produced, so a later step cannot reference the skipped step (`UP2-E2001`)."""
+    story = _parse_story(
+        steps=[
+            {"name": "gone", "parse": [["css1", "text", "div.nope"]]},
+            {"name": "later", "parse": {"u": [["ctx", "get", "locals.nope"], ["py", "id", ""]]}},
+        ],
+        exit="later",
+    )
+    assert start(story, _DOC).next() == ("done", [{}])
+
+
+def test_a_missing_product_skips_a_receiving_step() -> None:
+    """A receiving step whose own product is missing is skipped: the run continues after it."""
+    story = {
+        "steps": [
+            {
+                "name": "seed",
+                "parse": {"url": [["py", "id", ""]]},
+                "type": "Request",
+                "next": "read",
+            },
+            # `css1` matches nothing in the answer text, so this step produces no product at all.
+            {"name": "read", "parse": [["css1", "text", "div.nope"]], "type": "Record"},
+            {"name": "after", "parse": {"seen": [["const", "after"]]}, "type": "dict"},
+        ],
+        "exit": "after",
+    }
+    run = start(story, "https://x/list.html")
+    assert run.next() == ("request", {"url": "https://x/list.html"}, "read")
+    # `read` produced nothing, so the run goes on at the step after it — not at a null product.
+    assert run.send(_DOC) == ("done", [{"seen": "after"}])
 
 
 def test_a_batch_answer_of_the_wrong_size_is_a_host_error() -> None:

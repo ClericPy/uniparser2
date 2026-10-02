@@ -10,9 +10,16 @@
 > `udf`（宿主注册，链里不含代码）、`code`（链内代码，语言级沙箱，**默认不存在**，见「安全提示」），
 > 外加作用域算子 `ctx`、积木 `const` 与迭代算子 `each`，共 73 对 `(算子, 动作)`。**L2 已起步**：站点包
 > （**story**）可编译可运行——`start(bundle, value)` / `run.next()` / `run.send(answer)`，`Request` /
-> `RequestBatch` / `call` 挂起运行、其答复恢复**同一个**运行——两个 `samples/*/site.json` 都能对真实站点
-> 端到端跑通。命令行可试：`uv run up2 lint samples/books.toscrape.com/books/site.json`。物化缓存、注册
-> 类型构造器与就地验证台尚未实现。进度与验收标准见设计稿的路线图；想直接跑起来看算子层（需在源码检出
+> `RequestBatch` / `call` 挂起运行、其答复恢复**同一个**运行——两个 `samples/*/site.json` 都能通过随仓库提交的
+> 宿主脚本（`samples/*/host.py`，用 `register_type` 注册样本自己的领域类型）对真实站点端到端跑通。命令行
+> 可试：`uv run up2 lint samples/books.toscrape.com/books/site.json`，完整运行用
+> `uv run python samples/books.toscrape.com/host.py`。**类型注册表**也已落地：宿主用
+> `register_type(name, constructor)` 注册类型，内核在**步骤边界**用它校验产物。运行作用域的**物化缓存**也
+> 已落地（`MAX_MATERIALIZE_BYTES` / `MAX_MATERIALIZE_ITEMS`，LRU）：同一份文档在一次运行里只解析一次，
+> 无论多少个字段读它。**L3 已起步**：**模板仓库**（`04` §1–§6）把链绑定到 `(root_domain, tpl_key)`
+> 业务身份——一条链一行、`blake2s` 指纹、只增不改的审计表，同一个 `TemplateStore` 协议下两种实现（文件仓库
+> 与 SQLite），命令为 `up2 publish` / `get` / `audit`；样本回归器与 `up2 doctor` 属于下一片。就地验证台尚未
+> 实现。进度与验收标准见设计稿的路线图；想直接跑起来看算子层（需在源码检出
 > 目录内）：`uv run python demo.py`。（`demo.py` 与 `tools/demo_report.py` 只存在于仓库里：
 > wheel 与 sdist 都不含它们。）
 
@@ -33,7 +40,9 @@
 ## 现在有什么（L1）
 
 **算子层**已完成，且有机械审计：11 个算子、73 对 `(算子, 动作)`，每一对都有覆盖用例
-（`uv run up2 conformance --check`）；28 个已实现的错误码每一个都有测试断言。
+（`uv run up2 conformance --check`）；35 个已实现的错误码每一个都有测试断言。它上面已落地 **L3 的第一片
+——模板仓库**：`up2 publish` 把链绑定到 `(root_domain, tpl_key)` 身份、拒绝不过 lint 的链、把指纹写进
+只增不改的审计表，`up2 get` / `up2 audit` 读回来——底层可以是文件仓库或 SQLite（`UP2_HOME`、`UP2_STORE`）。
 
 | 算子 | 引擎（extra） | 动作 |
 |---|---|---|
@@ -53,13 +62,17 @@
 
 ## 还没有的（L2–L4）
 
-算子层已完成，**第一版 story 执行器**也已落地；设计里 L2 的其余部分还没实现：没有按运行期作用域的物化
-缓存（所以同一段文本喂给多个 `css`/`json` 阶段会各解析一次），没有注册类型构造器（步骤的 `type` 只是一个
-声明的名字，边界检查是「产物必须是 JSON」），没有 `up2 trial --trace`，没有 `up2 studio` 验证台，
-没有 Store（`FileStore` / `SqliteStore`），没有指纹与 `S0–S7` 发布 SOP，ADR 也还没写。没有 `seed` /
+算子层已完成，**第一版 story 执行器**、**类型注册表**、**运行作用域物化缓存**与**模板仓库**（`04`
+§1–§6：`Template` / `template_audit` 记录、`blake2s` 指纹、`TemplateStore` 协议下的 `FileStore` 与
+`SqliteStore`、`publish` 三道门与 `up2 publish` / `get` / `audit`）也已落地；设计里 L2/L3 的其余部分
+还没实现：没有 `up2 trial --trace`，没有 `up2 studio` 验证台，
+没有样本回归器（`up2 snapshot` / `up2 test`），没有 `up2 list`、也没有 `up2 doctor`，因此 `S0–S7`
+发布 SOP 还不完整；ADR 也还没写。没有 `seed` /
 `parse` / `emit` 节点类型，也没有 `routes`——那套模型已随 story 模型退役，剩下的就是上面这张清单。
-CLI 就是 `ops` / `conformance` / `lint` / `trial` 四个子命令；公开 API 是 `compile_field` /
-`compile_stage` / `compile_story` / `start` / `eval_field` 加值域、作用域类型。分层、各层交付物与验收
+CLI 是 `ops` / `conformance` / `lint` / `trial` / `publish` / `get` / `audit`；公开 API 是
+`compile_field` /
+`compile_stage` / `compile_story` / `start` / `eval_field` 加值域、作用域类型（模板仓库是独立一层，
+`uniparser2.store`）。分层、各层交付物与验收
 标准见 [`docs/specs/007` §3](docs/specs/007-source-decisions-and-roadmap.md)。
 
 ## 安装
@@ -148,6 +161,22 @@ uv run up2 trial date.json \
 # }
 ```
 
+**跑通的链按业务身份存起来**（`04` §1–§6）：`publish` 是唯一的写入入口，写之前会再 lint 一遍链，
+一条链一行（`(root_domain, tpl_key)` 唯一），并把指纹追加到只增不改的审计表——重发同一条链什么都不写。
+
+```bash
+export UP2_HOME=~/.uniparser2            # 仓库位置（默认值）；UP2_STORE=sqlite 切到 SQLite
+uv run up2 publish link.json --domain ah.gov.cn --key 政府文件列表 --actor llm:claude --source agent
+# changed=True chain_id=… 8f8bf3ed… -> d53a2ae0… audit_seq=1
+
+uv run up2 get ah.gov.cn 政府文件列表 --graph > backup.json   # 只出链数据，用作备份材料
+uv run up2 get ah.gov.cn 政府文件列表                          # 整行 + 指纹
+uv run up2 audit ah.gov.cn 政府文件列表                        # 谁在什么时候改成了哪个指纹
+```
+
+`--skip-tests` 必须与 `--note` 同时给（备注会写进审计行）；覆盖 `status` 为 `ready` 的行需要
+`--confirm-overwrite`。
+
 Python API：
 
 ```python
@@ -172,6 +201,38 @@ match outcome:
         print(code, reason, fix)  # 确定性错误码 + 一句话修法
 ```
 
+**步骤的 `type` 是一张"形状"**（`03` §3）：宿主先用 `register_type(name, constructor)` 注册名字到构造器，
+内核在**步骤边界**用构造器校验产物。构造器是**校验器**而不是容器——产物继续以 JSON 往下走：字典产品
+`Cls(**payload)`、列表产品 `Cls(*items)`，没注册的名字在该步骤报 `UP2-E1011`，构造器自己抛异常则报
+`UP2-E2019`（`reason` 保留构造器原本的异常文本）：
+
+```python
+from dataclasses import dataclass
+
+import uniparser2 as up2
+
+
+@dataclass
+class Article:  # 字段就是产品的键；缺 title 就在这一步失败，而不是等到出口
+    url: str
+    title: str
+    pub_time: str = ""
+
+
+up2.register_type("Article", Article)
+bundle = {
+    "steps": [
+        {
+            "name": "record",
+            "parse": {"url": [["py", "getattr", "url"]], "title": [["css1", "text", "h1"]]},
+            "type": "Article",
+        }
+    ],
+    "exit": "record",
+}
+run = up2.start(bundle, response)  # 缺 title 就在这一步失败，而不是等到出口
+```
+
 坏链在**编译期**就会给出带指针的确定性诊断，而不是运行到一半才炸。诊断是**单行、形状固定**的——错误码、
 消息、位置、修法——`lint` 以非零码退出：
 
@@ -190,9 +251,10 @@ uniparser2/
 │   ├── core/           值域 / 三态 / 引用 / 注册表 / 编译 / 求值 / 出口装箱 / 一致性审计
 │   │   └── （零第三方依赖、无 IO、无协程）
 │   ├── ops/            算子实现（basic · regex · pyops · ctx；每个算子自声明动作与依赖）
-│   ├── cli/            up2 命令（ops / conformance / lint / trial）
+│   ├── store/          模板仓库（Template + 指纹 + FileStore / SqliteStore + publish 三道门）
+│   ├── cli/            up2 命令（ops / conformance / lint / trial / publish / get / audit）
 │   └── py.typed        PEP 561 类型标记
-├── tests/              算子行为字典 · 编译期/运行期错误码 · 序列化往返 · CLI 端到端 · 一致性审计
+├── tests/              算子行为字典 · 编译期/运行期/存储层错误码 · 序列化往返 · CLI 端到端 · 一致性审计
 ├── tools/              本地开发脚本（生成目录的工具；不随发行物发布）
 ├── docs/               索引、设计稿（`docs/specs/0NN-*.md`）、算子参考与生成的目录
 ├── .github/workflows/  CI 与发布

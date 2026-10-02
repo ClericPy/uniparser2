@@ -25,12 +25,15 @@ from uniparser2 import (
     Ok,
     Opaque,
     Outcome,
+    Scope,
     Up2Error,
     compile_field,
     eval_field,
     pack,
+    start,
 )
 from uniparser2.core import registry
+from uniparser2.core.materialize import Materializer
 from uniparser2.ops import htmldom
 
 COVERS_PAIRS = (
@@ -79,6 +82,10 @@ class FakeEngine:
 
     def parse(self, text: str) -> Any:
         return {**_DOC, "text": text, "html": text, "outer": text, "source": text}
+
+    def size(self, document: Any) -> int:
+        """The stand-in's materialized size: the document text it was parsed from (`03` §6)."""
+        return len(str(document["source"]).encode("utf-8"))
 
     def select(self, node: Any, selector: str) -> list[Any]:
         return list(_BY_SELECTOR.get(selector, []))
@@ -312,3 +319,89 @@ def test_empty_selector_compiles_on_real_engine() -> None:
     compile_field([["css1", "text", ""]])
     compile_field([["css", "nodes", ""]])
     compile_field([["css1", "remove", ""]])
+
+
+# ---------------------------------------------------------------- the run-scoped cache (03 §6)
+
+
+def test_one_document_is_materialized_once_per_run(fake: FakeEngine) -> None:
+    """Twenty fields over one document are one parse, not twenty (``03`` §6)."""
+    bundle = {
+        "steps": [
+            {
+                "name": "record",
+                "parse": {
+                    "title": [["css1", "text", "h1"]],
+                    "link": [["css1", "@href", "a"]],
+                    "all": [["css", "text", "a"]],
+                },
+                "type": "dict",
+            }
+        ],
+        "exit": "record",
+    }
+    run = start(bundle, "<p>x</p>")
+    assert run.next() == ("done", [{"title": "Title", "link": "/p/1", "all": ["One", "Two"]}])
+    cache = run.scope.materializer
+    assert len(cache) == 1
+    assert cache.bytes == run.scope.materializer.bytes
+
+
+def test_two_runs_do_not_share_a_document(fake: FakeEngine) -> None:
+    """Nothing is shared across runs: each run materializes its own (``03`` §6)."""
+    bundle = {"steps": [{"name": "a", "parse": {"t": [["css1", "text", "h1"]]}}], "exit": "a"}
+    first = start(bundle, "<p>x</p>")
+    second = start(bundle, "<p>x</p>")
+    first.next()
+    second.next()
+    assert first.scope.materializer is not second.scope.materializer
+    assert len(first.scope.materializer) == 1
+    assert len(second.scope.materializer) == 1
+
+
+def test_a_prune_leaves_the_cached_document_alone(fake: FakeEngine) -> None:
+    """A destructive action copies first, so the document in the cache stays intact (``03`` §6)."""
+    cache = _cache_for("<p>x</p>", [["css", "remove", "h1"]])
+    assert fake.pruned == [("h1", False)]
+    assert fake.select(_document_of(cache), "h1") == [_TITLE]
+
+
+def test_the_cached_document_survives_a_real_prune() -> None:
+    """The immutability contract, against the real engine's in-place ``decompose`` (``03`` §6)."""
+    pytest.importorskip("selectolax")
+    cache = _cache_for(
+        "<html><body><h1>Title</h1><p>Body</p></body></html>", [["css", "remove", "h1"]]
+    )
+    document = _document_of(cache)
+    active = htmldom.SelectolaxEngine()
+    title = active.select_first(document, "h1")
+    assert title is not None
+    assert active.text(title).strip() == "Title"
+
+
+def _cache_for(text: str, chain: Any) -> Any:
+    """Materialize one document through a cache, for a case that must look at the document itself.
+
+    The evaluated chain answers a node handle (what ``remove`` produces), which is why the result is
+    only checked for being opaque: what this helper exists for is the cache it fills.
+    """
+    cache = Materializer()
+    scope = Scope()
+    scope.cache = cache
+
+    def build(source: str) -> tuple[Any, int]:
+        active = htmldom.engine()
+        assert active is not None
+        document = active.parse(source)
+        return document, active.size(document)
+
+    outcome = eval_field(compile_field(chain), text, scope=scope)
+    assert isinstance(outcome, Ok)
+    assert isinstance(outcome.value, Opaque)
+    assert cache is scope.cache
+    return cache
+
+
+def _document_of(cache: Any) -> Any:
+    """The single artifact the cache holds, for a case that must look at the document itself."""
+    return next(iter(cache._artifacts.values())).artifact

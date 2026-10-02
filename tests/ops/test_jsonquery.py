@@ -13,7 +13,17 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Missing, Ok, Outcome, Up2Error, compile_field, eval_field
+from uniparser2 import (
+    Failed,
+    Missing,
+    Ok,
+    Outcome,
+    Scope,
+    Up2Error,
+    compile_field,
+    eval_field,
+    start,
+)
 from uniparser2.core import registry
 from uniparser2.ops import jsonquery
 
@@ -149,3 +159,29 @@ def test_real_jmespath_when_installed() -> None:
     text = '{"data": {"list": [{"url": "u1"}, {"url": "u2"}]}}'
     assert run([["json", "data.list[*].url"]], text) == Ok(["u1", "u2"])
     assert isinstance(run([["json", "data.nope"]], text), Missing)
+
+
+def test_json_text_is_materialized_once_per_run(fake_jmespath: None) -> None:
+    """Two fields over one JSON text are one parse, not two (``03`` §6)."""
+    text = '{"data": {"html": "<p>x</p>", "url": "u"}}'
+    bundle = {
+        "steps": [
+            {
+                "name": "record",
+                "parse": {"html": [["json", "data.html"]], "url": [["json", "data.url"]]},
+            }
+        ],
+        "exit": "record",
+    }
+    run = start(bundle, text)
+    assert run.next() == ("done", [{"html": "<p>x</p>", "url": "u"}])
+    cache = run.scope.materializer
+    assert len(cache) == 1
+    assert cache.bytes > len(text.encode("utf-8"))
+
+
+def test_an_already_parsed_value_is_not_materialized(fake_jmespath: None) -> None:
+    """Only a ``str`` source is materialized; a JSON tree is walked as it is (``03`` §6)."""
+    scope = Scope()
+    assert eval_field(compile_field([["json", "a"]]), {"a": 1}, scope=scope) == Ok(1)
+    assert len(scope.materializer) == 0

@@ -12,15 +12,32 @@ from .conformance import ConformanceReport, check
 from .errors import CODES, Diagnostic, Failed, Missing, Ok, Outcome, Up2Error, diag
 from .evaluator import eval_field, resolve_params
 from .export import pack
-from .limits import MAX_STEPS_PER_FIELD
+from .limits import MAX_MATERIALIZE_BYTES, MAX_MATERIALIZE_ITEMS, MAX_STEPS_PER_FIELD
+from .materialize import HTML, JSON, XML, Materialize, MaterializedArtifact, Materializer
 from .refs import Scope, is_ref_text, parse_path_text, parse_ref
 from .story import CompiledStory, StoryRun, StoryStep, compile_story, start
+from .types import (
+    BUILTIN_TYPES,
+    TypeConstructionError,
+    TypeConstructor,
+    UnknownTypeError,
+    get_type,
+    register_type,
+    type_names,
+    unregister_type,
+)
 from .values import MISSING, JsonValue, Opaque, Value, is_json_value, is_opaque, preview, type_name
 
 __all__ = [
+    "BUILTIN_TYPES",
     "CODES",
+    "HTML",
+    "JSON",
+    "MAX_MATERIALIZE_BYTES",
+    "MAX_MATERIALIZE_ITEMS",
     "MAX_STEPS_PER_FIELD",
     "MISSING",
+    "XML",
     "CompiledField",
     "CompiledStage",
     "CompiledStory",
@@ -29,6 +46,9 @@ __all__ = [
     "Failed",
     "JsonValue",
     "Lit",
+    "Materialize",
+    "MaterializedArtifact",
+    "Materializer",
     "Missing",
     "Ok",
     "Opaque",
@@ -39,6 +59,9 @@ __all__ = [
     "Stage",
     "StoryRun",
     "StoryStep",
+    "TypeConstructionError",
+    "TypeConstructor",
+    "UnknownTypeError",
     "Up2Error",
     "Value",
     "check",
@@ -49,6 +72,7 @@ __all__ = [
     "diag",
     "dumps",
     "eval_field",
+    "get_type",
     "is_json_value",
     "is_opaque",
     "is_ref_text",
@@ -57,7 +81,10 @@ __all__ = [
     "parse_path_text",
     "parse_ref",
     "preview",
+    "register_type",
     "resolve_params",
     "start",
     "type_name",
+    "type_names",
+    "unregister_type",
 ]

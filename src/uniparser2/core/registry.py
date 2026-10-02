@@ -23,6 +23,7 @@ from typing import Any, ClassVar, Final
 
 from .ast import MAX_STAGE_LEN, CompiledField, Param
 from .errors import Outcome, Up2Error, diag
+from .materialize import Materializer
 from .refs import Scope
 
 
@@ -118,6 +119,10 @@ class Call:
     """Every input of one operator call.
 
     A context object rather than a long parameter list, so fields can be added later.
+
+    ``cache`` is the run's materialization cache (`03` §6): a consumer that must turn text into
+    structure asks it for the artifact instead of building one per stage. It is the kernel's own
+    object, injected the same way ``run_chain`` is, so an operator never imports the evaluator.
     """
 
     value: Any
@@ -126,6 +131,7 @@ class Call:
     payload: Any
     scope: Scope
     run_chain: ChainRunner
+    cache: Materializer
 
 
 class Op(ABC):

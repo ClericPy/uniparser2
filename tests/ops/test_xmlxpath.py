@@ -26,10 +26,12 @@ from uniparser2 import (
     Ok,
     Opaque,
     Outcome,
+    Scope,
     Up2Error,
     compile_field,
     eval_field,
     pack,
+    start,
 )
 from uniparser2.core import registry
 from uniparser2.ops import xmlxpath
@@ -234,3 +236,36 @@ def test_real_lxml_roundtrip() -> None:
         ["Reporter A"]
     )
     assert run([["xpath", "text", "//enclosure/@url"]], RSS) == Ok(["https://x/a.mp3"])
+
+
+def test_xml_text_is_materialized_once_per_run(xml_ready: None) -> None:
+    """Two fields over one XML document are one parse, not two (``03`` §6)."""
+    bundle = {
+        "steps": [
+            {
+                "name": "record",
+                "parse": {
+                    "title": [["xpath", "text", "//title"]],
+                    "creator": [["xpath", "text", {"expr": "//dc:creator", "ns": NS_DC}]],
+                },
+            }
+        ],
+        "exit": "record",
+    }
+    run = start(bundle, RSS)
+    assert run.next() == ("done", [{"title": ["Title"], "creator": ["Reporter A"]}])
+    cache = run.scope.materializer
+    assert len(cache) == 1
+    assert cache.bytes > 0
+
+
+def test_a_node_input_does_not_materialize(xml_ready: None) -> None:
+    """A node the chain already holds is unwrapped; only XML **text** goes through the cache."""
+    scope = Scope()
+    first = eval_field(compile_field([["xpath", "self", "//item"]]), RSS, scope=scope)
+    assert isinstance(first, Ok)
+    assert len(scope.materializer) == 1
+    assert eval_field(
+        compile_field([["xpath", "text", "//title"]]), first.value, scope=scope
+    ) == Ok(["Title"])
+    assert len(scope.materializer) == 1

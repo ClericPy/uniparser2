@@ -57,6 +57,10 @@ src/uniparser2/
     evaluator.py  stage evaluation + field-chain evaluation + step advance
     export.py     export packing (the single product point) + built-in schema validation
     refs.py       reference syntax parsing and evaluation (`$<scope|step>.<path>`)
+    types.py      the host's type registry (name → constructor) + the step-boundary construction (`03` §3)
+    story.py      the story layer: compile a bundle, then run it to its next suspension (`03` §2-§5)
+    udfs.py       the host's user-defined function registry (name → callable)
+    conformance.py the pure half of the conformance audit (declaration × coverage)
   ops/
     htmldom.py    css / css1 (one shared action table + the first_only flag, engine selectolax)
     xmlxpath.py   xpath (lxml)
@@ -71,9 +75,12 @@ src/uniparser2/
     executor.py   sequential executor (no DAG, no join)
     lint.py       the lint checklist (`03` §10)
   store/
-    base.py       TemplateStore Protocol
+    model.py      Status/Source/Graph, Template, TemplateMeta, AuditRow, PublishResult, new_chain_id
+    fingerprint.py the graph fingerprint (blake2s over the canonicalised graph)
+    base.py       the TemplateStore Protocol + the shared publish algorithm (`04` §5)
+    gates.py      the publish gates G2/G3 that live above the store (`04` §6)
     file.py       FileStore (one file per chain + audit.jsonl)
-    sqlite.py     SqliteStore (two tables + transactions)
+    sqlite.py     SqliteStore (two tables + one transaction per publish)
   sop/
     pipeline.py   SOP orchestration (the callable form of S1–S7)
   ui/
@@ -164,13 +171,14 @@ The tri-state settles in exactly two ways, and there is nothing to configure:
 
 | State | Outcome |
 |---|---|
-| `Missing` | **not there**: in a field map the key is **absent** from the product; in a batch the item is **skipped** — never `""`, never `null` |
+| `Missing` | **not there**: in a field map the key is **absent** from the product; in a batch the item is **skipped**; at a step boundary the step is **skipped** (no product, and nothing in the exit list) — never `""`, never `null` |
 | `Failed` | **always fails the run**, carrying the code of the stage that failed (its JSON Pointer in the trace); nothing degrades it |
 
 A field that must exist is enforced by the **host-registered type constructor** at the step boundary
-(`03` §3): it reports the missing key at the step that produced it, which is where the author can see
-it. A value that may be absent is made present by the action that knows how — `py.default` and `py.or`
-catch a missing value (`accepts_missing`, `02` §5) instead of reconfiguring the whole run.
+(`03` §3): it reports the missing key at the step that produced it (`UP2-E2019`, the constructor's own
+exception text in `reason`), which is where the author can see it. A value that may be absent is made
+present by the action that knows how — `py.default` and `py.or` catch a missing value
+(`accepts_missing`, `02` §5) instead of reconfiguring the whole run.
 
 > **The settlement policy is retired** (change `retire-settlement-policy`): the `Policy` type, the four
 > `on_missing` / `on_error` strategies, the `policy=` parameter of `eval_field`, the `policy` block of a
@@ -185,9 +193,9 @@ Error codes are **the LLM's handle for self-correction**: every code must be **u
 |---|---|---|
 | `UP2-E1xxx` | compile time (lint / Schema) | `UP2-E1001` unknown operator |
 | `UP2-E2xxx` | runtime (evaluation / packing) | `UP2-E2001` the reference path does not exist |
-| `UP2-E3xxx` | storage (SOP / auditing) | `UP2-E3001` chain fingerprint conflict |
+| `UP2-E3xxx` | storage (the template store / auditing) | `UP2-E3001` chain fingerprint conflict |
 
-Full code table: **compile time** see `02` §7, **runtime** see `02` §7.1, **storage** see `04` §5.1. A bare `except:` is **forbidden**; the only fallback allowed is `except Exception:`, and it must be turned into a `Failed` carrying a code.
+Full code table: **compile time** see `02` §7, **runtime** see `02` §7.1, **storage** see `04` §5.1 (implemented: `UP2-E3001`–`UP2-E3005`). A bare `except:` is **forbidden**; the only fallback allowed is `except Exception:`, and it must be turned into a `Failed` carrying a code — the store layer is the one place where such a fallback raises `Up2Error` with `UP2-E3004` instead, because a store failure has no `Failed` channel (`04` §5).
 
 ---
 
@@ -302,8 +310,8 @@ The limit constants are centralized in one place, taken from there by both compi
 | `MAX_EACH_ITER` | 10_000 | number of elements a single `each` iterates (turned into `Failed` at runtime, `UP2-E2012`) | **L1 (implemented)** |
 | `MAX_FIELDS_PER_MAP` | 256 | cap on the fields of **one field map** (compile time, exceeding it gives `UP2-E1012`) | **L1 (implemented)** |
 | `MAX_TEXT_BYTES` | 16 MiB | byte cap on an accepted input (turned into `Failed` when the input is accepted, before any operator sees it) | L2 |
-| `MAX_MATERIALIZE_BYTES` | 64 MiB | cap on the run-scoped materialization cache, accounted in **materialized** bytes (`03` §6); LRU, and one artifact may exceed it while it is in use | L2 |
-| `MAX_MATERIALIZE_ITEMS` | 8 | how many materialized artifacts one run keeps (`03` §6) | L2 |
+| `MAX_MATERIALIZE_BYTES` | 64 MiB | cap on the run-scoped materialization cache, accounted in **materialized** bytes (`03` §6); LRU, and one artifact may exceed it while it is in use | **L2 (implemented)** |
+| `MAX_MATERIALIZE_ITEMS` | 8 | how many materialized artifacts one run keeps (`03` §6) | **L2 (implemented)** |
 
 > **`MAX_FIELDS_PER_MAP` and `MAX_FIELDS_PER_NODE`**: a field map is the shape both `each` and a step's field map use, so the per-map cap is checked on every map, and the compilation cost it guards is per map. When the story layer lands, `MAX_FIELDS_PER_NODE` (128) becomes the tighter per-step cap on top of it.
 

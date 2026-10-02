@@ -33,6 +33,21 @@ class _HostResponse:
         self.status = status
         self.text = text
 
+    def headers(self) -> dict[str, str]:
+        """A method: a dotted reference must refuse it, exactly as `py.getattr` does."""
+        return {}
+
+    def json(self) -> dict[str, Any]:
+        """The `requests`-style method an author reaches for by mistake."""
+        return {}
+
+
+_CALLABLE_FIX = (
+    'a method is not a value: read the text with ["css","text",""] (or "html" / '
+    '"outer"), or register a udf that calls it'
+)
+"""The fix hint both refusals carry (`refs._walk_attribute`, `pyops._py_getattr`)."""
+
 
 def run(chain: Any, value: Any, *, scope: Scope | None = None) -> Outcome:
     compiled = compile_field(chain)
@@ -51,6 +66,26 @@ def test_e2001_reference_missing_attribute_names_the_class() -> None:
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2001"
     assert "AttributeError: '_HostResponse' object has no attribute 'txet'" in outcome.reason
+
+
+def test_e2002_reference_refuses_a_callable_attribute() -> None:
+    """A dotted reference never calls a method, exactly as `py.getattr` never does (03 §13 O12)."""
+    scope = Scope(locals={"resp": _HostResponse(200, "body")})
+    outcome = run([["ctx", "get", "locals.resp.headers"]], None, scope=scope)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2002"
+    assert "the attribute 'headers' of _HostResponse is callable" in outcome.reason
+    assert outcome.fix == _CALLABLE_FIX
+
+
+def test_the_reference_and_getattr_refusals_agree() -> None:
+    """The same message shape and the same fix hint, so an author sees one rule, not two."""
+    response = _HostResponse(200, "body")
+    reference = run([["ctx", "get", "locals.r.json"]], None, scope=Scope(locals={"r": response}))
+    attribute = run([["py", "getattr", "json"]], response)
+    assert isinstance(reference, Failed) and isinstance(attribute, Failed)
+    assert reference.code == attribute.code == "UP2-E2002"
+    assert reference.fix == attribute.fix
 
 
 def test_e2001_reference_indexes_a_sequence() -> None:

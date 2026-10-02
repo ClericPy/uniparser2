@@ -142,7 +142,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | Item | Status | Measured |
 |---|---|---|
 | uv scaffold (`pyproject.toml` / `uv.lock` / src layout / dev group) | yes | `uv sync` installs 14 packages; uv picked the managed **CPython 3.13.12** (not this machine's 3.14.3) |
-| `core/` (values / limits / errors / ast / refs / registry / compile / evaluator / export / conformance / udfs) | yes | the runtime dependencies are **empty**; `core/` has no third-party import, no IO, no `async` |
+| `core/` (values / limits / errors / ast / refs / registry / types / story / udfs / compile / evaluator / export / conformance) | yes | the runtime dependencies are **empty**; `core/` has no third-party import, no IO, no `async` |
 | **all 10 operators implemented** | yes | `css` / `css1` / `xpath` / `json` / `re` / `py` (**31 functions**) / `udf` / `ctx` / `const` / `code` (optional sandbox) → **59 `(operator, action)` pairs** (`time` and `cast` were merged into `py` per D-02-14) |
 | the `up2` command | yes | `ops --json` / `conformance --check` / `lint` / `trial` (including `--global` / `--product` / `--on-missing`) |
 | conformance audit | yes | **59 declared pairs = 59 covered pairs**; **all 25 implemented error codes have cases**; `up2 conformance --check` exits **0** |
@@ -192,9 +192,9 @@ This round started from "build the scaffold + the conformance mechanism first, a
 |---|---|
 | Field-map orchestration | multi-field evaluation over one input, cross-field `locals` references, chain-level / step-level / field-level overrides of `on_missing` / `on_error` |
 | **Lists and nesting** | `each` iteration (one dictionary per element, with the per-element scope), `$lit` escaping, arbitrarily deep nested `dict`/`list` |
-| **The story** | the step sequence (`name` / `type`, `parse` = a chain or a field map, `call` = a host function, `next` = the receiving step), the type registry and the step-boundary validation (`L8`, still open), the executor and the run loop (`start` / `next` / `send`) — **landed** in `story-jump-and-naming`, except the type registry |
+| **The story** | the step sequence (`name` / `type`, `parse` = a chain or a field map, `call` = a host function, `next` = the receiving step), the type registry and the step-boundary validation (`L8`) — the executor and the run loop (`start` / `next` / `send`) **landed** in `story-jump-and-naming`, and the registry (`register_type`, `UP2-E1011` / `UP2-E2019`) in `add-type-registry` |
 | Effects | `Request` / `RequestBatch` → the host's own answer (`03` §4.1); `call` → a receipt that is JSON; trace versus suspension |
-| materialization | the run-scoped, byte-capped cache (`03` §6) — load-bearing for acceptance item 7 |
+| materialization | the run-scoped, byte-capped cache (`03` §6) — load-bearing for acceptance item 7 (**landed** in `add-materialization-cache`) |
 | lint | every live rule of `03` §10, each with at least one test (L20 is retired with `presets`) |
 | trace | `up2 trial --trace --json` (the data structure of `06` §5.1) |
 | trial bench | `up2 studio` (pywebview three-column + trace + save as a snapshot), with TUI/CLI fallback |
@@ -210,7 +210,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 
 > **Iteration redesign (change `l2-chain-structure-and-each`, landed in the operator layer)**: the `select` fan-out, the `callback` operator with its `presets` container, the `$map` template directive and the `item` scope root were **retired in favour of one operator, `each`** (`02` §6.9, `03` §7). It takes the list the stage above produced plus an **inline field map** (`field name → chain`, the same shape a step's field map has) and yields one dictionary per element; a `_`-prefixed field name is a local of that element, and every element is evaluated in its own child scope. `$item` is gone because the element is simply the input value of each field chain, and lint L20 is retired with the container. Implemented in the operator layer: 72 `(operator, action)` pairs, 26 error codes, `MAX_EACH_DEPTH` / `MAX_EACH_ITER` / `MAX_FIELDS_PER_MAP` (`01` §9).
 
-> **Input materialization ruling (change `l2-input-materialization-ruling`, design notes only)**: `input_format` / `parse.format` are **deleted** — the format is decided by the operator that consumes the value (`css`/`css1` → HTML, `json` → JSON text, `xpath` → XML), and a **run-scoped, byte-capped cache** (`MAX_MATERIALIZE_BYTES`, 64 MiB by default, `01` §9) keeps it to one parse per document (`03` §6). The cache is **load-bearing, not an optimization**: acceptance item 7 below ("a chain of 500 items × 20 fields within 3 s") depends on it, so it needs its own tests (hit-vs-miss equality, eviction, release at the end of a run). Measured on this commit: one parse costs 48.0 ms at 2 MB and 109.6 ms at 5 MB, the tree is ≈24× the text in memory, and 20 fields that each re-parse take 748.8 ms / 1976.7 ms against 16.5 ms / 48.6 ms when one parse serves all 20. `globals` stays a read-only chain-level constant and cross-step sharing stays with step products (`03` §2, §8); `bytes` never enters a chain, so decoding is the caller's job.
+> **Input materialization ruling (change `l2-input-materialization-ruling`, implemented by `add-materialization-cache`)**: `input_format` / `parse.format` are **deleted** — the format is decided by the operator that consumes the value (`css`/`css1` → HTML, `json` → JSON text, `xpath` → XML), and a **run-scoped, byte-capped cache** (`MAX_MATERIALIZE_BYTES`, 64 MiB by default, `01` §9) keeps it to one parse per document (`03` §6). The cache is **load-bearing, not an optimization**: acceptance item 7 below ("a chain of 500 items × 20 fields within 3 s") depends on it, so it has its own tests (hit-vs-miss equality, eviction under both caps, an artifact over the cap in use, release with the run). **It has landed**: the cache is `core/materialize.py`, carried by the run's evaluation scope and used by `css`/`css1`, `xpath` and `json`; there is no timing test, because a wall-clock assertion over a parse is either flaky or vacuous — what the cache promises is the accounting, and that is what the cases assert. Measured on this commit: one parse costs 48.0 ms at 2 MB and 109.6 ms at 5 MB, the tree is ≈24× the text in memory, and 20 fields that each re-parse take 748.8 ms / 1976.7 ms against 16.5 ms / 48.6 ms when one parse serves all 20. `globals` stays a read-only chain-level constant and cross-step sharing stays with step products (`03` §2, §8); `bytes` never enters a chain, so decoding is the caller's job.
 
 **Acceptance**
 
@@ -241,6 +241,18 @@ This round started from "build the scaffold + the conformance mechanism first, a
 3. `up2 doctor` can detect "a chain without an audit" and fix it with `--fix`.
 4. The audit chain can answer "who changed which chain to which fingerprint and when".
 5. **Regression assertion**: after deleting every concept of `04` from the code, the L1/L2 tests **still all pass** (proving that the first two layers really have zero business coupling).
+
+### L3 progress (first slice landed: the template store)
+
+| Item | Status | Measured |
+|---|---|---|
+| `store/` (models, fingerprint, `TemplateStore` Protocol, `FileStore`, `SqliteStore`, gates) | yes | `04` §1–§6 implemented; `core/` gained the five `UP2-E3001`–`UP2-E3005` codes and nothing else |
+| `up2 publish` / `get` / `audit` | yes | `UP2_STORE` (`file`/`sqlite`, default `file`) + `UP2_HOME`; `get` recompiles what it read |
+| acceptance item 2 above | yes | the no-op writes nothing, a bad chain leaves no residue, both stores (parity cases) |
+| acceptance item 4 above | yes | `up2 audit` / `audit(chain_id)` answer `old_hash → new_hash` per change |
+| acceptance item 3 above | **store layer only** | `inconsistencies()` reports both `UP2-E3003` shapes on both stores; the `doctor --fix` command is the next slice |
+| acceptance item 5 above | yes | run as the change's final experiment: with the store removed from the tree, the L1/L2 suites are green |
+| the `S0–S7` walkthrough and the sample runner | **next slice** | so G2 of `04` §6 currently regresses an empty sample set; only the `--skip-tests`/`--note` trace contract is enforced |
 
 ---
 

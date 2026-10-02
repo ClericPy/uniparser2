@@ -108,6 +108,9 @@ reads it as the chain's first stage (`03` §2).
 - **References can only point backwards**: `$<step key>` must be a step preceding the current one, otherwise `UP2-E1006` (a direct consequence of the
   sequential-execution semantics of `N7`).
 - **Referencing the current step's own key is forbidden**: inside this step use `$fields.<key>` (this is exactly what the hint attached to `UP2-E1006` says).
+- **A dotted path dispatches on the value it walks** (`03` §13 O12): a mapping is read by key, a sequence by a digit index and a host object by `getattr`.
+  An attribute that is **callable** is refused with `UP2-E2002`, the same way `py.getattr` refuses one — a method is not a value, and it could not leave the
+  run anyway (`UP2-E2003`); the fix hint names `["css","text",""]` or a `udf`.
 - A `_`-prefixed key is a **local of this step**: **it may be referenced inside this step, but later steps are forbidden to reference it** (`UP2-E1014`) —
   the semantics of a local value is precisely "it does not leave this step".
 - **There is no iteration variable**: inside `each`'s field map the current element is the **input value** of every field chain (§6.9), and each element is
@@ -711,7 +714,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E1007` | a literal was written in a `ref` position | hint that the position must be a `$…` reference |
 | `UP2-E1009` | a step name is a reserved root (`globals`/`locals`/`fields`/`in`) or is duplicated | list the reserved roots and the declared step names (`03` §10 L3) |
 | `UP2-E1010` | the `udf` is not registered | hint at `register_udf` or the `entry_points` group name |
-| `UP2-E1011` | the type name declared by a step's `type` is not registered | list the registered type names (`03` §3) |
+| `UP2-E1011` | the type name declared by a step's `type` is not registered (checked at the step boundary, `03` §3.3) | list the registered type names (`03` §3) |
 | `UP2-E1012` | a resource limit is exceeded (`01` §9) | give the constant name that was hit and the limit value |
 | `UP2-E1013` | the regex contains a nested quantifier (ReDoS risk) | hint at rewriting it or switching to non-greedy |
 | `UP2-E1014` | a `_`-prefixed local key was referenced **across steps** | hint that a local value does not leave its step; inside the same step use `$fields.<key>` |
@@ -741,6 +744,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2016` | sandbox execution exceeded its limits (execution duration / memory / host round-trip budget) | reduce the amount of data or rewrite the algorithm; the limits are configured by the host (`uniparser2.ops.code.configure`) and cannot be changed from the chain |
 | `UP2-E2017` | the sandboxed code raised an exception (including syntax errors and unsupported constructs) | fix `src`; the sandbox implements only a subset of CPython 3.14 (see Monty's limitations document) |
 | `UP2-E2018` | a subscript (`py.getitem`) has no such key or index | name the key or the index and the shape it was looked up in (`KeyError: 'text' — the dict has no key 'text'`) |
+| `UP2-E2019` | the constructor registered for a step's `type` refused its product | the `reason` carries the constructor's own exception (`TypeError: Article.__init__() missing 1 required positional argument: 'title'`); fix the product's shape at the step that declared the type, or the constructor |
 | `UP2-E2099` | an operator raised an unexpected exception (backstop) | this is a defect in the operator implementation; keep the chain and the input for reproduction |
 
 **The codes retired while implementing L1 (the reasons are recorded so that they are not "added back" later)**:

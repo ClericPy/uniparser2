@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Final, Literal
 
 from .ast import CompiledField, Lit, Param
@@ -32,6 +32,13 @@ from .evaluator import eval_field, resolve_params
 from .export import pack
 from .limits import MAX_STORY_STEPS
 from .refs import RESERVED_ROOTS, Scope, is_ref_text, parse_ref
+from .types import (
+    UNREGISTERED_FIX,
+    TypeConstructionError,
+    UnknownTypeError,
+    build_type,
+    type_names,
+)
 from .values import type_name
 
 logger = logging.getLogger("uniparser2")
@@ -42,6 +49,8 @@ REQUEST_TYPES: Final = (REQUEST_TYPE, REQUEST_BATCH_TYPE)
 LOCAL_PREFIX: Final = "_"
 NEXT_KEY: Final = "next"
 BATCH_ITEMS: Final = "items"
+_PRODUCT_UNAVAILABLE: Final = object()
+"""The value that travels beside "this step produced nothing" (a `Missing` product, `03` §9)."""
 _BUNDLE_KEYS: Final = frozenset({"globals", "steps", "exit"})
 _STEP_KEYS: Final = frozenset({"name", "type", "parse", "call", NEXT_KEY, "with"})
 
@@ -152,14 +161,18 @@ class StoryRun:
 
     The answer to a suspension resumes **this same run** — there is no hand-off, so a story is one
     flow from its first request to its exit product.
+
+    One scope spans the whole run, so the run's materialization cache (`03` §6) lives exactly as
+    long as the run does.
     """
 
-    __slots__ = ("_done", "_drive", "_effect", "_story", "_value")
+    __slots__ = ("_done", "_drive", "_effect", "_scope", "_story", "_value")
 
     def __init__(self, story: CompiledStory, value: Any) -> None:
         self._story = story
         self._value = value
-        self._drive = _drive(story, value)
+        self._scope = Scope(globals=story.globals, step_input=value)
+        self._drive = _drive(story, value, self._scope)
         self._effect: Effect = next(self._drive)
         self._done = self._effect[0] == "done"
 
@@ -172,6 +185,11 @@ class StoryRun:
     def value(self) -> Any:
         """The value the run started from."""
         return self._value
+
+    @property
+    def scope(self) -> Scope:
+        """The run's evaluation scope, which carries the run's materialization cache (`03` §6)."""
+        return self._scope
 
     def next(self) -> Effect:
         """The current effect: the suspension the host must answer, or ``("done", product)``.
@@ -196,13 +214,16 @@ class StoryRun:
 # ---------------------------------------------------------------- the run loop
 
 
-def _drive(story: CompiledStory, value: Any) -> Generator[Effect, Any, None]:
-    """The run loop: step through the bundle until it passes the last step."""
-    products: dict[str, Any] = {}
+def _drive(story: CompiledStory, value: Any, scope: Scope) -> Generator[Effect, Any, None]:
+    """The run loop: step through the bundle until it passes the last step.
+
+    ``scope`` is the run's own scope, re-pointed at each step's input; it carries the run's
+    materialization cache, so the cache lives exactly as long as the run (`03` §6).
+    """
     output: list[Any] = []
     pc = 0
     while pc < len(story.steps):
-        pc, value = yield from _step_product(story, pc, value, products, output)
+        pc, value, _ = yield from _step_product(story, pc, value, scope, output)
     yield ("done", output)
 
 
@@ -210,33 +231,43 @@ def _step_product(
     story: CompiledStory,
     pc: int,
     value: Any,
-    products: dict[str, Any],
+    scope: Scope,
     output: list[Any],
-) -> Generator[Effect, Any, tuple[int, Any]]:
+) -> Generator[Effect, Any, tuple[int, Any, bool]]:
     """Run the step at ``pc``, resolving every suspension it causes.
 
-    Returns the program counter to continue at and the value that continuation takes as its input.
-    A receiving step that itself produces a request is handled here, which is what makes a nested
-    fan-out resume inside the same run.
+    Returns the program counter to continue at, the value that continuation takes as its input, and
+    whether the step produced a product at all (``False`` when its chain product was missing, `03`
+    §9). A receiving step that itself produces a request is handled here, which is what makes a
+    nested fan-out resume inside the same run.
     """
     step = story.steps[pc]
+    # `$in` names **this** step's input; a receiving step evaluated inside a fan-out sets it too,
+    # which is why it is recorded here rather than by the loop that drives the run.
+    scope.step_input = value
     if step.call is not None:
-        product = yield ("call", step.call, _call_arguments(story, step, value, products))
+        product = yield ("call", step.call, _call_arguments(step, value, scope))
     else:
-        product = _parse_product(story, step, value, products)
-    _check_product(step, product)
-    products[step.name] = product
+        product = _parse_product(step, value, scope)
+    if product is _PRODUCT_UNAVAILABLE:
+        # A missing value is not a product (`03` §9): the step is skipped, exactly as a missing
+        # field is absent from a field map — never `null` (`01` §4.2).
+        return pc + 1, _PRODUCT_UNAVAILABLE, False
+    product = _built_product(step, product)
+    scope.products = {**scope.products, step.name: product}
     if step.name == story.exit:
         output.append(product)
     if not step.is_request:
-        return pc + 1, product
+        return pc + 1, product, True
 
     if step.type == REQUEST_TYPE:
         request = _single_request(step, product)
         receiver = _receiver(story, step, product, position=0)
         answer = yield ("request", request, receiver)
-        continued: tuple[int, Any] = yield from _step_product(
-            story, story.index[receiver], answer, products, output
+        # The receiving step may itself produce nothing: `next` names the step after it, so the run
+        # continues there instead of at a value that does not exist.
+        continued: tuple[int, Any, bool] = yield from _step_product(
+            story, story.index[receiver], answer, scope, output
         )
         return continued
 
@@ -246,21 +277,75 @@ def _step_product(
     received_products: list[Any] = []
     continuations: list[int] = []
     for task_answer, receiver in zip(answers, receivers, strict=True):
-        next_pc, received = yield from _step_product(
-            story, story.index[receiver], task_answer, products, output
+        next_pc, received, _ = yield from _step_product(
+            story, story.index[receiver], task_answer, scope, output
         )
         received_products.append(received)
         continuations.append(next_pc)
     # The run continues past **everything** the fan-out ran: with a per-task `next` the receiving
     # steps differ, so "the step after the default" could re-run a step that already answered.
-    return max(continuations), received_products
+    return max(continuations), received_products, True
 
 
-def _check_product(step: StoryStep, product: Any) -> None:
-    """A step product must be JSON (03 §3.3): an object may flow, but it stops at this boundary."""
+def _built_product(step: StoryStep, product: Any) -> Any:
+    """The step boundary: the product must be JSON, and the declared type is built from it (§3.3).
+
+    The product **continues as JSON** (``03`` §3.3): the JSON the constructor was handed is what the
+    run carries on, so a validating container (a dataclass, a model) approves the shape without ever
+    becoming the product — the constructor is a validator, not a place to put an object.
+
+    An unregistered `type` is `UP2-E1011` and a constructor that refuses the product is `UP2-E2019`;
+    either way the run stops **at this step**, which is the one that declared the shape.
+    """
+    if step.type is not None:
+        try:
+            built = build_type(step.type, product)
+        except UnknownTypeError as exc:
+            raise _failed(
+                step,
+                "UP2-E1011",
+                f"the step declares type {exc.name!r}, which no host registered",
+                UNREGISTERED_FIX,
+                allowed=type_names(),
+            ) from exc
+        except TypeConstructionError as exc:
+            raise _failed(
+                step,
+                "UP2-E2019",
+                f"the type {exc.name!r} rejected the step product: {exc.reason}",
+                "match the product's shape to the constructor, or fix the constructor",
+            ) from exc
+        carried = pack(built)
+        # A constructor that answered a container rather than a JSON value (a dataclass, a pydantic
+        # model) approved the payload it was handed: the run carries that JSON on, not the Python
+        # object (`03` §3.3). A JSON answer is the product as it is; one that carries anything else
+        # is left for `pack` below to refuse.
+        product = built if not isinstance(carried, Failed) else _same_json(built, product)
     packed = pack(product)
     if isinstance(packed, Failed):
         raise _failed(step, packed.code, packed.reason, packed.fix)
+    return product
+
+
+def _same_json(built: Any, product: Any) -> Any:
+    """The JSON a validating container approved, rebuilt from its own output (`03` §3.3).
+
+    A dataclass (or a model) answers an object, which cannot be a product; what it **approved** is
+    the payload it was handed, and that is what the run carries on. The mapping is rebuilt from the
+    dataclass's own fields, and the payload's nested structures are preserved (a list stays a list),
+    so the result is the JSON the constructor validated. A dataclass that answers a field the
+    payload does not carry is not that payload: `pack` refuses the extra key at the same step
+    (`UP2-E2003`).
+    """
+    if is_dataclass(built) and not isinstance(built, type):
+        fields_of = {field.name: getattr(built, field.name) for field in fields(built)}
+        return {key: _same_json(fields_of[key], source) for key, source in _items_of(product)}
+    return built
+
+
+def _items_of(product: Any) -> Any:
+    """The key/value pairs of a mapping product; an empty view when the product is not a mapping."""
+    return product.items() if isinstance(product, Mapping) else ()
 
 
 def _single_request(step: StoryStep, product: Any) -> dict[str, Any]:
@@ -343,11 +428,12 @@ def _is_sequence(value: Any) -> bool:
 # ---------------------------------------------------------------- one step's work
 
 
-def _parse_product(
-    story: CompiledStory, step: StoryStep, value: Any, products: Mapping[str, Any]
-) -> Any:
-    """Evaluate a step's `parse`: a chain produces one value, a field map one dictionary."""
-    scope = Scope(globals=story.globals, products=products, step_input=value)
+def _parse_product(step: StoryStep, value: Any, scope: Scope) -> Any:
+    """Evaluate a step's `parse`: a chain produces one value, a field map one dictionary.
+
+    ``scope`` is the run's scope, from which this step's field chains see the run's materialization
+    cache (`03` §6) and the products the run has recorded so far.
+    """
     if isinstance(step.parse, Mapping):
         return _field_map_product(step, step.parse, value, scope)
     if step.parse is None:  # pragma: no cover - compile time guarantees parse or call
@@ -356,9 +442,9 @@ def _parse_product(
     if isinstance(outcome, Failed):
         raise _from_failed(step, outcome)
     if isinstance(outcome, Missing):
-        # A missing value is not an error: the step produced nothing, and the value domain's only
-        # "nothing" that can flow on is null (an open question in this change's design).
-        return None
+        # A missing value is not an error and not a product (`03` §9): the step is skipped, the same
+        # way a missing field is absent from a field map (`01` §4.2).
+        return _PRODUCT_UNAVAILABLE
     return outcome.value
 
 
@@ -383,11 +469,8 @@ def _field_map_product(
     return row
 
 
-def _call_arguments(
-    story: CompiledStory, step: StoryStep, value: Any, products: Mapping[str, Any]
-) -> dict[str, Any]:
+def _call_arguments(step: StoryStep, value: Any, scope: Scope) -> dict[str, Any]:
     """Resolve a `call` step's `with` arguments (the same leaves as an operator's parameter)."""
-    scope = Scope(globals=story.globals, products=products, step_input=value)
     resolved = resolve_params(step.with_, scope)
     if isinstance(resolved, Mapping):
         return dict(resolved)
@@ -577,8 +660,15 @@ def _bad(message: str, *, pointer: str, fix: str = "", allowed: tuple[str, ...] 
     return Up2Error(diag("UP2-E1005", message, fix=fix, pointer=pointer, allowed=allowed))
 
 
-def _failed(step: StoryStep, code: str, reason: str, fix: str) -> Up2Error:
-    return Up2Error(diag(code, reason, fix=fix, pointer=step.pointer))
+def _failed(
+    step: StoryStep,
+    code: str,
+    reason: str,
+    fix: str,
+    *,
+    allowed: tuple[str, ...] = (),
+) -> Up2Error:
+    return Up2Error(diag(code, reason, fix=fix, pointer=step.pointer, allowed=allowed))
 
 
 def _from_failed(step: StoryStep, failed: Failed) -> Up2Error:

@@ -27,6 +27,7 @@ from typing import Any, Final
 
 from .ast import Ref
 from .errors import Failed, Missing, Ok, Outcome, Up2Error, diag
+from .materialize import Materializer
 from .values import MISSING, is_json_value, type_name
 
 REF_PREFIX: Final = "$"
@@ -122,6 +123,11 @@ class Scope:
     ``step_input`` is the value ``$in`` names: the input of the **story step** being evaluated (a
     field chain inside one step still sees the step's input, never the element ``each`` handed it).
     It stays ``MISSING`` when nothing was handed in.
+
+    ``cache`` is the run's materialization cache (`03` §6), reached through :attr:`materializer`.
+    It is created lazily by the scope that first needs it and shared down the lineage, so every
+    operator of one run reaches the same cache and the cache is released with the run: a scope that
+    materializes nothing never pays for one.
     """
 
     globals: Mapping[str, Any] = field(default_factory=dict)
@@ -129,6 +135,24 @@ class Scope:
     locals: dict[str, Any] = field(default_factory=dict)
     parent: Scope | None = None
     step_input: Any = MISSING
+    cache: Materializer | None = field(default=None, init=False, repr=False, compare=False)
+    """The run's materialization cache (`03` §6); :attr:`materializer` owns every access to it."""
+
+    @property
+    def materializer(self) -> Materializer:
+        """The run's materialization cache, created on first use (`03` §6).
+
+        The nearest scope of the lineage that already holds one answers; otherwise this scope
+        becomes the owner, which makes the cache's lifetime the lineage's lifetime.
+        """
+        scope: Scope | None = self
+        while scope is not None:
+            if scope.cache is not None:
+                return scope.cache
+            scope = scope.parent
+        created = Materializer()
+        self.cache = created
+        return created
 
     def child(self) -> Scope:
         """A fresh scope for one iteration: same globals/products/input, outward reads."""
@@ -304,9 +328,15 @@ def _walk_sequence(current: list[Any] | tuple[Any, ...], segment: str, ref: Ref)
 
 
 def _walk_attribute(current: Any, segment: str, ref: Ref, walked: list[str]) -> Outcome:
-    """Read an attribute of a host object; the reason carries the exception's own class name."""
+    """Read an attribute of a host object; the reason carries the exception's own class name.
+
+    A **callable** attribute is refused with the same code, message and fix hint ``py.getattr``
+    uses: a method is not a value, and ``$resp.json`` would resolve to a bound method that cannot
+    leave the run anyway (``UP2-E2003``) -- refusing it here makes the failure early and clear
+    (``03`` §13 O12).
+    """
     try:
-        return Ok(getattr(current, segment))
+        found = getattr(current, segment)
     except AttributeError as exc:
         return Failed(
             code="UP2-E2001",
@@ -314,6 +344,15 @@ def _walk_attribute(current: Any, segment: str, ref: Ref, walked: list[str]) -> 
             fix="check the attribute name against the host object, or read it with "
             '["py","getattr",NAME]',
         )
+    if callable(found):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"the attribute {segment!r} of {type_name(current)} is callable, and a "
+            "reference never calls it",
+            fix='a method is not a value: read the text with ["css","text",""] (or "html" / '
+            '"outer"), or register a udf that calls it',
+        )
+    return Ok(found)
 
 
 _SENTINEL: Final = object()

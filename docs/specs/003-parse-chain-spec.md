@@ -11,10 +11,11 @@
 > ruling and `D-03-3` for the rejected alternatives; and v0.2's `chains` table, `key` / `out` spelling and
 > derived exit — see §12.4 (`D-03-4`). v0.1's materialization ruling (§6 here) and its `each` ruling (§7
 > here) are carried over unchanged.
-> **Implemented**: the operator layer (`02`), the field-chain evaluator (`compile_field` + `eval_field`)
-> and the **first story executor** (`core/story.py`: `compile_story` / `start` / `run.next` / `run.send`),
-> which `up2 lint` and `up2 trial` both reach. The materialization cache (§6), the type registry (§3.2's
-> constructors) and the trace (`06`) are still to come.
+> **Implemented**: the operator layer (`02`), the field-chain evaluator (`compile_field` + `eval_field`),
+> the **first story executor** (`core/story.py`: `compile_story` / `start` / `run.next` / `run.send`),
+> which `up2 lint` and `up2 trial` both reach, the **type registry** the step boundary builds from
+> (`core/types.py`, §3.2), and the **run-scoped materialization cache** (`core/materialize.py`, §6).
+> The trace (`06`) is still to come.
 
 ---
 
@@ -137,11 +138,14 @@ runs the map once per element of a list; a step runs it once for its whole input
 |---|---|---|
 | the JSON value domain | `null` / `bool` / `str` / `int` / `float` / `list` / `dict` | from the value itself (`01` §2's type-name table) |
 | built-in **effect** types | `Request`, `RequestBatch` | `Request` = one request; `RequestBatch` = a batch of tasks (`items`). Producing either hands the work to the host and **suspends the run** (§4) |
-| host-registered types | `NoticeList`, `Article`, … | declared with `type`; the host registers name → constructor |
+| host-registered types | `NoticeList`, `Article`, … | declared with `type`; the host registers name → constructor (`register_type`, §3.2) |
 
 The built-in set is deliberately **closed at `Request` / `RequestBatch` plus the JSON basics**. Anything
 with domain meaning is the host's registration, so the engine keeps no business vocabulary (`07` §3's
-zero-coupling criterion; acceptance item 8 there).
+zero-coupling criterion; acceptance item 8 there). Those nine names need no registration
+(`null` / `bool` / `str` / `int` / `float` / `list` / `dict` / `Request` / `RequestBatch`); every other
+name is looked up in the host's registry at the step boundary, where an unknown one is `UP2-E1011`
+(§3.3).
 
 **There is no declared type for an answer.** A request's answer is whatever the host `send`s back
 (§4.1): the story continues with it **unwrapped and unconverted**, and reads it with `py.getattr` (a
@@ -155,26 +159,76 @@ outgoing `Request` stays a neutral structure so a story's intent stays library-i
 |---|---|
 | a dictionary | `Cls(**payload)` |
 | a list | `Cls(*items)` |
+| anything else | `Cls(product)` |
 
 So a collection carries a type of its own (`NoticeList(*items)`, `RequestBatch(*tasks)`) instead of
 degrading to the built-in `list`; the built-in `list` name is left for collections that need no meaning.
 
+The host registers one: **`register_type(name, constructor)`** (`unregister_type`, `type_names`,
+`get_type` beside it). A name is a **string the step writes**, the constructor is a class or any
+callable, and the registry is process-wide host state exactly like `register_udf` — not part of the
+bundle, so a story stays library-independent data (§3.1). A later registration replaces an earlier one,
+and a host registration wins over a built-in name.
+
+```python
+# host side, once, before the run
+from dataclasses import dataclass
+import uniparser2 as up2
+
+
+@dataclass
+class Article:                      # the declared shape; the fields are the product's keys
+    url: str
+    title: str
+    pub_time: str = ""
+
+
+up2.register_type("Article", Article)
+
+bundle = {
+    "steps": [
+        {
+            "name": "record",
+            "parse": {"url": [["py", "getattr", "url"]], "title": [["css1", "text", "h1"]]},
+            "type": "Article",
+        }
+    ],
+    "exit": "record",
+}
+run = up2.start(bundle, response)   # a missing `title` fails at this step, not at the exit
+```
+
 ### 3.3 Where validation happens
 
-At the **step boundary, by the kernel**, using the constructor the host registered for `type`: the kernel
-builds the declared type from the JSON, reports a mismatch at the step that produced it, and continues with
+At the **step boundary, by the kernel**, using the constructor the host registered for `type`: the
+kernel builds the declared type from the JSON, reports a mismatch at the step that produced it, and continues with
 the JSON.
+
+A **name that no host registered** is `UP2-E1011`, reported at the step that declares it and listing the
+names that are registered (the built-ins included). The check cannot move to compile time: `03` §2's
+two file shapes are both compiled without a host — a recipe may be linted in a process that never
+registered a type — so the boundary is where the registry is known for sure.
+
+**A constructor that raises is `UP2-E2019`**, also at that step, with the constructor's own exception
+text in `reason` (its message is the useful half of the diagnostic) and the step's JSON Pointer. The
+type name, the reason and the pointer are everything an author needs to see which key is wrong: a
+dataclass reports `Article.__init__() missing 1 required positional argument: 'title'`.
 
 **A value that flows may be a host object; a step product must be JSON.** A response object, a
 `selectolax` node handle and anything a `udf` returns may be a step's input, a `call` argument or an
 answer — they are carried by reference, never copied, wrapped or converted on the way in, and
 `py.getattr` reads them. The step boundary is where that stops: after the type constructor runs the
 product is JSON again, so the single exit (`pack`, `UP2-E2003`), the snapshots and the trace stay
-comparable. Measured: a host function returning a `dataclass` instance is still rejected at once
-(`UP2-E2009 udf.make_article returned a value that cannot be a product: Article`). Pydantic instances
-therefore live **only on the host side**: `Article.model_validate(product)` when the host receives a
-product, `model_dump()` when a callback returns one. `type` names a type; it never means "the chain is
-carrying a Python object" — it means "the product has this shape".
+comparable. The constructor is a **validator, not a container**: building `Article(**fields)` proves
+the record's shape, and what the step hands on is JSON, never the `Article` instance. What continues
+is **the constructor's own answer**, so a constructor that answers JSON built from the product — a
+plain `dict`, or a dataclass whose fields are exactly the payload — decides the product, while any
+answer that is not JSON (an object, a handle) is refused by `pack` at that same step (`UP2-E2003`).
+`type` names a type; it never means "the chain is carrying a Python object" — it means "the product
+has this shape". Pydantic instances therefore live **only on the host side**:
+`Article.model_validate(product)` when the host receives a product, `model_dump()` when a callback
+returns one. Measured: a host function returning a `dataclass` instance is still rejected at once
+(`UP2-E2009 udf.make_article returned a value that cannot be a product: Article`).
 
 ---
 
@@ -333,10 +387,11 @@ An `asyncio` host awaits its fetches inside that same loop (`await asyncio.gathe
 
 ## 6. On-demand materialization and the run-scoped cache
 
-**Status**: the operators materialize on demand **today** (measured: `css1` on HTML text, `json` on JSON
-text and `xpath` on XML text all return the parsed result). The cache described below is **not
-implemented**; it lands with this layer, which is where many fields and many steps start from the same
-input value. Until then, feeding the same text to several `css`/`json` stages parses it once per stage.
+**Status**: the operators materialize on demand (measured: `css1` on HTML text, `json` on JSON text and
+`xpath` on XML text all return the parsed result), and the cache described below is **implemented**
+(`core/materialize.py`, change `add-materialization-cache`). Consumers take their artifact through it
+instead of building one per stage, so feeding the same text to several `css`/`json` stages is one parse
+per run.
 
 **A story does not materialize its input.** How an input becomes structure is decided by the operator that
 consumes it, at the moment it consumes it:
@@ -357,13 +412,23 @@ is materialized by the host or carried in as text (base64).
 **The materialization cache is run-scoped and bounded**, and it is a correctness-of-performance part of the
 design rather than an optimization:
 
-- **Scope**: it lives with one run and is released with it. Nothing is shared across runs, so no `Opaque`
-  handle outlives the run that produced it and two runs cannot observe each other.
+- **Scope**: it lives with one run and is released with it. It is carried by the run's evaluation scope
+  and inherited by every nested scope (`each`'s per-element scope included), so all of a run's steps and
+  fields share one cache; nothing is shared across runs, so no `Opaque` handle outlives the run that
+  produced it and two runs cannot observe each other.
 - **Key**: the target format plus the source value — object identity first, a content hash on a miss.
-  Hashing a 5 MB text costs a couple of milliseconds against the ≈110 ms parse it saves.
+  Hashing a 5 MB text costs a couple of milliseconds against the ≈110 ms parse it saves. **Corrected by
+  the implementation**: identity and digest are decided in one lookup on the source's own hash bucket —
+  the entry is accepted when its source *is* the queried object or its digest equals the queried text —
+  and each entry holds a strong reference to its source, which is what makes the identity check sound (a
+  collected string cannot have its address reused inside an entry). The observable contract is unchanged:
+  an equal but distinct string hits, and a hash collision or a reused address is a miss.
 - **Bound**: `MAX_MATERIALIZE_BYTES` (64 MiB by default, `01` §9) with LRU eviction, accounted in
   **materialized bytes** — not in source-text bytes, because the amplification differs per format
-  (measured: a selectolax DOM is ≈24× its HTML text, a JSON tree ≈2.2–2.7×).
+  (measured: a selectolax DOM is ≈24× its HTML text, a JSON tree ≈2.2–2.7×). Each consumer measures its
+  own artifact: HTML by the document's serialization (a selectolax tree is a 96-byte Python handle
+  whatever its size — measured — so `sys.getsizeof` measures nothing), XML by `tostring`, JSON by a
+  bounded walk of the tree's own footprint. The measures are proportional, not RSS.
 - **At most `MAX_MATERIALIZE_ITEMS` (8) artifacts**, so a run over many small documents cannot fill the cap
   with hundreds of tiny trees.
 - **The cap is soft for a single artifact**: an artifact larger than the cap is still retained while it is
@@ -376,7 +441,9 @@ design rather than an optimization:
   that becomes a contract for every format operator.
 - **One implementation**: materialization entries are shared, each declaring its own optional dependency —
   `tomllib` and `csv` are stdlib, YAML is third-party — and a missing dependency is `UP2-E1107` with the
-  install line, exactly like `css`'s selectolax.
+  install line, exactly like `css`'s selectolax. The three formats that exist today carry one entry each
+  in the consuming operator; the entry contract is the same one a `tomllib` / `csv` / YAML consumer would
+  use, and no such consumer exists yet.
 
 Measured on the current commit (selectolax, synthetic pages): one parse costs 48.0 ms at 2 MB and 109.6 ms
 at 5 MB, an HTML tree costs **≈24×** its text in resident memory (2 MB → +49.3 MB, 5 MB → +121.7 MB) while a
@@ -505,9 +572,15 @@ know.
   names. There is no assembly template and no export mode: a step's field map already produces the
   dictionary, and a product that needs a shape gets a registered type instead of a template.
 - **A `schema` is the registered type itself.** Validation is the step-boundary construction of §3.3;
-  misshapen JSON is reported at the step that produced it (`UP2-E2014` for an exit-shape mismatch at the
-  run's boundary). Until the type registry lands, the boundary check the executor does apply is §3.3's
-  invariant — **a product must be JSON** (`pack`, `UP2-E2003`).
+  misshapen JSON is reported at the step that produced it with `UP2-E1011` (an unregistered name) or
+  `UP2-E2019` (the constructor refused the product), and the boundary check that holds whatever the
+  `type` says is §3.3's invariant — **a product must be JSON** (`pack`, `UP2-E2003`).
+- **A step whose chain product is `Missing` produces nothing**: it is **skipped** — no entry in the
+  products, and if it is the exit step, no entry in the collected output, so the list holds the products
+  that exist. That is the same rule a field map applies to a missing field and a batch to a missing
+  item (`01` §4.2), and the reason the run keeps going instead of the step contributing a `null`: a
+  missing value is not a value. A step whose product is absent from the output is therefore
+  indistinguishable from a step the run never reached, which is deliberate — nothing was produced.
 - The old `result` template (and the reference categories it needed) is **dissolved**: its job was to
   assemble the export, which the field map now does directly.
 
@@ -524,7 +597,7 @@ know.
 | L5 | a reference names `globals` / `locals` / `fields` / `in` / another step; the path exists in the target product; a step must not reference its own name | existing (`UP2-E1006`) |
 | L6 | a cross-step referenced key carries no `_` prefix | existing (`UP2-E1014`) |
 | L7 | every stage (including the sub-chains of an `each` field map) passes operator validation | existing (`UP2-E1001`…`E1005`) |
-| L8 | `type`, when written, is a non-empty string; "is it a registered type" waits for the type registry (§13) | existing (`UP2-E1005`), `UP2-E1011` reserved for the registry check |
+| L8 | `type`, when written, is a non-empty string; a name that is neither a built-in nor registered is `UP2-E1011` and a constructor that refuses the product is `UP2-E2019` — both at the **step boundary**, because compilation never sees a host's registry (§3.3) | existing (`UP2-E1005`), new (`UP2-E1011` / `UP2-E2019`) |
 | L9 | every `next` (step-level and per task) and `exit` resolves to a step of the bundle | new (`UP2-E1016`) |
 | L10 | no resource limit is exceeded (`01` §9) | existing (`UP2-E1012`) |
 | L11 | an operator's optional dependency is installed | existing (`UP2-E1107`) |
@@ -637,11 +710,15 @@ list(answer)      → RequestBatch  ⇢ 20 fetches → answers ┴→ record(ans
 ```
 
 **Measured on this repository** (both sample bundles, re-run through the executor against their live
-sites): `samples/books.toscrape.com` suspends three times (`request → channels`, `batch 2 → shelf_page`,
-`batch 3 → book`), calls `host.store_books`, and finishes with the receipt
-`{"table": "books", "stored": 3, "titles": […]}`, while `samples/quotes.toscrape.com` suspends twice
-(`request → links`, `batch 8 → author`) and finishes with eight `Author` products. **Four constraints were
-found by running them:**
+sites, through the committed host recipes `samples/books.toscrape.com/host.py` and
+`samples/quotes.toscrape.com/host.py`): `samples/books.toscrape.com` suspends four times
+(`request → channels`, `batch 2 → shelf_page`, `batch 3 → book`, `call host.store_books`) and finishes
+with the receipt `{"table": "books", "stored": 3, "titles": ["It's Only the Himalayas", "Full Moon
+over Noah's Ark: An Odyssey to Mount Ararat and Beyond", "See America: A Celebration of Our National
+Parks & Treasured Sites"]}`, while `samples/quotes.toscrape.com` suspends twice (`request → links`,
+`batch 8 → author`) and finishes with eight `Author` products. The samples use their own domain types
+(`ShelfPage`, `Book`, `Author`), so a run needs a host — that host is those two scripts, which
+register the types and answer the effects. **Five constraints were found by running them:**
 
 - **`css` is not `css1` per item.** `["css","@href",""]` yields a **list** (every match), so the following
   `py.urljoin` fails with `UP2-E2002`; a per-item read must be `css1`.
@@ -652,6 +729,10 @@ found by running them:**
   sit at the item's top level. The kernel strips `next` before the host sees the task.
 - **The step that receives an answer parses it**, so its field map describes **one** record (not a list of
   records): the batch's products are the list, which is what `exit` collects (§2).
+- **An `each` field map always produces dictionaries, and `flatten` only unrolls list elements.** So a
+  step that must pass a **plain list** on to the next step cannot unwrap one out of a field map that way:
+  the books sample's `shelf_page` therefore stays a **chain** (which yields the list itself), the batch
+  aggregates the shelves' lists, and `shelf` unrolls that one level with `["py","flatten",""]`.
 
 `["py","id",""]` in step 1 is the identity action of §13 O5: it returns the seed URL unchanged, where
 `["py","str",""]` used to convert it into text.
@@ -780,7 +861,7 @@ an authoring error, not a feature: no lint detects it yet (§13).
 The primary input used to be materialized once by the `seed` (`input_format`, later renamed `format` on
 `parse`). That turned the entry point into a format registry and made every chain name a format it might
 never consume. The ruling: the consumer materializes on demand, and a run-scoped cache keeps it to one
-parse per document (§6). The cache lands with this layer.
+parse per document (§6). The cache has landed (change `add-materialization-cache`).
 
 ### 12.3 `D-03-1` — `presets` is retired (unchanged from v0.1)
 
@@ -795,7 +876,7 @@ argument shape of `each`.
 
 | # | Question | Status |
 |---|---|---|
-| O1 | the type registry API (name and shape: `register_type` / `register_model`, and whether it takes a constructor, a schema, or both) | open |
+| O1 | the type registry API (name and shape: `register_type` / `register_model`, and whether it takes a constructor, a schema, or both) | **settled** (change `add-type-registry`): `register_type(name, constructor)` — `register_model` was the alternative and lost because the parameter is a class **or** any callable, and a model framework is not something the kernel should name. A name is a string the step writes; the constructor is `Cls(**payload)` for a dictionary, `Cls(*items)` for a list, and the registry is process-wide host state (like `register_udf`), never part of the bundle |
 | O2 | how `call`'s arguments are written (`with` on the step; bound at registration; or both with the step overriding) | **half settled** (change `story-jump-and-naming`): `with` is the written form, its values are `ref_or_literal` leaves resolved in the step's scope, and the step's input travels as an explicit `"$in"`; what stays open is whether a registration may bind them instead |
 | O3 | is `name` required on every step, or only when something references it? | **settled: required** — `next` and `exit` name steps, and `exit` is required, so a name is never optional in practice; a missing or duplicated name is `UP2-E1009` |
 | O4 | may a step override the chain-level `policy`? | **settled: the question is gone** — the settlement policy is retired (`01` `D-01-1`, `02` §5), so there is no chain-level policy and nothing to override; a field-level fallback is written at the action level |
@@ -805,5 +886,5 @@ argument shape of `each`.
 | O8 | how a task's receiving step is chosen when it **varies per item** | **settled** (change `story-jump-and-naming`): the task's own `next` overrides the step's, so a chain can compute one from the item's own data and one step can route several channels; "route by URL shape" still needs a mechanism or stays a host table |
 | O9 | a cycle among steps (a `next` that points backwards) | **open, small**: execution ends when the program counter passes the last step, so a cycle runs forever; no lint forbids it yet, and the v0.1 reachability/acyclicity lints were retired with the graph |
 | O10 | does a `Failed` stage inside a story raise, and is that the host-facing contract? | **settled for now**: the effect vocabulary has no failure member, so a run that cannot produce a step's product raises `Up2Error` carrying the stage's code and the step's pointer; `up2 trial` prints it as a failed state |
-| O11 | a `Missing` chain product at the step boundary | **open, small**: a field map drops a missing field (the `each` rule), while a chain-shaped `parse` that is `Missing` has no product to hand on; today it flows as `null` |
-| O12 | does a dotted reference refuse a callable attribute, as `py.getattr` does? | **open, small**: `$resp.json` resolves to a bound method today; it cannot leave the run (`pack`, `UP2-E2003`), but the failure is later and less clear than `py.getattr`'s |
+| O11 | a `Missing` chain product at the step boundary | **settled** (change `close-story-open-questions`): a step whose chain product is `Missing` is **skipped** — no product is recorded, and the exit collects nothing for it (§9). A field map drops a missing field and a batch item is skipped (`01` §4.2); the step boundary now applies the same rule instead of inventing a `null` |
+| O12 | does a dotted reference refuse a callable attribute, as `py.getattr` does? | **settled** (change `close-story-open-questions`): yes — a callable attribute is `UP2-E2002` with `py.getattr`'s own message shape and its fix hint. `$resp.json` resolved to a bound method, which could not leave the run anyway (`pack`, `UP2-E2003`); refusing it at the reference makes the failure early and clear |

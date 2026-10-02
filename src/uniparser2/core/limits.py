@@ -30,3 +30,14 @@ MAX_FIELDS_PER_MAP: Final = 256
 
 MAX_STORY_STEPS: Final = 64
 """How many steps one story bundle may declare (compile time; exceeding it is ``UP2-E1012``)."""
+
+MAX_MATERIALIZE_BYTES: Final = 64 * 1024 * 1024
+"""Cap on one run's materialization cache, accounted in **materialized** bytes (`03` §6).
+
+The bound is **soft for a single artifact**: an artifact larger than the cap is retained while it is
+in use, so "one document, one parse" holds and the worst case is the cap plus that one artifact.
+"""
+
+MAX_MATERIALIZE_ITEMS: Final = 8
+"""How many materialized artifacts one run keeps (`03` §6), so many small documents cannot fill the
+byte cap with hundreds of tiny trees."""

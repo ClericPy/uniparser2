@@ -5,8 +5,8 @@ Three layers:
   error**, and **an error is not a value**.
 - ``CODES``: the error codes the engine can **actually emit** today -- the single source of truth
   and the reference set for conformance. Codes the spec has defined but that are not implemented
-  yet (all of ``E3xxx``, the graph rules ``E11xx``, the ``udf``/``emit`` ones) are **not in this
-  table**; they join it as their layer lands.
+  yet (the graph rules ``E11xx``, the ``udf``/``emit`` ones) are **not in this table**; they join it
+  as their layer lands.
 - ``Diagnostic``: a human-facing diagnostic (code + message + fix + optional allowed values), the
   handle an LLM uses for self-correction.
 """
@@ -28,6 +28,7 @@ CODES: Final[dict[str, str]] = {
     "UP2-E1007": "a literal was written where a reference is required",
     "UP2-E1009": "a step name is reserved or duplicated",
     "UP2-E1010": "udf references an unregistered user-defined function",
+    "UP2-E1011": "a step's `type` names an unregistered type",
     "UP2-E1012": "resource limits exceeded",
     "UP2-E1013": "regex contains nested quantifiers (ReDoS risk)",
     "UP2-E1014": "cross-node reference to a local key prefixed with `_`",
@@ -49,7 +50,14 @@ CODES: Final[dict[str, str]] = {
     "UP2-E2016": "sandbox execution over limits (feed time / memory / host round-trip budget)",
     "UP2-E2017": "sandbox code raised an exception (syntax or unsupported constructs)",
     "UP2-E2018": "py.getitem found no such key or index",
+    "UP2-E2019": "a registered type constructor rejected the step product",
     "UP2-E2099": "operator raised an unexpected exception",
+    # ---- storage (UP2-E3xxx) ----
+    "UP2-E3001": "the stored graph does not match the expected fingerprint",
+    "UP2-E3002": "the `tpl_key` character set is illegal, or `root_domain` is empty",
+    "UP2-E3003": "chain and audit are inconsistent",
+    "UP2-E3004": "the template store write failed",
+    "UP2-E3005": "the publish gate did not pass",
 }
 
 

@@ -12,6 +12,24 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Added
 
+- **The template store (`04` §1–§6), the first slice of L3**: a chain is bound to a business identity
+  (`root_domain` / `tpl_key`), which appears nowhere in L1/L2. One row per chain (`Template`:
+  `chain_id` from one pure `new_chain_id()`, the tri-state `status`, the three-value `source`, the
+  `graph` as data, `create_time` / `update_time`; **no `dsl_version`**), an append-only `template_audit`
+  that keeps **fingerprints only**, and a `blake2s(digest_size=16)` fingerprint over the canonicalised
+  graph alone — so `status` / `source` / the timestamps cannot enter it, and re-publishing the same
+  graph writes **no** row at all. The new `store/` layer is the only layer that touches disk: the
+  `TemplateStore` protocol (four methods, exactly as `04` §4) with two implementations — `FileStore`
+  (one file per chain, atomic `os.replace`, `audit.jsonl`) and `SqliteStore` (the two tables of
+  `04` §4.2, WAL, one `BEGIN IMMEDIATE` transaction per publish) — over one shared publish algorithm
+  (validate → compile → read and recompile → no-op → write → audit → commit → verify the read-back).
+  `UP2-E3001`–`UP2-E3005` land with it. `up2 publish` runs the `04` §6 gates: G1 lint is mandatory, G2
+  (`--skip-tests` needs `--note`, which the audit row records) is refused with `UP2-E3005`, and a `ready`
+  row needs `--confirm-overwrite`; `up2 get` prints the row with its fingerprint (`--graph` prints the
+  chain data, the backup material) and **recompiles** what it read, because a stored graph is data and
+  is never trusted (`01` §8). The regression runner (`up2 snapshot` / `up2 test`) and `up2 doctor` are
+  the next slice. Conformance: 73 declared pairs, 35 implemented error codes, each with a case.
+
 - **Predicate actions on `py`, spelled the way Python spells them**: `==` / `!=` / `<` / `<=` / `>` /
   `>=` / `in` answer with a boolean in one stage, and `or` / `and` follow Python's **value** semantics
   (`or` answers with the first truthy operand, else the last, `and` with the first falsy, else the

@@ -1,0 +1,100 @@
+{
+  "globals": {
+    "base_url": "https://books.toscrape.com/"
+  },
+  "policy": {
+    "on_missing": "drop",
+    "on_error": "raise"
+  },
+  "chains": {
+    "list": [
+      ["ctx", "set", "locals._page"],
+      ["py", "get", "text"],
+      ["css", "@href", "article.product_pod h3 a"],
+      [
+        "each",
+        {
+          "url": [["py", "str", ""], ["py", "urljoin", "$locals._page.url"]]
+        }
+      ]
+    ]
+  },
+  "steps": [
+    {
+      "key": "start",
+      "parse": {
+        "url": [["py", "str", ""]]
+      },
+      "out": "Request"
+    },
+    {
+      "key": "channels",
+      "parse": {
+        "items": [
+          ["py", "get", "text"],
+          ["css", "@href", "div.side_categories ul li ul li a"],
+          ["py", "slice", ":2"],
+          [
+            "each",
+            {
+              "url": [["py", "str", ""], ["py", "urljoin", "$globals.base_url"]],
+              "chain": [["const", "list"]]
+            }
+          ]
+        ]
+      },
+      "out": "RequestBatch",
+      "chain": "list"
+    },
+    {
+      "key": "shelf",
+      "parse": {
+        "items": [
+          ["py", "flatten", ""],
+          ["py", "slice", ":3"],
+          [
+            "each",
+            {
+              "url": [["py", "get", "url"]]
+            }
+          ]
+        ]
+      },
+      "out": "RequestBatch"
+    },
+    {
+      "key": "books",
+      "parse": {
+        "items": [
+          [
+            "each",
+            {
+              "url": [["py", "get", "url"]],
+              "title": [["py", "get", "text"], ["css1", "text", "div.product_main h1"], ["py", "normalize_space", ""]],
+              "price": [["py", "get", "text"], ["css1", "text", "p.price_color"], ["py", "strip", ""]],
+              "availability": [
+                ["py", "get", "text"],
+                ["css1", "text", "p.instock.availability"],
+                ["py", "normalize_space", ""]
+              ],
+              "description": [
+                ["py", "get", "text"],
+                ["css1", "text", "#product_description + p"],
+                ["py", "normalize_space", ""]
+              ]
+            }
+          ]
+        ]
+      },
+      "out": "BookList"
+    },
+    {
+      "key": "store",
+      "call": "host.store_books",
+      "with": {
+        "table": "books"
+      },
+      "out": "dict"
+    }
+  ]
+}

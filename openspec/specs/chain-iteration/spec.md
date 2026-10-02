@@ -167,7 +167,9 @@ step.
 A step SHALL be a JSON object with `name`, an optional `type` (the product's type name), exactly one of
 `parse` (an array, one field chain, or an object, a field map) and `call` (a host function name), plus
 `with` only on a `call`. A field map SHALL be evaluated once, over the step's input, with `_`-prefixed
-fields staying in that step's locals.
+fields staying in that step's locals. A written `type` SHALL be resolved against the type registry at the
+step boundary: a built-in name or a host registration is built from the product, an unregistered name is
+`UP2-E1011`, and a constructor that refuses the product is `UP2-E2019`, both at that step.
 
 #### Scenario: A bundle with one parse step
 
@@ -190,6 +192,12 @@ fields staying in that step's locals.
 - **WHEN** a bundle carries `chains` beside `steps`
 - **THEN** compilation SHALL fail with `UP2-E1005`: a parse rule is a step, and the bundle has no
   second namespace for one
+
+#### Scenario: A declared type is unknown
+
+- **WHEN** a step declares a `type` that is neither a built-in name nor registered
+- **THEN** the run SHALL fail with `UP2-E1011` at that step, because the registry is host state and the
+  bundle compiles without a host
 
 ### Requirement: Step names are unique, unreserved and resolvable
 
@@ -272,8 +280,9 @@ resume inside the same fan-out.
 ### Requirement: The run's output is the exit step's products
 
 The run SHALL be done when execution passes the last step, and its product SHALL be the products of
-the step named by `exit`, collected in order as a list. A run whose exit step never executed SHALL be
-done with an empty list.
+the step named by `exit`, collected in order as a list. A step whose chain product is a missing value
+SHALL be skipped, so the list SHALL hold the products that exist and nothing else: no `null` is invented
+for a step that produced nothing. A run whose exit step never executed SHALL be done with an empty list.
 
 #### Scenario: A per-answer exit step
 
@@ -284,6 +293,11 @@ done with an empty list.
 
 - **WHEN** execution ends without reaching the step named by `exit`
 - **THEN** the run SHALL be done with an empty list
+
+#### Scenario: An exit step that produced nothing
+
+- **WHEN** the exit step runs but its chain product is a missing value
+- **THEN** the run's product SHALL be an empty list, and that step SHALL NOT contribute a `null`
 
 ### Requirement: `$in` names the current step's own input
 

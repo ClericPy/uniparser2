@@ -172,11 +172,13 @@ def test_trial_keeps_numeric_input_as_text(tmp_path: Path, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["value"] == "123"
 
 
-def test_trial_missing_is_not_an_error(tmp_path: Path, capsys) -> None:
+def test_trial_no_match_is_not_an_error(tmp_path: Path, capsys) -> None:
     path = write_chain(tmp_path, [["re", "search", r"\d+"]])
     code = main(["trial", str(path), "--input", "text=abc", "--json"])
     assert code == EXIT_OK
-    assert json.loads(capsys.readouterr().out)["state"] == "missing"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "ok"
+    assert payload["value"] == ""
 
 
 def test_trial_failed_exits_nonzero(tmp_path: Path, capsys) -> None:
@@ -222,11 +224,11 @@ def test_trial_bad_product_syntax(tmp_path: Path) -> None:
 
 
 def _story(*, request: bool = True) -> dict[str, object]:
-    body: list[object] = [["py", "getattr", "text"]] if request else [["py", "id", ""]]
+    body: list[object] = [["py", "getattr", "text"]] if request else [["py", "strip", ""]]
     steps: list[dict[str, object]] = [
         {
             "name": "records",
-            "parse": {"body": body},
+            "body": {"body": body},
             # A built-in type name: the CLI registers nothing, so a story file it runs declares a
             # shape the kernel already knows (03 §3.1).
             "type": "dict",
@@ -237,26 +239,36 @@ def _story(*, request: bool = True) -> dict[str, object]:
             0,
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "records",
             },
         )
-    return {"steps": steps, "exit": "records"}
+    return {"entry": str(steps[0]["name"]), "steps": steps, "collect": "records"}
 
 
 def test_lint_accepts_a_story_file(tmp_path: Path, capsys) -> None:
     path = write_chain(tmp_path, _story(), name="site.json")
     assert main(["lint", str(path), "--json"]) == EXIT_OK
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"ok": True, "steps": 2, "exit": "records"}
+    assert payload == {"ok": True, "steps": 2, "entry": "seed", "collect": "records"}
 
 
 def test_lint_reports_a_story_diagnostic(tmp_path: Path, capsys) -> None:
-    broken = {"steps": [{"name": "a", "parse": {"u": [["py", "id", ""]]}}], "exit": "gone"}
+    broken = {
+        "entry": "a",
+        "steps": [{"name": "a", "body": {"u": "$in"}}],
+        "collect": "gone",
+    }
     path = write_chain(tmp_path, broken, name="site.json")
     assert main(["lint", str(path), "--json"]) == EXIT_FAILED
     assert json.loads(capsys.readouterr().out)["code"] == "UP2-E1016"
+
+
+def test_lint_names_the_entry(tmp_path: Path, capsys) -> None:
+    path = write_chain(tmp_path, _story(request=False), name="site.json")
+    assert main(["lint", str(path)]) == EXIT_OK
+    assert "entry records" in capsys.readouterr().out
 
 
 def test_trial_finishes_a_story_without_requests(tmp_path: Path, capsys) -> None:
@@ -322,7 +334,11 @@ def test_trial_trace_reports_the_events_of_a_chain(tmp_path: Path, capsys) -> No
 
 
 def test_trial_trace_ends_at_the_suspension_of_a_story(tmp_path: Path, capsys) -> None:
-    """A CLI has no host, so the trace of a story ends at the effect that suspended it."""
+    """A CLI has no host, so the trace of a story ends at the effect that suspended it.
+
+    The seed step's `parse` is a whole-chain reference, so the run's first recorded event is the
+    suspension itself (`03` §2).
+    """
     path = write_chain(tmp_path, _story(), name="site.json")
     code = main(["trial", str(path), "--input", "text=https://x/", "--trace", "--json"])
     assert code == EXIT_OK
@@ -332,7 +348,7 @@ def test_trial_trace_ends_at_the_suspension_of_a_story(tmp_path: Path, capsys) -
         (event["seq"], event["step"], event["field"], event.get("effect"))
         for event in payload["trace"]
     ]
-    assert steps == [(1, "seed", "url", None), (2, "seed", None, "request")]
+    assert steps == [(1, "seed", None, "request")]
     assert payload["trace"][-1]["output"]["preview"] == '{"url": "https://x/"}'
 
 
@@ -340,9 +356,9 @@ def test_trial_trace_is_one_line_per_event_without_json(tmp_path: Path, capsys) 
     path = write_chain(tmp_path, _story(), name="site.json")
     assert main(["trial", str(path), "--input", "text=https://x/", "--trace"]) == EXIT_OK
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 3  # two events, then the run's state
-    assert "effect:request" in lines[1]
-    assert lines[2].startswith("[suspended] ")
+    assert len(lines) == 2  # the suspension event, then the run's state
+    assert "effect:request" in lines[0]
+    assert lines[1].startswith("[suspended] ")
 
 
 def test_trial_trace_carries_the_failing_stage(tmp_path: Path, capsys) -> None:
@@ -354,7 +370,7 @@ def test_trial_trace_carries_the_failing_stage(tmp_path: Path, capsys) -> None:
     event = payload["trace"][-1]
     assert event["state"] == "Failed"
     assert event["detail"]["code"] == "UP2-E2005"
-    assert event["output"]["type"] == "missing"
+    assert event["output"]["type"] == "null"
 
 
 # ---------------------------------------------------- the store commands (04 §4, §7-S6/S7)

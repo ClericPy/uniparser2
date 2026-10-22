@@ -19,16 +19,17 @@ from uniparser2.cli.main import EXIT_FAILED, EXIT_OK, EXIT_USAGE, main
 DOMAIN = "local"
 KEY = "demo"
 STORY = {
+    "entry": "record",
     "steps": [
         {
             "name": "record",
-            "parse": {
+            "body": {
                 "title": [["py", "normalize_space", ""], ["py", "upper", ""]],
             },
             "type": "dict",
         }
     ],
-    "exit": "record",
+    "collect": "record",
 }
 CHAIN = [["py", "normalize_space", ""], ["py", "upper", ""]]
 INPUT = "  hello   world  "
@@ -187,20 +188,21 @@ def test_snapshot_refuses_a_case_name_that_is_a_path(tmp_path: Path, capsys) -> 
 
 
 def test_snapshot_refuses_a_story_that_requests(tmp_path: Path, capsys) -> None:
-    """A snapshot runner has no host to answer a Request (03 §4.1), so it says so."""
+    """A request the cache does not hold is a miss: the runner never reaches the network."""
     samples = tmp_path / "samples"
     make_case(samples, expected=None)
     story = {
+        "entry": "seed",
         "steps": [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "rec",
             },
-            {"name": "rec", "parse": {"u": [["py", "id", ""]]}},
+            {"name": "rec", "body": {"u": [["py", "getattr", "text"]]}},
         ],
-        "exit": "rec",
+        "collect": "rec",
     }
     path = write_json(tmp_path / "site.json", story)
     code = main(
@@ -219,7 +221,7 @@ def test_snapshot_refuses_a_story_that_requests(tmp_path: Path, capsys) -> None:
         ]
     )
     assert code == EXIT_FAILED
-    assert "suspend" in capsys.readouterr().err
+    assert "not in the request cache" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------- G2 on publish

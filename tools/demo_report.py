@@ -77,7 +77,6 @@ OPERATOR_ORDER: Final = (
 
 _BADGES: Final[dict[str, str]] = {
     "Ok": "ok",
-    "Missing": "miss",
     "Failed": "fail",
     "compile error": "err",
 }
@@ -192,7 +191,7 @@ def _selector_op(op: str) -> list[Case]:
         case(
             "text", "text", "h1.article-title", "Core", 1, "plain text (no script/style/noscript)"
         ),
-        case("@<attribute>", "@href", "a.download", "Core", 2, "attribute value; absent ⇒ Missing"),
+        case("@<attribute>", "@href", "a.download", "Core", 2, 'attribute value; absent ⇒ ""'),
         case("html", "html", "div.content", "Common", 1, "inner HTML"),
         case("remove", "remove", "script,style", "Common", 2, "pure function: pruned copy"),
         case("nodes", "nodes", "ul.rel a", "Common", 3, "node set for L2 fan-out (not a value)"),
@@ -283,17 +282,27 @@ def coverage_cases() -> list[Case]:
             "written value",
             "Common",
             2,
-            note="the write surface is limited to locals/fields",
+            note="the write surface is limited to locals",
         ),
         Case(
             "ctx",
-            "map",
-            [["ctx", "map", {"a": "locals.x", "b": "locals.y"}]],
+            "dict",
+            [["ctx", "dict", {"a": "locals.x", "b": "locals.y"}]],
             None,
             "Advanced",
             1,
             scope_locals={"x": 1, "y": 2},
-            note="named-object form → dict",
+            note="name → path object → dict",
+        ),
+        Case(
+            "ctx",
+            "list",
+            [["ctx", "list", ["locals.x", "locals.y"]]],
+            None,
+            "Advanced",
+            2,
+            scope_locals={"x": 1, "y": 2},
+            note="array of paths → list (feeds a positional call)",
         ),
         Case(
             "ctx",
@@ -319,7 +328,7 @@ def coverage_cases() -> list[Case]:
 
 
 def _py_cases() -> list[Case]:
-    """`py`  has 42 allowlisted functions, tiered by commonness (module docstring)."""
+    """`py`  has 41 allowlisted functions, tiered by commonness (module docstring)."""
     spec: list[tuple[str, int, str, Any, Any, str]] = [
         ("Core", 1, "strip", "  text  ", "", "strip leading/trailing whitespace"),
         ("Core", 2, "normalize_space", "a   b\n c", "", "collapse consecutive whitespace"),
@@ -341,12 +350,11 @@ def _py_cases() -> list[Case]:
             "status",
             "read an attribute of a host object (never a callable one)",
         ),
-        ("Core", 7, "id", "https://example.com/list.html", "", "identity: the input unchanged"),
-        ("Core", 8, "len", [1, 2, 3], "", "length"),
-        ("Core", 9, "slice", "abcdef", ":3", 'slice: ":3" / "1:5" / "::-1"'),
+        ("Core", 7, "len", [1, 2, 3], "", "length"),
+        ("Core", 8, "slice", "abcdef", ":3", 'slice: ":3" / "1:5" / "::-1"'),
         (
             "Core",
-            10,
+            9,
             "default",
             "",
             "fallback value",
@@ -408,6 +416,14 @@ def _py_cases() -> list[Case]:
         ("Advanced", 10, "float", "1.5", "", "type conversion"),
         ("Advanced", 11, "bool", "no", "", "type conversion (falsey word list)"),
         ("Advanced", 12, "list", '["a","b"]', "", "JSON array text → list"),
+        (
+            "Advanced",
+            17,
+            "items",
+            {"a": 1, "b": 2},
+            "",
+            "dict → key/value pairs (index with the literal 0 / 1)",
+        ),
         ("Advanced", 13, "<", 5, 10, "ordering: two numbers or two strings only"),
         ("Advanced", 14, "<=", 5, 5, "ordering (inclusive)"),
         ("Advanced", 15, ">", 6, 5, "ordering"),
@@ -560,60 +576,135 @@ def chain_cases() -> list[Case]:
 
 
 def edge_cases() -> list[Case]:
-    """Appendix: the tri-state (cross-operator, so not in an operator section)."""
+    """Appendix: the outcomes (cross-operator, so not in an operator section)."""
     return [
-        Case("tri-state", "Ok (hit)", [["css1", "text", "h1.article-title"]], HTML_DOC),
+        Case("outcome", "Ok (a hit)", [["css1", "text", "h1.article-title"]], HTML_DOC),
         Case(
-            "tri-state",
-            "Missing (no match: the value is not there)",
+            "outcome",
+            "Ok (no match: the empty value of the shape)",
             [["css1", "text", "div.nope"]],
             HTML_DOC,
-            note="a missing value is not a value: no empty string, no null",
+            note="a no-match is a value, not a state: the text accessor answers ''",
         ),
         Case(
-            "tri-state",
+            "outcome",
+            "Ok (a list accessor: the empty value of the shape)",
+            [["css", "nodes", "li.nope"]],
+            HTML_DOC,
+            note="a list accessor answers [] when nothing matches",
+        ),
+        Case(
+            "outcome",
             "Failed (input type mismatch)",
             [["py", "strip_tags", ""]],
             42,
             note="UP2-E2002",
         ),
+        Case("outcome", "Failed (evaluation failed)", [["py", "int", ""]], "abc", note="UP2-E2005"),
         Case(
-            "tri-state", "Failed (evaluation failed)", [["py", "int", ""]], "abc", note="UP2-E2005"
-        ),
-        Case(
-            "tri-state",
+            "outcome",
             "Failed (a subscript that is not there)",
             [["py", "getitem", "text"]],
             {"a": 1},
-            note="UP2-E2018: the dict is there, the key is not — an error, not a Missing value",
+            note="UP2-E2018: the dict is there, the key is not — an error, not an empty value",
         ),
         Case(
-            "tri-state",
+            "outcome",
             "Failed (an attribute that is a method)",
             [["py", "getattr", "json"]],
             _HOST_OBJECT,
             note="UP2-E2002: py.getattr never calls a method (the fix names an operator or a udf)",
         ),
         Case(
-            "tri-state",
+            "outcome",
             "Failed (an absent attribute)",
             [["py", "getattr", "txet"]],
             _HOST_OBJECT,
             note="UP2-E2002 whose reason begins with the exception class: AttributeError: ...",
         ),
         Case(
-            "tri-state",
+            "outcome",
+            "Failed (a path that cannot be read)",
+            [["ctx", "get", "locals.nope"]],
+            None,
+            note="UP2-E2001: a reference path that does not exist is a failure, not an empty value",
+        ),
+        Case(
+            "outcome",
             "Failed (sandbox code raised)",
             [["code", {"src": "1 / 0"}]],
             None,
             note="UP2-E2017 (the sandbox code can catch it with try/except)",
         ),
         Case(
-            "tri-state",
+            "outcome",
             "Failed (sandbox execution over limit)",
             [["code", {"src": "while True:\n    pass"}]],
             None,
             note="UP2-E2016: limits are configured by the host (a tiny time budget is used here)",
+        ),
+    ]
+
+
+def scope_cases() -> list[Case]:
+    """Appendix: the three scopes and the guard directive (not operators, but capabilities)."""
+    return [
+        Case(
+            "scope",
+            "globals: the chain's read-only constants",
+            [["ctx", "get", "globals.base"]],
+            None,
+            scope_globals={"base": "https://example.com"},
+            note="read-only: a write outside locals/public is UP2-E1015",
+        ),
+        Case(
+            "scope",
+            "locals: one field's scratch space",
+            [["const", "42"], ["ctx", "set", "locals._n"], ["ctx", "get", "locals._n"]],
+            None,
+            note="private to the field that wrote it",
+        ),
+        Case(
+            "scope",
+            "public: the run's shared notes",
+            [["const", "42"], ["ctx", "set", "public.n"], ["ctx", "get", "public.n"]],
+            None,
+            note="writable and readable from any node; never part of the chain data",
+        ),
+        Case(
+            "scope",
+            "public may be collected like any scope",
+            [["const", "42"], ["ctx", "set", "public.n"], ["ctx", "dict", {"n": "public.n"}]],
+            None,
+            note="ctx.dict / ctx.list read any scope, globals included",
+        ),
+        Case(
+            "guard",
+            "try skip: a guarded failure keeps the value the chain carried",
+            [["const", "keep"], ["try", "skip"], ["py", "int", ""]],
+            "not-a-number",
+            note="the guard covers the NEXT stage only, and never turns the error into a value",
+        ),
+        Case(
+            "guard",
+            "try break: a guarded failure ends the chain with that value",
+            [["const", "keep"], ["try", "break"], ["py", "int", ""]],
+            "not-a-number",
+            note="the stages after the guarded one are not evaluated",
+        ),
+        Case(
+            "guard",
+            "try raise: the default behaviour of a failing stage",
+            [["const", "keep"], ["try", "raise"], ["py", "int", ""]],
+            "not-a-number",
+            note="UP2-E2005: the run fails",
+        ),
+        Case(
+            "guard",
+            "a guarded success disarms the guard",
+            [["const", ""], ["try", "skip"], ["py", "strip", ""], ["py", "int", ""]],
+            "not-a-number",
+            note="the guard covered one stage only: the later failure still fails the run",
         ),
     ]
 
@@ -634,7 +725,7 @@ def form_cases() -> list[Case]:
         Case(
             "form",
             'directive object {"$lit": …}: a literal starting with $',
-            [["py", "default", {"$lit": "$fields.title"}]],
+            [["py", "default", {"$lit": "$locals.title"}]],
             "",
             note="without $lit it is a reference (E1006, see the invalid-form sections)",
         ),
@@ -711,24 +802,45 @@ def _render_value(value: Any) -> str:
 
 
 def _run(case: Case) -> Ran:
-    steps: list[tuple[str, str]] = []
-    for index in range(1, len(case.chain) + 1):
-        scope = up2.Scope(globals=dict(case.scope_globals), locals=dict(case.scope_locals))
-        try:
-            prefix = up2.compile_field(case.chain[:index])
-        except up2.Up2Error as exc:
-            return Ran(case, "compile error", "", steps, exc.diagnostic)
-        outcome = up2.eval_field(prefix, case.value, scope=scope)
-        steps.append(
-            (json.dumps(case.chain[index - 1], ensure_ascii=False), _render_value(outcome))
-        )
+    """Run one case for real, recording what every stage produced.
+
+    The chain is compiled **whole** and then evaluated stage by stage, rather than compiled prefix
+    by prefix: a `try` directive guards the *next* stage, so a prefix that ends at the directive
+    is not a legal chain on its own (``UP2-E1005``) — the report would show a compile error for a
+    chain that runs perfectly well.
+    """
     scope = up2.Scope(globals=dict(case.scope_globals), locals=dict(case.scope_locals))
     try:
         compiled = up2.compile_field(case.chain)
     except up2.Up2Error as exc:
         return Ran(case, "compile error", "", [], exc.diagnostic)
+    steps: list[tuple[str, str]] = []
+    for index in range(len(compiled.stages)):
+        prefix = _prefix_of(compiled, index)
+        try:
+            outcome = up2.eval_field(prefix, case.value, scope=scope)
+        except up2.Up2Error as exc:
+            return Ran(case, "compile error", "", steps, exc.diagnostic)
+        steps.append((json.dumps(case.chain[index], ensure_ascii=False), _render_value(outcome)))
     outcome = up2.eval_field(compiled, case.value, scope=scope)
     return Ran(case, type(outcome).__name__, _render_value(outcome), steps)
+
+
+def _prefix_of(compiled: Any, index: int) -> Any:
+    """The compiled chain up to (and including) the stage at ``index``.
+
+    The compiled stages are the engine's own objects, so a prefix is a chain of the same objects
+    with the same payload — no re-compilation, and therefore no re-validation of a prefix that is
+    not a chain on its own.
+    """
+    from uniparser2.core.ast import CompiledField
+
+    return CompiledField(
+        stages=compiled.stages[: index + 1],
+        source=compiled.source,
+        name=compiled.name,
+        ref=compiled.ref,
+    )
 
 
 def _escape(text: object) -> str:
@@ -806,7 +918,7 @@ def _case_card(
     """One card.
 
         ``action`` being ``None`` means this is not "one action of some operator" (multi-stage
-    compositions, and the tri-state / form cases in the appendix); then the commonness tier
+    compositions, and the outcome / form / scope cases in the appendix); then the commonness tier
         and the parameter schema are not shown, because those two are properties of an **action**.
     """
     kind = _BADGES.get(ran.state, "miss")
@@ -997,11 +1109,12 @@ class _RunSet:
     chains: list[Ran]
     edges: list[Ran]
     forms: list[Ran]
+    scopes: list[Ran]
     bad_rows: list[_BadRow]
 
     @property
     def all_runs(self) -> list[Ran]:
-        return self.coverage + self.chains + self.edges + self.forms
+        return self.coverage + self.chains + self.edges + self.forms + self.scopes
 
     def sections(self) -> list[tuple[registry.OpReport, list[Ran], list[Ran], list[_BadRow]]]:
         """``(operator, its action cases, its composition cases, its invalid forms)`` in order."""
@@ -1032,6 +1145,7 @@ def _collect() -> _RunSet:
     with _tight_feed_limit():
         edges = [_run(case) for case in edge_cases()]
     forms = [_run(case) for case in form_cases()]
+    scopes = [_run(case) for case in scope_cases()]
 
     bad_rows: list[_BadRow] = []
     for chain in bad_chains():
@@ -1049,7 +1163,7 @@ def _collect() -> _RunSet:
                     diagnostic.fix,
                 )
             )
-    return _RunSet(coverage, chains, edges, forms, bad_rows)
+    return _RunSet(coverage, chains, edges, forms, scopes, bad_rows)
 
 
 def build_html() -> str:
@@ -1070,26 +1184,36 @@ def build_html() -> str:
     toc = (
         '<p class="toc"><a href="#coverage">Coverage check</a>'
         + "".join(f'<a href="#op-{name}">{name}</a>' for name in OPERATOR_ORDER)
-        + '<a href="#appendix">Appendix: shared by all operators</a></p>'
+        + '<a href="#appendix">Appendix: shared by all operators</a>'
+        '<a href="#host">The host side: fetching a page</a></p>'
     )
     appendix = (
         '<section id="appendix"><h2>Appendix: mechanisms shared by all operators</h2>'
-        '<p class="sub">These sections are **not grouped by operator**: the tri-state and '
-        "the parameter forms are mechanisms shared by every operator, so slicing them per "
-        "operator would hide the differences.</p>"
-        "<h3>A. Tri-state</h3>"
-        '<p class="sub">A missing value is not a value: it stays <code>Missing</code> and the '
-        "key is absent from a product. A failed stage always fails the run with the code it "
-        "reported.</p>"
+        '<p class="sub">These sections are **not grouped by operator**: the outcomes, the '
+        "parameter forms, the scopes and the guard directive are mechanisms shared by every "
+        "operator, so slicing them per operator would hide the differences.</p>"
+        "<h3>A. Outcomes</h3>"
+        '<p class="sub">A query that matches nothing is a <strong>value</strong> — the empty '
+        'value of its shape (<code>""</code> / <code>[]</code> / <code>null</code>) — and the '
+        "chain keeps going. A stage that <em>fails</em> stops the chain and is reported with the "
+        "code it reported; there is no third state.</p>"
         + "".join(_case_card(ran, None, shared_input="", anchor="appendix") for ran in runs.edges)
         + "<h3>B. Parameter forms</h3>"
         '<p class="sub">The scalar / positional array / named object / reference / '
         "directive object forms of a parameter slot (slot 3).</p>"
         + "".join(_case_card(ran, None, shared_input="", anchor="appendix") for ran in runs.forms)
-        + "<h3>C. Bad chains owned by no operator</h3>"
+        + "<h3>C. The scopes and the guard directive</h3>"
+        '<p class="sub">The three scopes read as <strong>constants / shared / private</strong>: '
+        "<code>globals</code> is the chain's read-only constants, <code>public</code> is the "
+        "run's own notes (writable from any node, never fingerprinted), <code>locals</code> is one "
+        "field's scratch space. <code>try</code> is <strong>not an operator</strong>: it guards "
+        "the next stage only, and a guarded stage that succeeds disarms it.</p>"
+        + "".join(_case_card(ran, None, shared_input="", anchor="appendix") for ran in runs.scopes)
+        + "<h3>D. Bad chains owned by no operator</h3>"
         + _bad_table(orphan_bad)
         + "</section>"
     )
+    host_section = _host_section()
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en"><head><meta charset="utf-8">\n'
@@ -1103,7 +1227,37 @@ def build_html() -> str:
         '<section id="tiers"><h2>Commonness tiers</h2>'
         f"{_tier_legend()}</section>\n" + "\n".join(sections) + "\n"
         f"{appendix}\n"
+        f"{host_section}\n"
         "</body></html>\n"
+    )
+
+
+def _host_section() -> str:
+    """The host side: what a caller needs to drive a story that fetches.
+
+    The kernel performs no IO, so the fetching is the host's. The package offers a default for it
+    (``uniparser2.net``): a synchronous, standard-library downloader plus a request cache, so a
+    second run replays the answers instead of the network.
+    """
+    return (
+        '<section id="host"><h2>The host side: fetching a page</h2>'
+        '<p class="sub">The kernel never fetches anything: a story that produces a '
+        "<code>Request</code> suspends the run, and the <strong>host</strong> answers. The "
+        "package offers a default for that side — a synchronous, standard-library downloader and a "
+        "request cache under <code>.cache/requests/</code> (never committed), keyed by the whole "
+        "request. A body is binary, so the request carries it as <strong>base64 text</strong>.</p>"
+        "<pre>from uniparser2.net import RequestCache, fetch\n\n"
+        "cache = RequestCache()\n"
+        "answer = cache.get(request) or fetch(request)   # a miss is a miss\n"
+        "cache.put(request, answer)                      # → Response(text=…, url=…)</pre>"
+        '<p class="sub">The request is the kernel\'s own <code>Request</code> product: '
+        "<code>url</code> (required), <code>method</code>, <code>headers</code>, "
+        "<code>timeout</code>, <code>params</code>, and a body that is <code>body</code> (base64) "
+        "or <code>json</code>. The <code>up2 snapshot</code> / <code>up2 test</code> runner "
+        "replays the cached answers, so a chain that fetches can be frozen and regressed "
+        "<strong>offline</strong>; a request with no cached answer is a miss, and the runner never "
+        "reaches the network.</p>"
+        "</section>"
     )
 
 
@@ -1278,13 +1432,15 @@ def build_md() -> str:
     parts += [
         "## Appendix: mechanisms shared by all operators",
         "",
-        "These are **not grouped by operator**: the tri-state and the parameter forms belong to "
-        "every operator, so slicing them per operator would hide the differences.",
+        "These are **not grouped by operator**: the outcomes, the parameter forms, the scopes and "
+        "the guard directive belong to every operator, so slicing them per operator would hide the "
+        "differences.",
         "",
-        "### A. Tri-state",
+        "### A. Outcomes",
         "",
-        "A missing value is not a value: it stays `Missing` and the key is absent from a product. "
-        "A failed stage always fails the run with the code it reported.",
+        'A query that matches nothing is a **value** — the empty value of its shape (`""` / '
+        "`[]` / `null`) — and the chain keeps going. A stage that *fails* stops the chain and is "
+        "reported with the code it reported; there is no third state.",
         "",
     ]
     for ran in runs.edges:
@@ -1298,7 +1454,42 @@ def build_md() -> str:
     ]
     for ran in runs.forms:
         parts.append(_md_case(ran, None, shared_input=""))
-    parts += ["### C. Invalid forms owned by no operator", "", _md_bad_table(runs.orphan_bad())]
+    parts += [
+        "### C. The scopes and the guard directive",
+        "",
+        "The three scopes read as **constants / shared / private**: `globals` is the chain's "
+        "read-only constants, `public` is the run's own notes (writable from any node, never "
+        "fingerprinted), `locals` is one field's scratch space. `try` is **not an operator**: it "
+        "guards the next stage only, and a guarded stage that succeeds disarms it.",
+        "",
+    ]
+    for ran in runs.scopes:
+        parts.append(_md_case(ran, None, shared_input=""))
+    parts += ["### D. Invalid forms owned by no operator", "", _md_bad_table(runs.orphan_bad())]
+    parts += [
+        "",
+        "## The host side: fetching a page",
+        "",
+        "The kernel never fetches anything: a story that produces a `Request` suspends the run, "
+        "and the **host** answers. The package offers a default for that side — a synchronous, "
+        "standard-library downloader and a request cache under `.cache/requests/` (never "
+        "committed), keyed by the whole request. A body is binary, so the request carries it as "
+        "**base64 text**.",
+        "",
+        "```python",
+        "from uniparser2.net import RequestCache, fetch",
+        "",
+        "cache = RequestCache()",
+        "answer = cache.get(request) or fetch(request)   # a miss is a miss",
+        "cache.put(request, answer)                      # → Response(text=…, url=…)",
+        "```",
+        "",
+        "The request is the kernel's own `Request` product: `url` (required), `method`, `headers`, "
+        "`timeout`, `params`, and a body that is `body` (base64) or `json`. The `up2 snapshot` / "
+        "`up2 test` runner replays the cached answers, so a chain that fetches can be frozen and "
+        "regressed **offline**; a request with no cached answer is a miss, and the runner never "
+        "reaches the network.",
+    ]
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -1348,7 +1539,7 @@ th { background: #8881; }
 
 def behavior_failures() -> list[Ran]:
     """Every case of the "full behavior" set must produce ``Ok``; otherwise the fixture is
-    wrong (the tri-state cases in the appendix are excluded).
+    wrong (the outcome cases in the appendix are excluded).
 
     This self-check once caught a real bug: a chain for the attribute action wrongly used the
     placeholder name, so the attribute was not found and an empty string came back silently. The

@@ -7,8 +7,8 @@ Generated from `uniparser2` 0.5.0 · one case per `(operator, action)` pair decl
 ## Coverage check
 
 - **Coverage check passed**: every declared pair has a case and every behavior case ran `Ok`.
-- the registry declares **73** pairs = **73** pairs covered by cases
-- states across every run: `Failed` 7, `Missing` 1, `Ok` 98
+- the registry declares **74** pairs = **74** pairs covered by cases
+- states across every run: `Failed` 10, `Ok` 107
 
 | operator | arity | slots | summary | actions |
 |---|---|---|---|---|
@@ -18,7 +18,7 @@ Generated from `uniparser2` 0.5.0 · one case per `(operator, action)` pair decl
 | `xpath` | 3 | accessor / XPath | XPath query (XML; lxml) | 3 |
 | `json` | 2 | jmespath path | JSON dot-path query (jmespath) | 1 |
 | `re` | 3 | mode / pattern | Regex matching (search / group / findall) | 3 |
-| `ctx` | 3 | action / parameter | Scope reads and writes (get / set / del / map) | 4 |
+| `ctx` | 3 | action / parameter | Scope reads and writes (get / set / del / dict / list) | 5 |
 | `const` | 2 | value | Literal (never resolved as a reference) | 1 |
 | `code` | 2 | source & inputs | In-chain code (sandboxed; optional dependency [code]) | 1 |
 | `udf` | 3 | action / parameter | Host-registered named function (the chain carries no code) | 1 |
@@ -58,7 +58,7 @@ Shared input for this section:
 
 #### `@<attribute>` — attribute value
 - tier ★★★ Core · parameter slot: the value itself · `attr: literal`, `selector: literal`
-- note: attribute value; absent ⇒ Missing
+- note: attribute value; absent ⇒ ""
 - chain: `[["css", "@href", "a.download"]]`
 - input: the shared sample above
 - output: `Ok(value=['/files/list.pdf'])` (Ok)
@@ -173,7 +173,7 @@ Shared input for this section:
 
 #### `@<attribute>` — attribute value
 - tier ★★★ Core · parameter slot: the value itself · `attr: literal`, `selector: literal`
-- note: attribute value; absent ⇒ Missing
+- note: attribute value; absent ⇒ ""
 - chain: `[["css1", "@href", "a.download"]]`
 - input: the shared sample above
 - output: `Ok(value='/files/list.pdf')` (Ok)
@@ -304,13 +304,6 @@ Shared input for this section:
 - input: `_HostObject(status=200, url='https://example.com/list.html')`
 - output: `Ok(value=200)` (Ok)
 
-#### `id` — return the input unchanged (a step whose value is its own input)
-- tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
-- note: identity: the input unchanged
-- chain: `[["py", "id", ""]]`
-- input: `'https://example.com/list.html'`
-- output: `Ok(value='https://example.com/list.html')` (Ok)
-
 #### `len` — length
 - tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
 - note: length
@@ -325,7 +318,7 @@ Shared input for this section:
 - input: `'abcdef'`
 - output: `Ok(value='abc')` (Ok)
 
-#### `default` — fall back when empty/None/missing
+#### `default` — fall back when the value is None or an empty string
 - tier ★★★ Core · parameter slot: the value itself · `value: ref_or_literal`
 - note: fallback for empty/None/missing (accepts_missing)
 - chain: `[["py", "default", "fallback value"]]`
@@ -556,6 +549,13 @@ Shared input for this section:
 - input: `'c'`
 - output: `Ok(value=True)` (Ok)
 
+#### `items` — a dict becomes [[key, value], …] (index a pair with the literal 0 / 1)
+- tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
+- note: dict → key/value pairs (index with the literal 0 / 1)
+- chain: `[["py", "items", ""]]`
+- input: `{'a': 1, 'b': 2}`
+- output: `Ok(value=[['a', 1], ['b', 2]])` (Ok)
+
 #### `b64_encode` — Base64 encode
 - tier ○ Rare · parameter slot: no parameter (write two positions, or "")
 - note: Base64 encode
@@ -617,7 +617,7 @@ Shared input for this section:
 | `[["py", "strip", "", ""]]` | `UP2-E1004` | `/0` | stage length is 4, only 2 or 3 is allowed | follow the declared arity: 3 slots is ["operator", slot2, slot3]; 2 slots is ["operator", parameter] |
 | `[["py", "no_such_function", ""]]` | `UP2-E1003` | `/0/1` | the py allowlist has no function 'no_such_function' | use one of the functions below (run up2 ops --json for the full table) |
 | `[["py", "parse_time", {"format": "%Q"}]]` | `UP2-E1005` | `/0/2/format` | invalid strptime format: 'Q' is a bad directive in format '%Q' | fix the directives in format |
-| `[["py", "default", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare the earlier node product with --product |
+| `[["py", "default", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare the earlier step product with --product |
 | `[["py", "urljoin", {"base": "https://example.com/news/"}]]` | `UP2-E1005` | `/0/2/base` | parameter 'base' of py.urljoin must be a string, got dict | write the value directly: ["py", "urljoin", "…"] |
 | `[["py", "slice", {"spec": "0:4"}]]` | `UP2-E1005` | `/0/2/spec` | parameter 'spec' of py.slice must be a string, got dict | write the value directly: ["py", "slice", "…"] |
 | `[["py", "getitem", {"at": {}}]]` | `UP2-E1005` | `/0/2/at` | parameter 'at' of py.getitem must be a scalar, got dict | write the value directly: ["py", "getitem", "…"] |
@@ -766,9 +766,9 @@ Shared input for this section:
 | `[["re", "group", {"pattern": "a", "group": 9}]]` | `UP2-E1005` | `/0/2/group` | the pattern has only 0 capture groups, so group 9 is unavailable | change the group index, or add a capture group to the pattern |
 
 
-## `ctx` — Scope reads and writes (get / set / del / map)
+## `ctx` — Scope reads and writes (get / set / del / dict / list)
 
-arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 4 actions (Common, Advanced, Rare)
+arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 5 actions (Common, Advanced, Rare)
 
 Shared input for this section:
 
@@ -784,21 +784,28 @@ None
 - input: the shared sample above
 - output: `Ok(value='local value')` (Ok)
 
-#### `set` — write the upstream value into locals
+#### `set` — write the upstream value into locals or public
 - tier ★★ Common · parameter slot: the value itself · `path: literal`
-- note: the write surface is limited to locals/fields
+- note: the write surface is limited to locals
 - chain: `[["ctx", "set", "locals.k"]]`
 - input: `'written value'`
 - output: `Ok(value='written value')` (Ok)
 
-#### `map` — collect several values into a list or a dict
+#### `dict` — collect several paths into an object (name → path)
 - tier ★ Advanced · parameter slot: the value itself · `refs: literal`
-- note: named-object form → dict
-- chain: `[["ctx", "map", {"a": "locals.x", "b": "locals.y"}]]`
+- note: name → path object → dict
+- chain: `[["ctx", "dict", {"a": "locals.x", "b": "locals.y"}]]`
 - input: the shared sample above
 - output: `Ok(value={'a': 1, 'b': 2})` (Ok)
 
-#### `del` — delete a path in locals
+#### `list` — collect several paths into a list (an array of paths)
+- tier ★ Advanced · parameter slot: the value itself · `refs: literal`
+- note: array of paths → list (feeds a positional call)
+- chain: `[["ctx", "list", ["locals.x", "locals.y"]]]`
+- input: the shared sample above
+- output: `Ok(value=[1, 2])` (Ok)
+
+#### `del` — delete a path in locals or public
 - tier ○ Rare · parameter slot: the value itself · `path: literal`
 - chain: `[["ctx", "del", "locals.k"]]`
 - input: `'upstream value'`
@@ -819,7 +826,7 @@ None
 
 | invalid chain | code | pointer | message | fix |
 |---|---|---|---|---|
-| `[["ctx", "set", "globals.x"]]` | `UP2-E1015` | `/0/2/path` | ctx.set cannot write 'globals.x' | the write surface is limited to locals.* / fields.* (globals and node output are read-only) |
+| `[["ctx", "set", "globals.x"]]` | `UP2-E1015` | `/0/2/path` | ctx.set cannot write 'globals.x' | the write surface is limited to locals.* and public.* (globals and a step's product are read-only) |
 
 
 ## `const` — Literal (never resolved as a reference)
@@ -910,68 +917,82 @@ Shared input for this section:
 
 ## Appendix: mechanisms shared by all operators
 
-These are **not grouped by operator**: the tri-state and the parameter forms belong to every operator, so slicing them per operator would hide the differences.
+These are **not grouped by operator**: the outcomes, the parameter forms, the scopes and the guard directive belong to every operator, so slicing them per operator would hide the differences.
 
-### A. Tri-state
+### A. Outcomes
 
-A missing value is not a value: it stays `Missing` and the key is absent from a product. A failed stage always fails the run with the code it reported.
+A query that matches nothing is a **value** — the empty value of its shape (`""` / `[]` / `null`) — and the chain keeps going. A stage that *fails* stops the chain and is reported with the code it reported; there is no third state.
 
-#### `Ok (hit)` — tri-state
+#### `Ok (a hit)` — outcome
 - tier ★★★ Core
 - chain: `[["css1", "text", "h1.article-title"]]`
 - input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
 - output: `Ok(value='  Notice on Issuing the Government Service Item List  ')` (Ok)
 
-#### `Missing (no match: the value is not there)` — tri-state
+#### `Ok (no match: the empty value of the shape)` — outcome
 - tier ★★★ Core
-- note: a missing value is not a value: no empty string, no null
+- note: a no-match is a value, not a state: the text accessor answers ''
 - chain: `[["css1", "text", "div.nope"]]`
 - input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
-- output: `Missing(reason='no node matched')` (Missing)
+- output: `Ok(value='')` (Ok)
 
-#### `Failed (input type mismatch)` — tri-state
+#### `Ok (a list accessor: the empty value of the shape)` — outcome
+- tier ★★★ Core
+- note: a list accessor answers [] when nothing matches
+- chain: `[["css", "nodes", "li.nope"]]`
+- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- output: `Ok(value=[])` (Ok)
+
+#### `Failed (input type mismatch)` — outcome
 - tier ★★★ Core
 - note: UP2-E2002
 - chain: `[["py", "strip_tags", ""]]`
 - input: `42`
 - output: `Failed(code='UP2-E2002', reason='py.strip_tags needs a str, got int', fix='turn the upstream value into text with py.strip_tags / py.getitem first')` (Failed)
 
-#### `Failed (evaluation failed)` — tri-state
+#### `Failed (evaluation failed)` — outcome
 - tier ★★★ Core
 - note: UP2-E2005
 - chain: `[["py", "int", ""]]`
 - input: `'abc'`
-- output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'abc'", fix='check the shape of the source value first (py.default can serve as a…` (Failed)
+- output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'abc'", fix='py.int expects an integer, a float, a bool, or a string of digits; c…` (Failed)
 
-#### `Failed (a subscript that is not there)` — tri-state
+#### `Failed (a subscript that is not there)` — outcome
 - tier ★★★ Core
-- note: UP2-E2018: the dict is there, the key is not — an error, not a Missing value
+- note: UP2-E2018: the dict is there, the key is not — an error, not an empty value
 - chain: `[["py", "getitem", "text"]]`
 - input: `{'a': 1}`
 - output: `Failed(code='UP2-E2018', reason="KeyError: 'text' — the dict has no key 'text'", fix='read a key the mapping has, or make the producing stage write it')` (Failed)
 
-#### `Failed (an attribute that is a method)` — tri-state
+#### `Failed (an attribute that is a method)` — outcome
 - tier ★★★ Core
 - note: UP2-E2002: py.getattr never calls a method (the fix names an operator or a udf)
 - chain: `[["py", "getattr", "json"]]`
 - input: `_HostObject(status=200, url='https://example.com/list.html')`
 - output: `Failed(code='UP2-E2002', reason="the attribute 'json' of _HostObject is callable, and py.getattr never calls it", fix='a method is not a value: read the text with ["css","text",""]…` (Failed)
 
-#### `Failed (an absent attribute)` — tri-state
+#### `Failed (an absent attribute)` — outcome
 - tier ★★★ Core
 - note: UP2-E2002 whose reason begins with the exception class: AttributeError: ...
 - chain: `[["py", "getattr", "txet"]]`
 - input: `_HostObject(status=200, url='https://example.com/list.html')`
 - output: `Failed(code='UP2-E2002', reason="AttributeError: '_HostObject' object has no attribute 'txet'", fix='check the attribute name against the value, or make the producing stage write i…` (Failed)
 
-#### `Failed (sandbox code raised)` — tri-state
+#### `Failed (a path that cannot be read)` — outcome
+- tier ★★★ Core
+- note: UP2-E2001: a reference path that does not exist is a failure, not an empty value
+- chain: `[["ctx", "get", "locals.nope"]]`
+- input: `None`
+- output: `Failed(code='UP2-E2001', reason="locals.nope is missing key 'nope' at locals", fix='read a key the value has, or make the producing stage write it')` (Failed)
+
+#### `Failed (sandbox code raised)` — outcome
 - tier ★★★ Core
 - note: UP2-E2017 (the sandbox code can catch it with try/except)
 - chain: `[["code", {"src": "1 / 0"}]]`
 - input: `None`
 - output: `Failed(code='UP2-E2017', reason='the sandboxed code raised an exception: ZeroDivisionError: division by zero', fix='fix src; the snippet can catch it itself with try/except')` (Failed)
 
-#### `Failed (sandbox execution over limit)` — tri-state
+#### `Failed (sandbox execution over limit)` — outcome
 - tier ★★★ Core
 - note: UP2-E2016: limits are configured by the host (a tiny time budget is used here)
 - chain: `[["code", {"src": "while True:\n    pass"}]]`
@@ -1009,9 +1030,9 @@ The scalar / positional array / named object / reference / directive forms of th
 #### `directive object {"$lit": …}: a literal starting with $` — form
 - tier ★★★ Core
 - note: without $lit it is a reference (E1006, see the invalid-form sections)
-- chain: `[["py", "default", {"$lit": "$fields.title"}]]`
+- chain: `[["py", "default", {"$lit": "$locals.title"}]]`
 - input: `''`
-- output: `Ok(value='$fields.title')` (Ok)
+- output: `Ok(value='$locals.title')` (Ok)
 
 #### `css empty selector = the current node itself` — form
 - tier ★★★ Core
@@ -1019,8 +1040,105 @@ The scalar / positional array / named object / reference / directive forms of th
 - input: `'<p>plain text supplied directly</p>'`
 - output: `Ok(value='plain text supplied directly')` (Ok)
 
-### C. Invalid forms owned by no operator
+### C. The scopes and the guard directive
+
+The three scopes read as **constants / shared / private**: `globals` is the chain's read-only constants, `public` is the run's own notes (writable from any node, never fingerprinted), `locals` is one field's scratch space. `try` is **not an operator**: it guards the next stage only, and a guarded stage that succeeds disarms it.
+
+#### `globals: the chain's read-only constants` — scope
+- tier ★★★ Core
+- note: read-only: a write outside locals/public is UP2-E1015
+- chain: `[["ctx", "get", "globals.base"]]`
+- input: `None`
+- output: `Ok(value='https://example.com')` (Ok)
+
+#### `locals: one field's scratch space` — scope
+- tier ★★★ Core
+- note: private to the field that wrote it
+- chain:
+  - `["const", "42"]` → `Ok(value='42')`
+  - `["ctx", "set", "locals._n"]` → `Ok(value='42')`
+  - `["ctx", "get", "locals._n"]` → `Ok(value='42')`
+- input: `None`
+- output: `Ok(value='42')` (Ok)
+
+#### `public: the run's shared notes` — scope
+- tier ★★★ Core
+- note: writable and readable from any node; never part of the chain data
+- chain:
+  - `["const", "42"]` → `Ok(value='42')`
+  - `["ctx", "set", "public.n"]` → `Ok(value='42')`
+  - `["ctx", "get", "public.n"]` → `Ok(value='42')`
+- input: `None`
+- output: `Ok(value='42')` (Ok)
+
+#### `public may be collected like any scope` — scope
+- tier ★★★ Core
+- note: ctx.dict / ctx.list read any scope, globals included
+- chain:
+  - `["const", "42"]` → `Ok(value='42')`
+  - `["ctx", "set", "public.n"]` → `Ok(value='42')`
+  - `["ctx", "dict", {"n": "public.n"}]` → `Ok(value={'n': '42'})`
+- input: `None`
+- output: `Ok(value={'n': '42'})` (Ok)
+
+#### `try skip: a guarded failure keeps the value the chain carried` — guard
+- tier ★★★ Core
+- note: the guard covers the NEXT stage only, and never turns the error into a value
+- chain:
+  - `["const", "keep"]` → `Ok(value='keep')`
+  - `["try", "skip"]` → `Ok(value='keep')`
+  - `["py", "int", ""]` → `Ok(value='keep')`
+- input: `'not-a-number'`
+- output: `Ok(value='keep')` (Ok)
+
+#### `try break: a guarded failure ends the chain with that value` — guard
+- tier ★★★ Core
+- note: the stages after the guarded one are not evaluated
+- chain:
+  - `["const", "keep"]` → `Ok(value='keep')`
+  - `["try", "break"]` → `Ok(value='keep')`
+  - `["py", "int", ""]` → `Ok(value='keep')`
+- input: `'not-a-number'`
+- output: `Ok(value='keep')` (Ok)
+
+#### `try raise: the default behaviour of a failing stage` — guard
+- tier ★★★ Core
+- note: UP2-E2005: the run fails
+- chain:
+  - `["const", "keep"]` → `Ok(value='keep')`
+  - `["try", "raise"]` → `Ok(value='keep')`
+  - `["py", "int", ""]` → `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'keep'", fix='py.int expects an integer, a float, a bool, or a string of digits; …`
+- input: `'not-a-number'`
+- output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'keep'", fix='py.int expects an integer, a float, a bool, or a string of digits; …` (Failed)
+
+#### `a guarded success disarms the guard` — guard
+- tier ★★★ Core
+- note: the guard covered one stage only: the later failure still fails the run
+- chain:
+  - `["const", ""]` → `Ok(value='')`
+  - `["try", "skip"]` → `Ok(value='')`
+  - `["py", "strip", ""]` → `Ok(value='')`
+  - `["py", "int", ""]` → `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: ''", fix='py.int expects an integer, a float, a bool, or a string of digits; chec…`
+- input: `'not-a-number'`
+- output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: ''", fix='py.int expects an integer, a float, a bool, or a string of digits; chec…` (Failed)
+
+### D. Invalid forms owned by no operator
 
 | invalid chain | code | pointer | message | fix |
 |---|---|---|---|---|
 | `[["nope", "strip", ""]]` | `UP2-E1001` | `/0/0` | unknown operator 'nope' | use one of the following operators |
+
+
+## The host side: fetching a page
+
+The kernel never fetches anything: a story that produces a `Request` suspends the run, and the **host** answers. The package offers a default for that side — a synchronous, standard-library downloader and a request cache under `.cache/requests/` (never committed), keyed by the whole request. A body is binary, so the request carries it as **base64 text**.
+
+```python
+from uniparser2.net import RequestCache, fetch
+
+cache = RequestCache()
+answer = cache.get(request) or fetch(request)   # a miss is a miss
+cache.put(request, answer)                      # → Response(text=…, url=…)
+```
+
+The request is the kernel's own `Request` product: `url` (required), `method`, `headers`, `timeout`, `params`, and a body that is `body` (base64) or `json`. The `up2 snapshot` / `up2 test` runner replays the cached answers, so a chain that fetches can be frozen and regressed **offline**; a request with no cached answer is a miss, and the runner never reaches the network.

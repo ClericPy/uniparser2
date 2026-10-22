@@ -10,10 +10,22 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from enum import StrEnum
-from typing import Any
+from typing import Any, Final
 
 from . import registry
-from .ast import CompiledField, CompiledStage, Lit, Param, Ref, Stage, loads, parse_stage
+from .ast import (
+    MIN_STAGE_LEN,
+    REF_OPERATOR,
+    TRY_OPERATOR,
+    CompiledField,
+    CompiledStage,
+    Lit,
+    Param,
+    Ref,
+    Stage,
+    loads,
+    parse_stage,
+)
 from .errors import Up2Error, diag
 from .limits import MAX_EACH_DEPTH, MAX_FIELDS_PER_MAP, MAX_STEPS_PER_FIELD
 from .refs import LIT_DIRECTIVE, RESERVED_ROOTS, is_ref_text, parse_ref
@@ -63,12 +75,54 @@ def compile_field(
             )
         )
     declared = tuple(dict.fromkeys(products))
+    # The first stage is a marker when the chain opens with a whole-chain reference: it is not an
+    # operator, so it is checked as the reference it is and skipped by the stage loop (`03` §2).
+    opening = source_stages[0] if source_stages and source_stages[0].op == REF_OPERATOR else None
+    if opening is not None:
+        _check_refs({"ref": opening.slot1}, products=declared, pointer=pointer)
     stages = tuple(
         compile_stage(stage, index=index, products=declared, depth=depth, pointer=pointer)
         for index, stage in enumerate(source_stages)
+        if not _is_ref_stage(stage)
     )
+    _check_try_directives(source_stages, pointer=pointer)
     logger.debug("compiled field: steps=%d ops=%s", len(stages), [item.op_name for item in stages])
     return CompiledField(stages=stages, source=source_stages, name=name)
+
+
+def _is_ref_stage(stage: Stage) -> bool:
+    """Whether a source stage is the marker of a whole-chain reference rather than an operator."""
+    return stage.op == REF_OPERATOR
+
+
+def _check_try_directives(source_stages: tuple[Stage, ...], *, pointer: str) -> None:
+    """The guard directive's two rules: it guards the **next** stage, and only one may be pending.
+
+    A directive as the last stage would guard nothing, and two in a row would leave the first
+    guarding the second -- a directive, not a stage. Both are compile-time errors, so a chain that
+    means something else never runs.
+    """
+    for index, stage in enumerate(source_stages):
+        if stage.op != TRY_OPERATOR:
+            continue
+        if index + 1 >= len(source_stages):
+            raise Up2Error(
+                diag(
+                    "UP2-E1005",
+                    "a `try` directive must be followed by the stage it guards",
+                    fix="move the `try` before the stage it protects, or drop it",
+                    pointer=f"{pointer}/{index}",
+                )
+            )
+        if source_stages[index + 1].op == TRY_OPERATOR:
+            raise Up2Error(
+                diag(
+                    "UP2-E1005",
+                    "two `try` directives in a row: the first would guard the second, not a stage",
+                    fix="keep one directive and put the stage it guards right after it",
+                    pointer=f"{pointer}/{index}",
+                )
+            )
 
 
 def compile_stage(
@@ -77,6 +131,8 @@ def compile_stage(
     """Compile a single stage. ``pointer`` is the prefix of the chain this stage belongs to."""
     pointer = f"{pointer}/{index}"
     stage = raw if isinstance(raw, Stage) else parse_stage(raw, pointer=pointer)
+    if stage.op == TRY_OPERATOR:
+        return _compile_try_stage(stage, index=index, pointer=pointer)
     instance = registry.get(stage.op)
     if instance is None:
         raise Up2Error(
@@ -120,15 +176,92 @@ def compile_stage(
         op_name=instance.name,
         action=action,
         params=params,
-        accepts_missing=spec.accepts_missing,
         payload=payload,
     )
 
 
+def _compile_try_stage(stage: Stage, /, *, index: int, pointer: str) -> CompiledStage:
+    """The guard directive: a stage that carries a policy instead of doing work.
+
+    It is compiled like a stage so the evaluator can see it in order, but it never runs: the
+    evaluator reads the policy and applies it to the **next** stage's outcome.
+    """
+    policy = stage.slot1
+    if not isinstance(policy, str) or policy not in registry.TRY_POLICIES:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"a `try` directive needs a policy, got {policy!r}",
+                fix="write the stage it guards right after the directive",
+                pointer=f"{pointer}/1",
+                allowed=registry.TRY_POLICIES,
+            )
+        )
+    return CompiledStage(
+        index=index,
+        stage=stage,
+        op_name=TRY_OPERATOR,
+        action=policy,
+        params={},
+        payload=policy,
+    )
+
+
+def _compile_ref_field(
+    source: object, /, *, products: Iterable[str], pointer: str, name: str
+) -> CompiledField:
+    """A chain written as a whole-chain reference: one reference, no stage (`03` §2)."""
+    ref = parse_ref(str(source), pointer=pointer)
+    _check_refs({"ref": ref}, products=tuple(products), pointer=pointer)
+    marker = Stage(op=REF_OPERATOR, slot1=ref, slot2=None, length=MIN_STAGE_LEN)
+    return CompiledField(stages=(), source=(marker,), name=name, ref=ref)
+
+
+def _compile_literal_field(
+    source: str, /, *, products: Iterable[str], pointer: str, name: str
+) -> CompiledField:
+    """A routing key written as a plain string: the value itself, as a one-stage chain.
+
+    A task item's `next` is a step name, exactly like the step-level `next`, so the string is the
+    value the field holds -- not a JSON document to parse and not a reference (`03` §4.1.1).
+    """
+    literal = Stage(op="const", slot1=source, slot2=None, length=MIN_STAGE_LEN)
+    compiled = compile_stage(literal, index=0, products=products, pointer=pointer)
+    return CompiledField(stages=(compiled,), source=(literal,), name=name)
+
+
 def _as_stages(source: Any, *, pointer: str = "") -> tuple[Stage, ...]:
+    """A source that carries no whole-chain reference, as its stages.
+
+    ``["$in", ["py","getattr","url"]]`` is a **chain** that opens with a reference, not a single
+    stage: a stage's first slot is an operator name, and a reference is not one (`03` §2).
+    """
     if isinstance(source, CompiledField):
         return source.source
+    if _opens_with_ref(source):
+        marker = _opening_ref_stage(source[0], pointer=pointer)
+        rest = tuple(
+            parse_stage(item, pointer=f"{pointer}/{index}")
+            for index, item in enumerate(source)
+            if index > 0
+        )
+        return (marker, *rest)
     return loads(source, pointer=pointer)
+
+
+def _opening_ref_stage(raw: Any, *, pointer: str) -> Stage:
+    """The marker stage of a chain that opens with a whole-chain reference."""
+    return Stage(
+        op=REF_OPERATOR,
+        slot1=parse_ref(str(raw), pointer=pointer),
+        slot2=None,
+        length=MIN_STAGE_LEN,
+    )
+
+
+def _opens_with_ref(source: Any) -> bool:
+    """Whether a chain source is an array whose first element is a whole-chain reference."""
+    return isinstance(source, (list, tuple)) and bool(source) and is_ref_text(source[0])
 
 
 def _slot(stage: Stage, index: int | None) -> Any:

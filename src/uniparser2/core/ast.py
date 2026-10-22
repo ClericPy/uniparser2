@@ -15,6 +15,19 @@ from .errors import Up2Error, diag
 
 MIN_STAGE_LEN = 2
 MAX_STAGE_LEN = 3
+REF_OPERATOR = "$"
+TRY_OPERATOR = "try"
+"""The operator name of the **guard directive** (change `public-scope-and-try`).
+
+``try`` is not an operator: it changes what the evaluator does with the **next** stage's outcome, so
+the operators stay pure. The compiler recognises it as a stage shape, and the evaluator reads it.
+"""
+"""The operator slot a **whole-chain reference** carries in the serializable source (`03` §2).
+
+A chain written as a string beginning with ``$`` has no operator of its own; this marker is what
+``dumps`` writes back for it (``"$in"``), so a compiled chain stays a fixed point. It is never a
+registered name, so it can never be reached through the operator lookup.
+"""
 
 
 @dataclass(frozen=True, slots=True)

@@ -26,6 +26,14 @@ from .errors import Outcome, Up2Error, diag
 from .materialize import Materializer
 from .refs import Scope
 
+TRY_POLICIES: Final = ("raise", "skip", "break")
+"""The guard directive's policies (change `public-scope-and-try`).
+
+``raise`` is the default behaviour of a failing stage; ``skip`` keeps the value the chain carried
+into the failing stage and carries on; ``break`` ends the chain there with that same value. Neither
+of the latter two turns an exception into a value.
+"""
+
 
 class Kind(StrEnum):
     """How a parameter is resolved (02 §3.2). Ambiguity exists only in ``REF_OR_LITERAL``.

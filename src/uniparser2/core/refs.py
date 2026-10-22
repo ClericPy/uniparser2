@@ -26,25 +26,35 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from .ast import Ref
-from .errors import Failed, Missing, Ok, Outcome, Up2Error, diag
+from .errors import Failed, Ok, Outcome, Up2Error, diag
 from .materialize import Materializer
-from .values import MISSING, is_json_value, type_name
+from .values import is_json_value, type_name
+
+_NO_STEP_INPUT: Final = object()
+"""Marks "no step input was handed in"; a read of ``$in`` then fails instead of yielding a value."""
 
 REF_PREFIX: Final = "$"
 LIT_DIRECTIVE: Final = "$lit"
-RESERVED_ROOTS: Final = ("globals", "locals", "fields", "in")
-WRITABLE_ROOTS: Final = ("locals", "fields")
+RESERVED_ROOTS: Final = ("globals", "locals", "public", "in")
+WRITABLE_ROOTS: Final = ("locals", "public")
 INPUT_ROOT: Final = "in"
 """The root naming **this step's own input** (``$in.url``, design doc 03 §2.1).
 
 A story step's input is the value the step was handed (the previous step's product, a host answer,
 or the run's own input for the first step), and it has no ``locals`` round-trip: ``$in`` names it.
 """
-# In L1, $fields and $locals name the scope of the current field; L2 splits them (the node's
-# product versus the scratch area) and adds the per-element scope that `each` already needs.
-_LOCAL_ALIASES: Final = ("locals", "fields")
-CTX_PARTITIONS: Final = ("locals", "globals")
-"""The two partitions the scope exposes (``ctx.locals`` / ``ctx.globals``, design doc 01 Q40).
+PUBLIC_ROOT: Final = "public"
+"""The root naming the **run's shared scope** (``$public.page``, change `public-scope-and-try`).
+
+The three scopes read as constants / shared / private: ``globals`` is the chain's read-only
+constants (fingerprinted), ``public`` is the run's own notes (writable, never fingerprinted), and
+``locals`` is private to the scope that wrote it.
+"""
+# `locals` is the scope of the current field: the step's `_`-prefixed keys, plus each iteration's
+# own scratch area. `$fields` was a second name for the same namespace and is retired (change
+# `rename-and-unify`): one namespace, one spelling.
+CTX_PARTITIONS: Final = ("locals", "globals", "public")
+"""The partitions the scope exposes (``ctx.locals`` / ``ctx.globals`` / ``ctx.public``, 01 Q40).
 
 ``code`` operators project the scope into the sandbox through it, and ``udf`` builds a same-named
 object for the host function -- both sides share this single definition, which guarantees that
@@ -137,8 +147,15 @@ class Scope:
     globals: Mapping[str, Any] = field(default_factory=dict)
     products: Mapping[str, Any] = field(default_factory=dict)
     locals: dict[str, Any] = field(default_factory=dict)
+    public: dict[str, Any] = field(default_factory=dict)
+    """The run's **shared** scope: writable from any node, readable from any node.
+
+    It is **not** chain data, so it never enters the fingerprint: the run's notes are runtime state,
+    not a property of the chain. The run's root scope owns it and every child scope shares it by
+    reference, so a value written inside an ``each`` element is still there after the element.
+    """
     parent: Scope | None = None
-    step_input: Any = MISSING
+    step_input: Any = _NO_STEP_INPUT
     iteration: int | None = None
     cache: Materializer | None = field(default=None, init=False, repr=False, compare=False)
     """The run's materialization cache (`03` §6); :attr:`materializer` owns every access to it."""
@@ -169,6 +186,7 @@ class Scope:
         return Scope(
             globals=self.globals,
             products=self.products,
+            public=self.public,
             parent=self,
             step_input=self.step_input,
             iteration=iteration,
@@ -177,18 +195,22 @@ class Scope:
     def read(self, ref: Ref) -> Outcome:
         """Read a reference.
 
-        An absent key is ``Missing``; a structure shallower than declared is ``Failed(E2001)``.
-        A ``locals``/``fields`` read walks outward by name: the innermost scope holding the first
-        segment of the path resolves the whole path.
+        An absent key is ``Failed(E2001)``; a structure shallower than declared is also
+        ``Failed(E2001)``. A ``locals`` read walks outward by name: the innermost scope holding the
+        first segment of the path resolves the whole path.
         """
         if ref.root == "globals":
             return _walk_path(self.globals, ref)
-        if ref.root in _LOCAL_ALIASES:
+        if ref.root == "locals":
             return self._read_locals(ref)
+        if ref.root == PUBLIC_ROOT:
+            return _walk_path(self.public, ref)
         if ref.root == INPUT_ROOT:
-            if self.step_input is MISSING:
-                return Missing(
-                    reason=f"{ref.raw} names this step's input, and no input was handed to it"
+            if self.step_input is _NO_STEP_INPUT:
+                return Failed(
+                    code="UP2-E2001",
+                    reason=f"{ref.raw} names this step's input, and no input was handed to it",
+                    fix="hand the run a value, or write the step that produces this input",
                 )
             return _walk_path(self.step_input, ref)
         product = self.products.get(ref.root)
@@ -212,22 +234,34 @@ class Scope:
         return self.read(parse_path_text(text, pointer=pointer))
 
     def write_text(self, text: str, value: Any, /, *, pointer: str = "") -> None:
-        """Write into the current field scope by bare-path text.
+        """Write into a writable scope by bare-path text.
 
         A non-writable root is a programming error.
         """
         ref = parse_path_text(text, pointer=pointer)
-        if ref.root not in _LOCAL_ALIASES:
-            raise ValueError(f"{text!r} is not a writable path (only locals/fields roots allowed)")
-        self.write_local(ref.path, value)
+        if ref.root == "locals":
+            self.write_local(ref.path, value)
+            return
+        if ref.root == PUBLIC_ROOT:
+            self.write_public(ref.path, value)
+            return
+        raise ValueError(
+            f"{text!r} is not a writable path (only {', '.join(WRITABLE_ROOTS)} are writable)"
+        )
 
     def delete_text(self, text: str, /, *, pointer: str = "") -> bool:
         """Delete by bare-path text; return whether something was deleted."""
         ref = parse_path_text(text, pointer=pointer)
-        return self.delete_local(ref.path)
+        if ref.root == "locals":
+            return self.delete_local(ref.path)
+        if ref.root == PUBLIC_ROOT:
+            return self.delete_public(ref.path)
+        raise ValueError(
+            f"{text!r} is not a writable path (only {', '.join(WRITABLE_ROOTS)} are writable)"
+        )
 
     def json_view(self) -> dict[str, dict[str, Any]]:
-        """The **JSON projection** of the scope: ``{"locals": {...}, "globals": {...}}``.
+        """The **JSON projection** of the scope: ``{"locals": …, "globals": …, "public": …}``.
 
         The ``locals`` view is resolved along the scope lineage (outermost first, the innermost
         winning), so in-chain code and host functions see the same name a reference read sees.
@@ -241,7 +275,12 @@ class Scope:
             merged.update(outer.locals)
         view: dict[str, dict[str, Any]] = {}
         for partition in CTX_PARTITIONS:
-            source: Mapping[str, Any] = merged if partition in _LOCAL_ALIASES else self.globals
+            if partition == "locals":
+                source: Mapping[str, Any] = merged
+            elif partition == "public":
+                source = self.public
+            else:
+                source = self.globals
             view[partition] = {key: value for key, value in source.items() if is_json_value(value)}
         return view
 
@@ -266,9 +305,30 @@ class Scope:
             target = nxt
         target[path[-1]] = value
 
+    def write_public(self, path: tuple[str, ...], value: Any) -> None:
+        """Write into the run's shared scope (``public``), creating dicts as needed."""
+        target = self.public
+        for segment in path[:-1]:
+            nxt = target.get(segment)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                target[segment] = nxt
+            target = nxt
+        target[path[-1]] = value
+
     def delete_local(self, path: tuple[str, ...]) -> bool:
         """Delete a path in the current field scope; return whether something was deleted."""
         target = self.locals
+        for segment in path[:-1]:
+            nxt = target.get(segment)
+            if not isinstance(nxt, dict):
+                return False
+            target = nxt
+        return target.pop(path[-1], _SENTINEL) is not _SENTINEL
+
+    def delete_public(self, path: tuple[str, ...]) -> bool:
+        """Delete a path in the run's shared scope; return whether something was deleted."""
+        target = self.public
         for segment in path[:-1]:
             nxt = target.get(segment)
             if not isinstance(nxt, dict):
@@ -281,10 +341,9 @@ def _walk_path(base: Any, ref: Ref) -> Outcome:
     """Walk a reference path, dispatching on the value kind.
 
     A mapping is read by key, a sequence by index and a **host object by ``getattr``**, so one
-    dotted path works on a dictionary and on an object alike. An absent key is ``Missing`` (the
-    value is not there); a structure that cannot take the segment - a scalar, an index out of
-    range, or an object without that attribute - is ``Failed`` (``UP2-E2001``), and the reason
-    names the class the walk hit.
+    dotted path works on a dictionary and on an object alike. An absent key, a scalar that cannot
+    take the segment, an index out of range and an object without that attribute are all
+    ``Failed`` (``UP2-E2001``), and the reason names what the walk hit.
     """
     current = base
     walked: list[str] = []

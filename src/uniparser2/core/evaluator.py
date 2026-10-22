@@ -16,11 +16,10 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 from . import registry
-from .ast import CompiledField, CompiledStage, Lit, Param, Ref
-from .errors import Failed, Missing, Ok, Outcome
+from .ast import REF_OPERATOR, TRY_OPERATOR, CompiledField, CompiledStage, Lit, Param, Ref, Stage
+from .errors import Failed, Ok, Outcome
 from .refs import Scope
 from .trace import Trace, elapsed_ms, stamp
-from .values import MISSING
 
 logger = logging.getLogger("uniparser2")
 
@@ -37,22 +36,37 @@ def eval_field(
 ) -> Outcome:
     """Evaluate one field chain stage by stage.
 
-    Nothing settles a missing or a failed value: the outcome is returned as it stands, so the caller
-    drops a missing field from its product and stops on a failure. ``trace`` collects one event per
-    evaluated stage; without it nothing is measured or recorded.
+    The outcome is returned as it stands: every field yields a value or the chain stops on a
+    failure. ``trace`` collects one event per evaluated stage; without it nothing is measured or
+    recorded.
+
+    A chain written as a **whole-chain reference** carries no stage and does no work (`03` §2): the
+    outcome is the reference's own read, unchanged, and no event is recorded for it -- the trace's
+    stage rows are operators, and a step's product still shows the value that came out.
     """
     active_scope = scope if scope is not None else Scope()
     run_chain = _subchain_runner(trace)
     current: Outcome = Ok(value)
-    for stage in compiled.stages:
+    policy: str | None = None
+    """The guard the last ``try`` directive armed; it covers **one** stage and is then gone."""
+    if compiled.ref is not None:
+        # A chain that **is** a whole-chain reference (`03` §2): the value it names, unchanged, and
+        # no stage event -- the trace's stage rows are operators, and the reference does no work.
+        current = active_scope.read(compiled.ref)
+    elif compiled.source and _is_ref_marker(compiled.source[0]):
+        # A chain that only **opens** with one (`["$in", ["py","getattr","url"]]`): the stages below
+        # keep their own positions in the source, so the marker is counted but not evaluated.
+        current = active_scope.read(compiled.source[0].slot1)
+    for index, stage in enumerate(compiled.stages):
         if isinstance(current, Failed):
             return current
-        if isinstance(current, Missing):
-            if not stage.accepts_missing:
-                return current
-            incoming: Any = MISSING
-        else:
-            incoming = current.value
+        incoming: Any = current.value
+        if stage.op_name == TRY_OPERATOR:
+            # The directive itself does no work: it arms the guard for the next stage.
+            policy = stage.action
+            continue
+        armed = policy
+        policy = None  # the guard covers exactly one stage, success or failure
         started_at = stamp(trace)
         current = _invoke(stage, incoming, active_scope, run_chain)
         if trace is not None:

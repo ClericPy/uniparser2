@@ -23,25 +23,35 @@ from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 _GET: Final = "get"
 _SET: Final = "set"
 _DEL: Final = "del"
-_MAP: Final = "map"
-_WRITABLE_PREFIXES: Final = ("locals", "fields")
-_READABLE_ROOTS: Final = ("globals", "locals", "fields")
+_DICT: Final = "dict"
+_LIST: Final = "list"
+_WRITABLE_PREFIXES: Final = ("locals", "public")
+_READABLE_ROOTS: Final = ("globals", "locals", "public")
 
 
 @op("ctx")
 class Ctx(Op):
-    """Scope reads and writes: ``globals`` is read-only, ``locals``/``fields`` are writable."""
+    """Scope reads and writes: ``globals`` is read-only; ``locals`` and ``public`` are writable."""
 
-    summary = "Scope reads and writes (get / set / del / map)"
+    summary = "Scope reads and writes (get / set / del / dict / list)"
     actions: ClassVar[Mapping[str, ActionSpec]] = {
         _GET: ActionSpec(_GET, "read a scope path", (ParamSpec("path", Kind.LITERAL),)),
         _SET: ActionSpec(
-            _SET, "write the upstream value into locals", (ParamSpec("path", Kind.LITERAL),)
+            _SET,
+            "write the upstream value into locals or public",
+            (ParamSpec("path", Kind.LITERAL),),
         ),
-        _DEL: ActionSpec(_DEL, "delete a path in locals", (ParamSpec("path", Kind.LITERAL),)),
-        _MAP: ActionSpec(
-            _MAP,
-            "collect several values into a list or a dict",
+        _DEL: ActionSpec(
+            _DEL, "delete a path in locals or public", (ParamSpec("path", Kind.LITERAL),)
+        ),
+        _DICT: ActionSpec(
+            _DICT,
+            "collect several paths into an object (name → path)",
+            (ParamSpec("refs", Kind.LITERAL),),
+        ),
+        _LIST: ActionSpec(
+            _LIST,
+            "collect several paths into a list (an array of paths)",
             (ParamSpec("refs", Kind.LITERAL),),
         ),
     }
@@ -55,8 +65,8 @@ class Ctx(Op):
                         "UP2-E1015",
                         f"ctx.{action} cannot write {path!r}",
                         fix=(
-                            "the write surface is limited to locals.* / fields.* "
-                            "(globals and node output are read-only)"
+                            "the write surface is limited to locals.* and public.* "
+                            "(globals and a step's product are read-only)"
                         ),
                         pointer=f"{pointer}/path",
                         allowed=_WRITABLE_PREFIXES,
@@ -154,7 +164,7 @@ def _check_readable(path: str, *, action: str, pointer: str = "") -> None:
             diag(
                 "UP2-E1005",
                 f"the root {root!r} of ctx.{action} is not readable",
-                fix="use globals / locals / fields",
+                fix="use globals / locals",
                 pointer=pointer,
                 allowed=_READABLE_ROOTS,
             )

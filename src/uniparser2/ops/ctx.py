@@ -109,22 +109,29 @@ def _build_map(call: Call) -> Outcome:
     return Ok(mapped)
 
 
-def _collect_paths(raw: Any, *, pointer: str) -> list[str] | dict[str, str]:
-    """The path set for ``map``: array → list, object → dict (the values must be path text)."""
-    if isinstance(raw, list):
+def _collect_paths(raw: Any, *, action: str, pointer: str) -> list[str] | dict[str, str]:
+    """The path set of a collection action: ``list`` takes an array, ``dict`` a name → path map."""
+    if action == _LIST:
+        if not isinstance(raw, list):
+            raise Up2Error(
+                diag(
+                    "UP2-E1005",
+                    f"ctx.list needs an array of paths, got {type(raw).__name__}",
+                    fix='write ["locals.a","locals.b"]',
+                    pointer=pointer,
+                )
+            )
         return [_require_text(item, pointer=pointer) for item in raw]
-    if isinstance(raw, dict):
-        return {
-            str(key): _require_text(item, pointer=f"{pointer}/{key}") for key, item in raw.items()
-        }
-    raise Up2Error(
-        diag(
-            "UP2-E1005",
-            f"ctx.map needs an array of paths or a name→path object, got {type(raw).__name__}",
-            fix='write ["locals.a","locals.b"] or {"title":"locals._t"}',
-            pointer=pointer,
+    if not isinstance(raw, dict):
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"ctx.dict needs a name → path object, got {type(raw).__name__}",
+                fix='write {"title":"locals._t"}',
+                pointer=pointer,
+            )
         )
-    )
+    return {str(key): _require_text(item, pointer=f"{pointer}/{key}") for key, item in raw.items()}
 
 
 def _require_text(raw: Any, *, pointer: str) -> str:

@@ -540,23 +540,19 @@ def _is_sequence(value: Any) -> bool:
 # ---------------------------------------------------------------- one step's work
 
 
-def _parse_product(step: StoryStep, value: Any, scope: Scope, trace: Trace | None) -> Any:
-    """Evaluate a step's `parse`: a chain produces one value, a field map one dictionary.
+def _body_product(step: StoryStep, value: Any, scope: Scope, trace: Trace | None) -> Any:
+    """Evaluate a step's `body`: a chain produces one value, a field map one dictionary.
 
     ``scope`` is the run's scope, from which this step's field chains see the run's materialization
     cache (`03` §6) and the products the run has recorded so far.
     """
-    if isinstance(step.parse, Mapping):
-        return _field_map_product(step, step.parse, value, scope, trace)
-    if step.parse is None:  # pragma: no cover - compile time guarantees parse or call
-        raise _failed(step, "UP2-E1005", "the step has neither parse nor call", "declare one")
-    outcome = eval_field(step.parse, value, scope=scope, trace=trace)
+    if isinstance(step.body, Mapping):
+        return _field_map_product(step, step.body, value, scope, trace)
+    if step.body is None:  # pragma: no cover - compile time guarantees body or call
+        raise _failed(step, "UP2-E1005", "the step has neither body nor call", "declare one")
+    outcome = eval_field(step.body, value, scope=scope, trace=trace)
     if isinstance(outcome, Failed):
         raise _from_failed(step, outcome)
-    if isinstance(outcome, Missing):
-        # A missing value is not an error and not a product (`03` §9): the step is skipped, the same
-        # way a missing field is absent from a field map (`01` §4.2).
-        return _PRODUCT_UNAVAILABLE
     return outcome.value
 
 

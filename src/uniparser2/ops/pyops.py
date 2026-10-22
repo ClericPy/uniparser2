@@ -578,6 +578,23 @@ def _py_from_json(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcom
     return _convert(value, "from_json", _to_json)
 
 
+def _py_items(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """A mapping as ``[[key, value], …]``, in the mapping's own order.
+
+    A pair is a two-element **list**, never a tuple: the value domain is JSON. Iterate the pairs
+    with ``each`` and read the halves with ``["py","getitem",0]`` / ``["py","getitem",1]`` — the
+    index is the literal ``0``/``1``, because ``py.getitem`` deliberately does not coerce.
+    """
+    del params, scope
+    if not isinstance(value, Mapping):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"py.items needs a dict, got {type_name(value)}",
+            fix='build a mapping first with ["ctx","dict",{...}] or take one out of a JSON tree',
+        )
+    return Ok([[key, item] for key, item in value.items()])
+
+
 # ---------------------------------------------------------------- time parsing (former time)
 
 
@@ -1209,6 +1226,11 @@ _TABLE: Final[tuple[_Entry, ...]] = (
     _Entry("float", "convert to a float (former cast float)", _py_float),
     _Entry("bool", "convert to a boolean (former cast bool)", _py_bool),
     _Entry("list", "convert to a list (JSON array text or as-is)", _py_list),
+    _Entry(
+        "items",
+        "a dict becomes [[key, value], …] (index a pair with the literal 0 / 1)",
+        _py_items,
+    ),
     _Entry("from_json", "JSON text → JSON tree (former cast json)", _py_from_json),
     _Entry(
         "==",

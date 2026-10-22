@@ -2,51 +2,9 @@
 
 ## Purpose
 
-The value domain: what a run may carry, what may leave it, and what a missing or failed value means.
+The value domain: what a run may carry, what may leave it, and what a no-match and a failure mean.
 
 ## Requirements
-
-### Requirement: Missing and failed have fixed outcomes
-
-The kernel SHALL NOT offer a settlement policy: `Policy`, the missing and error strategies, the `policy`
-parameter of `eval_field`, the `policy` block of a story and the CLI's `--on-missing` / `--on-error` SHALL
-be absent, and `UP2-E2015` SHALL be retired without reusing its number.
-
-A missing value SHALL mean "not there": in a field map the key SHALL be absent from the product, in a
-batch the item SHALL be skipped, and **at a step boundary the step SHALL be skipped** — no product is
-recorded for it and the exit collects nothing for it — with no empty string and no null invented. A
-failed stage SHALL always raise, carrying its code and reason.
-
-#### Scenario: a selector that never matched
-
-- **WHEN** a field's chain ends in a selector that matched nothing
-- **THEN** the field SHALL be absent from the step's product
-
-#### Scenario: a step whose chain product is missing
-
-- **WHEN** a step's chain product is a missing value
-- **THEN** the step SHALL be skipped: no product SHALL be recorded, and if it is the exit step its
-  product SHALL NOT appear in the run's output — never as `null`
-
-#### Scenario: a receiving step that produces nothing
-
-- **WHEN** the step a suspension names as `next` produces a missing value
-- **THEN** the run SHALL continue at the step after it, because there is no product to hand on
-
-#### Scenario: a value the type requires
-
-- **WHEN** a host-registered type constructor is handed a product that lacks a required key
-- **THEN** the constructor SHALL raise and the run SHALL fail at that step
-
-#### Scenario: a failing stage
-
-- **WHEN** any stage fails
-- **THEN** the run SHALL fail with that stage's code and pointer, and no configuration SHALL degrade it
-
-#### Scenario: tolerating one absence
-
-- **WHEN** an author wants a fallback for a value that may be missing
-- **THEN** the fallback SHALL be expressed at the action level (`py.default` / `py.or`), not by policy
 
 ### Requirement: A value that flows may be a host object
 
@@ -103,6 +61,12 @@ dotted path works on both a dictionary and an object. An attribute that is **cal
 with `UP2-E2002`, using the same message shape and the same fix hint `py.getattr` uses: a method is not a
 value, and it could not leave the run (`UP2-E2003`) in any case.
 
+The reserved roots SHALL be `globals` (read-only for every step), `locals` (this step's own scope) and
+`in` (this step's own input). Every other root SHALL name a step of the story, and a reference that names
+no such root SHALL fail with `UP2-E1006`, listing the roots that are accepted. `$fields` SHALL NOT be a
+root: it was a second name for `locals` and is retired, so a stage that writes it fails at compile time
+like any other unknown root.
+
 #### Scenario: a dotted path into an object
 
 - **WHEN** a stage writes `$resp.headers` and `$resp` is a response object
@@ -119,6 +83,12 @@ value, and it could not leave the run (`UP2-E2003`) in any case.
 
 - **WHEN** a stage needs `Content-Type`, which contains a hyphen and is therefore not a dotted path
 - **THEN** it SHALL be read from the headers mapping with `["py","getitem","content-type"]`
+
+#### Scenario: the retired root
+
+- **WHEN** a stage writes `$fields.title`
+- **THEN** the reference SHALL fail with `UP2-E1006`, an unknown reference root, and the accepted roots
+  SHALL NOT list `fields`
 
 ### Requirement: The answer to a request has no declared type
 
@@ -256,3 +226,29 @@ SHALL hold no artifact.
 
 - **WHEN** a scope is created and only non-materializing actions are evaluated through it
 - **THEN** the run's cache SHALL hold no artifact and account no materialized bytes
+
+### Requirement: An outcome is a value or a failure
+
+The kernel SHALL expose exactly two outcomes: `Ok`, carrying a value, and `Failed`, carrying a code, a
+reason and a fix. There SHALL be no third outcome for "not there", no action-level declaration that
+accepts such an outcome, and no sentinel substituted for a value before an operator runs.
+
+A query that matches nothing SHALL be `Ok` carrying the **empty value of its shape** (the per-action
+mapping is specified in `dsl-operators`). A reference path that cannot be walked SHALL be `Failed` with
+`UP2-E2001`. A failure SHALL stop the chain and reach the caller carrying the code and reason of the
+stage that failed.
+
+#### Scenario: a selector that matched nothing
+
+- **WHEN** a chain runs `["css1","text","h1"]` against a document with no `h1`
+- **THEN** the outcome SHALL be `Ok("")`, and the value SHALL flow to the next stage
+
+#### Scenario: a reference that cannot be walked
+
+- **WHEN** a chain reads `$locals.nope`
+- **THEN** the outcome SHALL be `Failed` with `UP2-E2001`
+
+#### Scenario: a failed stage stops the chain
+
+- **WHEN** the first stage fails and a second stage follows it
+- **THEN** the second stage SHALL NOT be evaluated

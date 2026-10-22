@@ -10,12 +10,12 @@ themselves, and without changing what a run does when nobody asks for a trace. T
 
 ### Requirement: One event per evaluated stage
 
-The trace SHALL record one event for every stage the engine **evaluates**, and no event for a stage
-the tri-state short-circuit skips. A stage event SHALL carry `seq` (1-based, in evaluation order),
-`step`, `item`, `field`, `stage` (the stage's index inside its own chain), `op`, `action`, `params`,
-`input`, `output`, `state`, `detail` and `ms`. `state` SHALL be `Ok`, `Missing` or `Failed`, and
-`detail` SHALL carry the stage's `code` and `reason` when it is `Failed` and nothing otherwise. A
-chain that is evaluated without a trace SHALL collect nothing.
+The trace SHALL record one event for every stage the engine **evaluates**, and no event for a stage a
+failure stopped the chain before. A stage event SHALL carry `seq` (1-based, in evaluation order), `step`,
+`item`, `field`, `stage` (the stage's index inside its own chain), `op`, `action`, `params`, `input`,
+`output`, `state`, `detail` and `ms`. `state` SHALL be `Ok` or `Failed`, and `detail` SHALL carry the
+stage's `code` and `reason` when it is `Failed` and nothing otherwise. A chain that is evaluated without
+a trace SHALL collect nothing.
 
 #### Scenario: Every stage of a chain is one event
 
@@ -25,8 +25,8 @@ chain that is evaluated without a trace SHALL collect nothing.
 
 #### Scenario: A short-circuit stage is absent
 
-- **WHEN** the second stage of a chain is `Missing` and no later stage accepts a missing input
-- **THEN** the trace SHALL hold two events, the second of them `Missing`
+- **WHEN** the second stage of a chain fails, so the third stage is never evaluated
+- **THEN** the trace SHALL hold two events, the second of them `Failed`, carrying that stage's code
 
 #### Scenario: A run without a trace collects nothing and is unchanged
 
@@ -62,8 +62,9 @@ nested inside another one, the innermost index SHALL win.
 
 #### Scenario: The third result's field is locatable
 
-- **WHEN** an `each` runs a field map whose `title` chain misses for the third element of a list
-- **THEN** an event SHALL carry that field's name, `item` `2`, and `state` `Missing`
+- **WHEN** an `each` runs a field map whose `title` chain matches nothing for the third element of a list
+- **THEN** an event SHALL carry that field's name, `item` `2`, and `state` `Ok` with the empty value as its
+  output
 
 #### Scenario: A batch's receiving step is numbered by the answer
 

@@ -178,7 +178,7 @@ cross-machine replay guarantee.
 - **WHEN** the host configures the clock policy to follow the host
 - **THEN** two runs of the same chain may differ, and that trade-off has been declared in the design draft and the operator docs
 
-### Requirement: Tri-state and error code mapping
+### Requirement: Outcomes and error code mapping
 
 An exception raised by sandbox code itself SHALL map to `Failed` (`UP2-E2017`, reason containing the exception's first line); a triggered limit SHALL map to
 `UP2-E2016`; a worker crash SHALL map to `UP2-E2099`; the return value MUST fall in the JSON value domain, otherwise it MUST map to

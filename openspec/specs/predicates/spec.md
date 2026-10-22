@@ -10,7 +10,7 @@ comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`), Python's membership test (`in`),
 `or` / `and`, and `exists` on the selector family.
 
 Two properties are the point of the whole capability. First, a predicate **answers with a value** rather
-than leaving the caller to interpret an absence: `css.nodes` reports `Missing` when nothing matches, so a
+than leaving the caller to interpret an absence: `css.nodes` answers `[]` when nothing matches, so a
 caller has to decide what that means, while `css.exists` answers `true` / `false` outright — a predicate
 that leaves its answer to the caller is not a predicate. Second, the behaviour is **Python's**,
 spellings included, so an author (or a model) that knows the language already knows the semantics: `or`
@@ -35,8 +35,8 @@ coercion (`200` is not `"200"`), and — because `bool` is an `int` in Python �
 and `0` to `false`. The four ordering actions SHALL accept comparable pairs only — both numbers or both
 strings, where a boolean is **not** a number — and any other pair MUST fail with `UP2-E2002`, naming both
 types; a Python `TypeError` MUST NOT escape as `UP2-E2099`. None of the six actions SHALL depend on how a
-missing value settles: they answer `true` or `false`, and a missing upstream value still short-circuits
-before the action runs, the rule every operator's parameters follow.
+no-match settles: they answer `true` or `false`, and a path that cannot be read fails the stage before the
+action runs, the rule every operator's parameters follow.
 
 The two families therefore disagree on booleans by design: `["py","==",1]` on `true` is `true` (Python's
 equality), while `["py","<",1]` on `true` is `UP2-E2002` (a boolean is not ordered against a number).
@@ -79,7 +79,7 @@ actions.
 The `py` operator SHALL declare `in`, whose parameter is the **container** and whose upstream value is
 the element looked up in it: a `str` parameter answers a substring test, a `list` parameter a membership
 test (deep equality) and a `dict` parameter a key test. Any other parameter type MUST fail with
-`UP2-E2002`. The answer SHALL always be a boolean: a missing upstream value short-circuits before the
+`UP2-E2002`. The answer SHALL always be a boolean: a path that cannot be read fails the stage before the
 action runs, and nothing else changes the answer. To ask whether the upstream value *contains* something,
 the element is written in front (`[["const","/public/"],["py","in","$locals.url"]]`), because the
 operands keep Python's order.
@@ -122,17 +122,17 @@ actions MUST NOT require booleans: answering with the chosen operand is the poin
 enforced at the predicate boundary (the L2 `match`), not by the combinator. A parameter that is not an
 array MUST fail with `UP2-E2002`.
 
-A **missing** reference inside the array is not an operand: reference resolution short-circuits the whole
+A **path that cannot be read** inside the array is not an operand: reference resolution fails the whole
 stage before the action runs (the rule every operator's parameters follow), so "take A, else B" covers
-candidates that are **present but empty** only. A candidate that may be absent is made present first —
-`[["css1","text","h1"],["py","default",""]]`, with `default` accepting the missing value — and only then
+candidates that are **present but empty** only. A candidate that may be empty is defaulted first —
+`[["css1","text","h1"],["py","default",""]]`, with `default` replacing `None` / `""` — and only then
 handed to `or`.
 
-#### Scenario: A missing candidate never reaches `or`
+#### Scenario: An unreadable candidate never reaches `or`
 
 - **WHEN** the chain is `[["py","or",["$locals._a","fallback"]]]` with `_a` **absent**, and then the same
   chain with `["const",""],["ctx","set","locals._a"]` in front of it
-- **THEN** the first is `Missing` — the reference short-circuits before `or` runs — and the second is
+- **THEN** the first fails with `UP2-E2001` — the reference fails before `or` runs — and the second is
   `"fallback"`
 
 #### Scenario: The first non-empty candidate wins
@@ -165,9 +165,9 @@ handed to `or`.
 ### Requirement: The selector family answers existence with a boolean
 
 `css` and `css1` SHALL declare an `exists` action that answers whether the selector matches at least
-one node. Unlike `nodes` — which reports `Missing` when nothing matches, so a caller has to decide what
-an absent value means — `exists` MUST answer `true` or `false` and MUST NOT report `Missing`, so a chain
-can use it as a predicate without a second decision.
+one node. Unlike `nodes` — which answers `[]` when nothing matches, so a caller has to decide what an
+empty value means — `exists` MUST answer `true` or `false`, so a chain can use it as a predicate without
+a second decision.
 
 #### Scenario: A structure that matches
 
@@ -180,7 +180,7 @@ can use it as a predicate without a second decision.
 - **WHEN** the chain is `[["css","exists",".nope"]]` and the value is an HTML document without it
 - **THEN** the result is `false`
 
-#### Scenario: The neighbour action still reports a missing value
+#### Scenario: The neighbour action answers the shape's empty value
 
 - **WHEN** the chain is `[["css","nodes",".nope"]]`
-- **THEN** the outcome is `Missing` — `exists` is a new action, not a change to `nodes`
+- **THEN** the outcome is `[]` — `exists` is a boolean view of the same fact, not a change to `nodes`

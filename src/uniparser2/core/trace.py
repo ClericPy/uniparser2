@@ -23,15 +23,14 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from .ast import CompiledField, CompiledStage, Lit, Param, Ref
-from .errors import Failed, Missing, Ok, Outcome
+from .errors import Failed, Ok, Outcome
 from .refs import Scope
-from .values import MISSING, JsonValue, is_json_value, text_of, truncate, type_name
+from .values import JsonValue, is_json_value, text_of, truncate, type_name
 
 PREVIEW_LIMIT: Final = 200
 """How much of a value an event carries; the whole value is fetched with :meth:`Trace.get_value`."""
 
 STATE_OK: Final = "Ok"
-STATE_MISSING: Final = "Missing"
 STATE_FAILED: Final = "Failed"
 
 EFFECT_REQUEST: Final = "request"
@@ -270,19 +269,16 @@ def _state_of(outcome: Outcome) -> tuple[str, dict[str, str] | None]:
     """A stage's state, and the code and reason a failure carries (`06` §5.1's ``detail``)."""
     if isinstance(outcome, Failed):
         return STATE_FAILED, {"code": outcome.code, "reason": outcome.reason}
-    if isinstance(outcome, Missing):
-        return STATE_MISSING, None
     return STATE_OK, None
 
 
 def _produced(outcome: Outcome) -> Any:
-    """What a stage's event shows as its output: the value it produced, else the missing sentinel.
+    """What a stage's event shows as its output: the value it produced.
 
-    A `Missing` and a `Failed` stage both produced **no value** (`01` §4): the state says which, a
-    failure carries its code and reason in ``detail``, and the output stays the sentinel rather than
-    inventing a value that the chain never had.
+    A failed stage produced **no value** (`01` §4): the state says so, the failure carries its code
+    and reason in ``detail``, and the output is ``None`` rather than an invented value.
     """
-    return outcome.value if isinstance(outcome, Ok) else MISSING
+    return outcome.value if isinstance(outcome, Ok) else None
 
 
 def compiled_params(params: Mapping[str, Param]) -> JsonValue:
@@ -339,7 +335,6 @@ __all__ = [
     "OUTPUT_SIDE",
     "PREVIEW_LIMIT",
     "STATE_FAILED",
-    "STATE_MISSING",
     "STATE_OK",
     "Trace",
     "TraceEvent",

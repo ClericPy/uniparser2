@@ -1,12 +1,12 @@
-"""Chain evaluation: the tri-state short-circuit (design doc 01 §4, 02 §5).
+"""Chain evaluation: a value or a failure (design doc 01 §4, 02 §5).
 
-The semantics in one sentence: ``Ok`` continues; ``Missing`` short-circuits the current field and
-stays missing (the value is not there); ``Failed`` stops the chain and is reported with its code.
-An action that declares ``accepts_missing`` (``py.default``, for example) can catch the ``MISSING``
-sentinel as input; that is the only exception to the short-circuit rule.
+The semantics in one sentence: ``Ok`` continues; ``Failed`` stops the chain and is reported with its
+code. There is no third outcome: a query that matched nothing is ``Ok`` carrying the empty value of
+its shape (``empty-value-semantics``).
 
-A caller may pass a ``trace`` (`06` §5.1): then every **evaluated** stage records one event. A stage
-the short-circuit skips records nothing, so the last event of a chain is the stage that ended it.
+A caller may pass a ``trace`` (`06` §5.1): then every **evaluated** stage records one event. A
+stage a failure stopped the chain before records nothing, so the last event of a chain is the stage
+that ended it.
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def _invoke(
             fix="import uniparser2.ops again to register the built-in operators",
         )
     resolved = resolve_params(stage.params, scope)
-    if isinstance(resolved, (Ok, Missing, Failed)):
+    if isinstance(resolved, (Ok, Failed)):
         return resolved
     call = registry.Call(
         value=value,

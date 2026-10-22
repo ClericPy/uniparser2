@@ -10,9 +10,9 @@ all handled correctly.
 **Two pitfalls found by measurement, which this operator turns into readable diagnostics**:
 
 1. **Default namespace**: for a document such as ``<urlset xmlns="http://www.sitemaps.org/...">``
-   (which sitemaps are), ``//loc`` **silently returns empty** (no error). When the result is empty
-   this operator points this out in ``Missing`` and offers two fixes:
-   ``//*[local-name()='loc']`` and an ``ns`` mapping.
+   (which sitemaps are), ``//loc`` **silently returns empty** (no error). The empty result is the
+   empty value of the shape (``[]`` / ``None``), so the fix is written in the chain:
+   ``//*[local-name()='loc']`` or an ``ns`` mapping.
 2. **Undefined prefix**: ``//dc:creator`` without ``ns`` makes lxml raise
    ``XPathEvalError: Undefined namespace prefix``. Measured, that error appears **only at
    evaluation time** (not at construction time), so compile time runs the expression once against
@@ -46,7 +46,7 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, Final
 
 from ..core.ast import Lit, Param
-from ..core.errors import Failed, Missing, Ok, Outcome, Up2Error, diag
+from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
 from ..core.materialize import XML
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import Opaque, preview, type_name
@@ -148,7 +148,8 @@ class XPath(Op):
                 fix=f"check expr against the document structure; {_NS_FIX}",
             )
         if not results:
-            return Missing(reason=_empty_reason(context, expr))
+            # The empty value of the shape: an element set is a list, a single node is absent.
+            return Ok(None) if call.action == _SELF else Ok([])
         if call.action == _NODES:
             return _as_nodes(results)
         if call.action == _SELF:

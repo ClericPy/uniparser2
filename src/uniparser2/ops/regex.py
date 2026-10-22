@@ -29,7 +29,7 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, Final
 
 from ..core.ast import Lit, Param
-from ..core.errors import Failed, Missing, Ok, Outcome, Up2Error, diag
+from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import type_name
 
@@ -114,13 +114,12 @@ class Regex(Op):
         compiled: re.Pattern[str] = call.payload
         if call.action == _SEARCH:
             found = compiled.search(call.value)
-            return Missing(reason="regex did not match") if found is None else Ok(found.group(0))
+            return Ok(found.group(0)) if found is not None else Ok("")
         if call.action == _FINDALL:
-            found_all = compiled.findall(call.value)
-            return Missing(reason="regex matched no items") if not found_all else Ok(found_all)
+            return Ok(compiled.findall(call.value))
         found_group = compiled.search(call.value)
         if found_group is None:
-            return Missing(reason="regex did not match")
+            return Ok("")
         return Ok(found_group.group(call.params["group"]))
 
 

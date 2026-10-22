@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, Final
 
 from ..core.ast import Lit, Param
-from ..core.errors import Failed, Missing, Ok, Outcome, Up2Error, diag
+from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
 from ..core.materialize import JSON
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import is_json_value, preview, type_name
@@ -103,7 +103,8 @@ class JsonQuery(Op):
         except Exception as exc:
             return Failed(code="UP2-E2005", reason=f"jmespath query failed: {exc}")
         if found is None:
-            return Missing(reason="the jmespath expression matched nothing")
+            # jmespath answers `null` for a path that matches nothing: the shape's empty value.
+            return Ok(None)
         return Ok(found)
 
 

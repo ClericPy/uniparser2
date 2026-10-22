@@ -92,7 +92,6 @@ class CompiledStage:
     op_name: str
     action: str
     params: dict[str, Param]
-    accepts_missing: bool = False
     payload: Any = None
 
     @property

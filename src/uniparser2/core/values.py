@@ -30,22 +30,6 @@ type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
 type Value = JsonValue | Opaque
 
 
-class MissingInput:
-    """The sentinel for "the previous stage is missing".
-
-    It is passed only to actions that declare ``ActionSpec.accepts_missing`` (``py.default``, for
-    example); every other operator never sees it, because missing short-circuits during evaluation.
-    """
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        return "<MISSING>"
-
-
-MISSING: Final = MissingInput()
-"""The stage-missing sentinel (a singleton)."""
-
 _PREVIEW_LIMIT: Final = 200
 
 # Exact type -> name in the value domain vocabulary (a table lookup instead of a long isinstance
@@ -68,8 +52,6 @@ def type_name(value: object) -> str:
     A host object (a response, a ``udf`` result) keeps **its own class name**: that name is the
     only stable fact the kernel has about it, and diagnostics must name it.
     """
-    if value is MISSING:
-        return "missing"
     exact = _EXACT_TYPE_NAMES.get(type(value))
     if exact is not None:
         return exact
@@ -101,8 +83,6 @@ def text_of(value: object) -> str:
     JSON, and the class name is what tells the reader which host library it came from. This is the
     one rendering ``preview`` truncates and the trace measures as a value's ``size`` (`06` §5.1).
     """
-    if value is MISSING:
-        return "<MISSING>"
     if isinstance(value, Opaque):
         return f"<opaque {type(value).__name__}>"
     if value is not None and not isinstance(value, (str, bool, int, float, list, dict)):

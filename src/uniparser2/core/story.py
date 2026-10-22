@@ -32,7 +32,7 @@ from typing import Any, Final, Literal
 
 from .ast import CompiledField, Lit, Param
 from .compile import compile_field, compile_field_map
-from .errors import Failed, Missing, Up2Error, diag
+from .errors import Failed, Up2Error, diag
 from .evaluator import eval_field, resolve_params
 from .export import pack
 from .limits import MAX_STORY_STEPS
@@ -54,11 +54,12 @@ REQUEST_BATCH_TYPE: Final = "RequestBatch"
 REQUEST_TYPES: Final = (REQUEST_TYPE, REQUEST_BATCH_TYPE)
 LOCAL_PREFIX: Final = "_"
 NEXT_KEY: Final = "next"
+ARGS_KEY: Final = "args"
+BODY_KEY: Final = "body"
+COLLECT_KEY: Final = "collect"
 BATCH_ITEMS: Final = "items"
-_PRODUCT_UNAVAILABLE: Final = object()
-"""The value that travels beside "this step produced nothing" (a `Missing` product, `03` §9)."""
-_BUNDLE_KEYS: Final = frozenset({"globals", "steps", "exit"})
-_STEP_KEYS: Final = frozenset({"name", "type", "parse", "call", NEXT_KEY, "with"})
+_BUNDLE_KEYS: Final = frozenset({"entry", "globals", "steps", "collect"})
+_STEP_KEYS: Final = frozenset({"name", "type", "body", "call", NEXT_KEY, ARGS_KEY})
 _UNVISITED: Final = 0
 """The flow node a walk has not reached yet."""
 _ON_PATH: Final = 1
@@ -294,24 +295,20 @@ def _step_product(
             EFFECT_CALL,
             step=step.name,
             action=step.call,
-            params=step.with_,
+            params=step.args,
             incoming=value,
             handed_out=arguments,
             started_at=started_at,
         )
         product = yield ("call", step.call, arguments)
     else:
-        product = _parse_product(step, value, scope, trace)
-    if product is _PRODUCT_UNAVAILABLE:
-        # A missing value is not a product (`03` §9): the step is skipped, exactly as a missing
-        # field is absent from a field map — never `null` (`01` §4.2).
-        return pc + 1, _PRODUCT_UNAVAILABLE, False
+        product = _body_product(step, value, scope, trace)
     product = _built_product(step, product)
     scope.products = {**scope.products, step.name: product}
-    if step.name == state.story.exit:
+    if step.name == state.story.collect:
         state.output.append(product)
     if not step.is_request:
-        return pc + 1, product, True
+        return pc + 1, product
     if step.type == REQUEST_TYPE:
         return (yield from _request_effect(state, step, value, product, item))
     return (yield from _batch_effect(state, step, value, product))
@@ -560,7 +557,7 @@ def _field_map_product(
     scope: Scope,
     trace: Trace | None,
 ) -> dict[str, Any]:
-    """One dictionary from a field map: a `_` field is a local, a missing field is dropped.
+    """One dictionary from a field map: a `_` field is a local, every other field is a key.
 
     Every chain of the map was compiled with its own field name, which is what the trace reports as
     `field` (`06` §5.1), so the two fields of one map stay apart.
@@ -570,8 +567,6 @@ def _field_map_product(
         outcome = eval_field(chain, value, scope=scope, trace=trace)
         if isinstance(outcome, Failed):
             raise _from_failed(step, outcome)
-        if isinstance(outcome, Missing):
-            continue
         if name.startswith(LOCAL_PREFIX):
             scope.write_local((name,), outcome.value)
         else:

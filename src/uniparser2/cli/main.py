@@ -3,7 +3,8 @@ run (design docs 04 §7-S0–S3, 05 §5), the template store's own commands (04 
 commands around them: the snapshot runner of G2 (``up2 snapshot`` / ``up2 test``, 04 §7-S4/S5) and
 ``up2 doctor`` with its ``--fix`` (04 §10, 07 §3 acceptance item 3).
 
-Exit codes: ``0`` ok (including ``Missing`` — missing is not an error, 01 §4.1); ``1`` compile or
+Exit codes: ``0`` ok (a value, including an empty one — a query that matched nothing is not an
+error, `01` §4); ``1`` compile or
 run failed; ``2`` usage error.
 
 Two file shapes are accepted by ``lint`` / ``trial`` / ``publish`` / ``snapshot``: a **field chain**
@@ -41,7 +42,6 @@ import uniparser2
 from uniparser2 import (
     Diagnostic,
     Failed,
-    Missing,
     Ok,
     Outcome,
     Scope,
@@ -699,9 +699,6 @@ def _report_outcome(outcome: Outcome, as_json: bool, *, trace: Trace | None = No
         if isinstance(packed, Failed):
             return _report_outcome(packed, as_json, trace=trace)
         payload: dict[str, Any] = {"state": "ok", "value": outcome.value}
-        code = EXIT_OK
-    elif isinstance(outcome, Missing):
-        payload = {"state": "missing", "reason": outcome.reason}
         code = EXIT_OK
     else:
         payload = {

@@ -77,7 +77,6 @@ class ActionSpec:
     summary: str = ""
     params: tuple[ParamSpec, ...] = ()
     requires: tuple[str, ...] = ()
-    accepts_missing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +94,6 @@ class ActionReport:
     available: bool
     requires: tuple[str, ...]
     missing: tuple[str, ...]
-    accepts_missing: bool
     params: tuple[ParamReport, ...]
     param_form: ParamForm
 
@@ -405,7 +403,6 @@ def report() -> tuple[OpReport, ...]:
                     available=not op_missing,
                     requires=instance.requires,
                     missing=op_missing,
-                    accepts_missing=False,
                     params=(),
                     param_form=_param_form(instance, DYNAMIC_ACTION_MARK),
                 )
@@ -420,7 +417,6 @@ def report() -> tuple[OpReport, ...]:
                     available=not action_missing,
                     requires=tuple(dict.fromkeys((*instance.requires, *spec.requires))),
                     missing=action_missing,
-                    accepts_missing=spec.accepts_missing,
                     params=tuple(
                         ParamReport(
                             name=param.name,
@@ -472,7 +468,6 @@ def report_dicts() -> list[dict[str, Any]]:
                         "available": action.available,
                         "requires": list(action.requires),
                         "missing": list(action.missing),
-                        "accepts_missing": action.accepts_missing,
                         "param_form": str(action.param_form),
                         "params": [
                             {

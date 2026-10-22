@@ -131,7 +131,7 @@ class Scope:
 
     ``step_input`` is the value ``$in`` names: the input of the **story step** being evaluated (a
     field chain inside one step still sees the step's input, never the element ``each`` handed it).
-    It stays ``MISSING`` when nothing was handed in.
+    It stays unset when nothing was handed in, and a read of ``$in`` then fails (`UP2-E2001`).
 
     ``iteration`` is which fan-out result this scope evaluates: the ordinal its fan-out operator
     gave it for that element, or ``None`` at the top of a run. The trace reports it as ``item``
@@ -359,8 +359,10 @@ def _descend(current: Any, segment: str, ref: Ref, walked: list[str]) -> Outcome
     """Take one path segment from a mapping, a sequence or a host object."""
     if isinstance(current, Mapping):
         if segment not in current:
-            return Missing(
-                reason=f"{ref.raw} is missing key {segment!r} at {'.'.join(walked) or ref.root}"
+            return Failed(
+                code="UP2-E2001",
+                reason=f"{ref.raw} is missing key {segment!r} at {'.'.join(walked) or ref.root}",
+                fix="read a key the value has, or make the producing stage write it",
             )
         return Ok(current[segment])
     if isinstance(current, (list, tuple)):

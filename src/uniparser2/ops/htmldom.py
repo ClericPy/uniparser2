@@ -69,7 +69,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, ClassVar, Final
 
 from ..core.ast import Lit, Param
-from ..core.errors import Failed, Missing, Ok, Outcome, Up2Error, diag
+from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
 from ..core.materialize import HTML
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import Opaque, type_name
@@ -263,8 +263,7 @@ class _SelectorOp(Op):
             return _prune(active, context, selector, first_only=self.first_only)
         matched = _select(active, raw, selector, first_only=self.first_only)
         if call.action == _EXISTS:
-            # A boolean, never `Missing`: `nodes` reports a missing value when nothing matches, and
-            # the missing policy would then decide the answer, which no predicate can rely on.
+            # A boolean, so no predicate has to reason about an empty value.
             return Ok(bool(matched))
         if call.action in (_SELF, _NODES):
             return _node_result(call.action, matched)
@@ -362,7 +361,8 @@ def _prune(
 
 def _node_result(action: str, matched: list[Any]) -> Outcome:
     if not matched:
-        return Missing(reason="no node matched")
+        # The empty value of the shape: a node set is a list, a single handle is absent (null).
+        return Ok([] if action == _NODES else None)
     if action == _NODES:
         return Ok([DomNode(node) for node in matched])
     return Ok(DomNode(matched[0]))
@@ -371,8 +371,6 @@ def _node_result(action: str, matched: list[Any]) -> Outcome:
 def _value_result(
     active: SelectolaxEngine, call: Call, matched: list[Any], *, first_only: bool
 ) -> Outcome:
-    if not matched:
-        return Missing(reason="no node matched")
     values: list[str] = []
     for node in matched:
         if call.action == _ATTR:
@@ -382,9 +380,9 @@ def _value_result(
             values.append(found)
             continue
         values.append(_EXTRACTORS[call.action](active, node))
-    if not values:
-        return Missing(reason=f"{call.action} extracted no value")
-    return Ok(values[0] if first_only else values)
+    if first_only:
+        return Ok(values[0] if values else "")
+    return Ok(values)
 
 
 _EXTRACTORS: Final[Mapping[str, Callable[[SelectolaxEngine, Any], str]]] = {

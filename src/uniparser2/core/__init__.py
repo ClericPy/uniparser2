@@ -9,7 +9,7 @@ from __future__ import annotations
 from .ast import CompiledField, CompiledStage, Lit, Param, Ref, Stage, dumps, loads
 from .compile import compile_field, compile_field_map, compile_stage
 from .conformance import ConformanceReport, check
-from .errors import CODES, Diagnostic, Failed, Missing, Ok, Outcome, Up2Error, diag
+from .errors import CODES, Diagnostic, Failed, Ok, Outcome, Up2Error, diag
 from .evaluator import eval_field, resolve_params
 from .export import ProductDifference, compare_products, pack, render_difference
 from .limits import MAX_MATERIALIZE_BYTES, MAX_MATERIALIZE_ITEMS, MAX_STEPS_PER_FIELD
@@ -22,7 +22,6 @@ from .trace import (
     EFFECT_REQUEST,
     PREVIEW_LIMIT,
     STATE_FAILED,
-    STATE_MISSING,
     STATE_OK,
     Trace,
     TraceEvent,
@@ -52,10 +51,8 @@ __all__ = [
     "MAX_MATERIALIZE_BYTES",
     "MAX_MATERIALIZE_ITEMS",
     "MAX_STEPS_PER_FIELD",
-    "MISSING",
     "PREVIEW_LIMIT",
     "STATE_FAILED",
-    "STATE_MISSING",
     "STATE_OK",
     "XML",
     "CompiledField",

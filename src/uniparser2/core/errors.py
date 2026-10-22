@@ -1,8 +1,8 @@
-"""Tri-state results, the error code table, and diagnostics (design doc 01 §4, 02 §7/§7.1).
+"""Outcomes, the error code table, and diagnostics (design doc 01 §4, 02 §7/§7.1).
 
 Three layers:
-- ``Ok`` / ``Missing`` / ``Failed``: the tri-state of stage evaluation. **Missing is not an
-  error**, and **an error is not a value**.
+- ``Ok`` / ``Failed``: an outcome is a value or a failure. A query that matched nothing is ``Ok``
+  carrying the empty value of its shape; **an error is not a value** (``empty-value-semantics``).
 - ``CODES``: the error codes the engine can **actually emit** today -- the single source of truth
   and the reference set for conformance. Codes the spec has defined but that are not implemented
   yet (the graph rules ``E11xx``, the ``udf``/``emit`` ones) are **not in this table**; they join it
@@ -35,6 +35,7 @@ CODES: Final[dict[str, str]] = {
     "UP2-E1015": "ctx.set/del wrote a path outside locals",
     "UP2-E1016": "a `next`/`exit` target is not a step of the story",
     "UP2-E1017": "the story's flow closes a loop of steps",
+    "UP2-E1018": "a step is unreachable from the story's entry",
     "UP2-E1107": "operator unavailable (optional dependency missing)",
     # ---- runtime (UP2-E2xxx) ----
     "UP2-E2001": "reference path cannot be read at runtime (shallower than declared)",
@@ -144,16 +145,6 @@ class Ok:
 
 
 @dataclass(frozen=True, slots=True)
-class Missing:
-    """No hit: the selector did not match, the regex did not match, the key is absent.
-
-    A normal result, not an error.
-    """
-
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
 class Failed:
     """Evaluation failed: type mismatch, conversion failure, missing dependency, and so on."""
 
@@ -162,4 +153,4 @@ class Failed:
     fix: str = ""
 
 
-type Outcome = Ok | Missing | Failed
+type Outcome = Ok | Failed

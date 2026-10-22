@@ -11,10 +11,11 @@ missing, that action is unavailable and the install command is reported.
 ``getitem`` is the only subscript action. It used to sit beside a ``get`` that took a dict key: the
 same operation split by parameter type. Taking a subscript is Python's ``__getitem__``, so a
 sequence is read by index, a mapping by key and a str by character, with **no coercion**, and a
-subscript that is not there is an **error** (``UP2-E2018``) rather than ``Missing``.
+subscript that is not there is an **error** (``UP2-E2018``). A query that finds nothing is not an
+error: it yields the empty value of its shape (``""`` / ``[]`` / ``None``).
 
-``getattr`` (a host object's own attribute) and ``id`` (the identity) are the two actions that are
-not functions of a JSON value: see their own docstrings.
+``getattr`` (a host object's own attribute) is the one action that is not a function of a JSON
+value: see its own docstring.
 
 Two groups of functions used to be separate operators and were folded into this table (see D-02-14
 in ``02``):
@@ -108,7 +109,6 @@ class _Entry:
     fn: _Fn
     params: tuple[ParamSpec, ...] = ()
     requires: tuple[str, ...] = ()
-    accepts_missing: bool = False
 
 
 def _text(value: Any, who: str) -> str | Failed:
@@ -228,7 +228,7 @@ def _py_getitem(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     """Python's ``value[at]``: a sequence by index, a mapping by key, a str by character.
 
     No coercion: a string index on a list is a type failure, never an integer. A subscript the value
-    does not have is an **error**, not ``Missing`` (``UP2-E2018``) — the value is there, the key or
+    does not have is an **error** (``UP2-E2018``) — the value is there, the key or
     the index is not, which is a fact about the data rather than "nothing matched".
     """
     del scope
@@ -306,14 +306,14 @@ def _py_first(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     items = _items(value, "first")
     if isinstance(items, Failed):
         return items
-    return Missing(reason="the list is empty") if not items else Ok(items[0])
+    return Ok(items[0]) if items else Ok(None)
 
 
 def _py_last(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     items = _items(value, "last")
     if isinstance(items, Failed):
         return items
-    return Missing(reason="the list is empty") if not items else Ok(items[-1])
+    return Ok(items[-1]) if items else Ok(None)
 
 
 def _py_flatten(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
@@ -389,7 +389,7 @@ def _py_urlsplit(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome
 
 def _py_default(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     fallback = params.get("value")
-    if value is MISSING or value is None or value == "":
+    if value is None or value == "":
         return Ok(fallback)
     return Ok(value)
 
@@ -611,7 +611,7 @@ def _import_dateparser() -> Callable[..., Any]:
 def _py_parse_time(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     del scope
     if value is None:
-        return Missing(reason="the time value is empty")
+        return Ok("")
     if not isinstance(value, str):
         return Failed(
             code="UP2-E2002",
@@ -620,7 +620,7 @@ def _py_parse_time(value: Any, params: Mapping[str, Any], scope: Scope) -> Outco
         )
     text = value.strip()
     if not text:
-        return Missing(reason="the time text is empty")
+        return Ok("")
 
     fmt = params.get("format")
     if fmt:
@@ -1296,7 +1296,6 @@ _ACTIONS: Final[Mapping[str, ActionSpec]] = {
         entry.summary,
         entry.params,
         entry.requires,
-        entry.accepts_missing,
     )
     for entry in _TABLE
 }

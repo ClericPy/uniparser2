@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, Final
 
 from ..core.ast import CompiledField, Param
-from ..core.errors import Failed, Missing, Ok, Outcome
+from ..core.errors import Failed, Ok, Outcome
 from ..core.limits import MAX_EACH_ITER
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import type_name
@@ -109,8 +109,6 @@ class Each(Op):
                 outcome = call.run_chain(chain, element, scope)
                 if isinstance(outcome, Failed):
                     return outcome
-                if isinstance(outcome, Missing):
-                    continue  # an absent field is simply not part of this element
                 if name.startswith(_LOCAL_PREFIX):
                     scope.write_local((name,), outcome.value)
                 else:

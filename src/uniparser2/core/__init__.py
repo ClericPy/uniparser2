@@ -39,7 +39,7 @@ from .types import (
     type_names,
     unregister_type,
 )
-from .values import MISSING, JsonValue, Opaque, Value, is_json_value, is_opaque, preview, type_name
+from .values import JsonValue, Opaque, Value, is_json_value, is_opaque, preview, type_name
 
 __all__ = [
     "BUILTIN_TYPES",

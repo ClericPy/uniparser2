@@ -39,38 +39,6 @@ class Author:
     description: str
 
 
-@dataclass(slots=True)
-class Answer:
-    """The answer's shape is the **host's** choice (`03` §4.1).
-
-    The story reads an answer with `py.getattr`, so this host answers an object carrying the body
-    text and the final URL after redirects — the same two things an `httpx`/`requests` response
-    already exposes, which is why a real client could be handed over unwrapped.
-    """
-
-    text: str
-    url: str
-
-
-def target_of(request: Mapping[str, Any]) -> str:
-    """The URL to fetch: this host only speaks HTTP, so no other scheme is handed to ``urlopen``."""
-    url = str(request["url"])
-    if not url.startswith(("http://", "https://")):
-        raise ValueError(f"this host fetches http(s) only, got {url!r}")
-    return url
-
-
-def fetch(request: Mapping[str, Any]) -> Answer:
-    """One request from the story; the answer is whatever this client returns (`03` §4.1)."""
-    target = target_of(request)  # http(s) only, so `urlopen` never sees another scheme
-    timeout = request.get("timeout", 30.0)
-    with urllib.request.urlopen(target, timeout=timeout) as response:  # noqa: S310  # nosec B310 — target_of admits http(s) only
-        return Answer(
-            text=response.read().decode("utf-8", errors="replace"),
-            url=response.geturl(),
-        )
-
-
 def request_of(task: Any) -> Mapping[str, Any]:
     """One task the host must send: the kernel hands over request objects (`03` §4.1)."""
     if not isinstance(task, Mapping):

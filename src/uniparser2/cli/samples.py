@@ -16,6 +16,11 @@ which path changed.
 ``--accept`` was passed: recording a wrong product "because it ran once" is the failure mode that
 rule exists to prevent.
 
+**A story that fetches is answered from the request cache** (`uniparser2.net`): the runner replays
+the cached answers, so a live sample can be frozen and regressed **offline**. A request with no
+cached answer is a **miss** — the runner reports it and stops, because the CLI never reaches the
+network: a host fetches, the runner replays.
+
 The file layout lives here rather than in ``store/``: `05` §3 puts ``samples/`` in the repository
 ("samples are part of a chain's behavioral contract and must travel with the code through CI") and
 leaves ``$UP2_HOME/samples`` to temporary, not-yet-committed samples, so the CLI layer that already

@@ -42,10 +42,10 @@ from urllib.parse import urljoin as _urljoin
 from urllib.parse import urlsplit as _urlsplit
 
 from ..core.ast import Lit, Param
-from ..core.errors import Failed, Missing, Ok, Outcome, Up2Error, diag
+from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
 from ..core.refs import Scope
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
-from ..core.values import MISSING, is_json_value, type_name
+from ..core.values import is_json_value, type_name
 
 _Fn = Callable[[Any, Mapping[str, Any], Scope], Outcome]
 

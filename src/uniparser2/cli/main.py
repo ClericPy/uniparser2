@@ -30,6 +30,7 @@ as a compilation product (01 §8). The sample commands take their root from ``--
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from collections.abc import Mapping, Sequence
@@ -56,6 +57,7 @@ from uniparser2 import (
 )
 from uniparser2.core import compare_products, registry
 from uniparser2.core.conformance import check
+from uniparser2.net import RequestCache
 from uniparser2.store import (
     AuditRow,
     audit_row_dict,
@@ -199,6 +201,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_SAMPLES_ROOT),
         help="root of the sample cases G2 regresses (default: samples)",
     )
+    publish.add_argument(
+        "--types",
+        default=None,
+        help="a host module to import for its domain types (register_type)",
+    )
     publish.add_argument("--json", action="store_true", help="output JSON")
     publish.set_defaults(handler=_cmd_publish)
 
@@ -217,6 +224,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_SAMPLES_ROOT),
         help="root of the sample cases (default: samples)",
     )
+    snapshot.add_argument(
+        "--types",
+        default=None,
+        help="a host module to import for its domain types (register_type)",
+    )
     snapshot.add_argument("--json", action="store_true", help="output JSON")
     snapshot.set_defaults(handler=_cmd_snapshot)
 
@@ -228,6 +240,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tests-root",
         default=str(DEFAULT_SAMPLES_ROOT),
         help="root of the sample cases (default: samples)",
+    )
+    test.add_argument(
+        "--types",
+        default=None,
+        help="a host module to import for its domain types (register_type)",
     )
     test.add_argument("--json", action="store_true", help="output JSON")
     test.set_defaults(handler=_cmd_test)
@@ -405,6 +422,11 @@ def _cmd_publish(args: argparse.Namespace) -> int:
     if error is not None:
         print(error, file=sys.stderr)
         return EXIT_USAGE
+    if args.types:
+        error = _load_types(args.types)
+        if error is not None:
+            print(error, file=sys.stderr)
+            return EXIT_USAGE
     store = open_store()
     stored = store.get(args.domain, args.tpl_key)
     refusal = gate_overwrite(
@@ -481,6 +503,11 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     if error is not None:
         print(error, file=sys.stderr)
         return EXIT_USAGE
+    if args.types:
+        error = _load_types(args.types)
+        if error is not None:
+            print(error, file=sys.stderr)
+            return EXIT_USAGE
     case = SampleCase(
         name=args.case,
         path=case_directory(_cases_root(args.tests_root), args.domain, args.tpl_key, args.case),
@@ -489,7 +516,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     if error is not None:
         print(error, file=sys.stderr)
         return EXIT_USAGE
-    result = run_graph(graph, value)
+    result = run_graph(graph, value, cache=RequestCache())
     if not result.ok:
         print(result.error, file=sys.stderr)
         return EXIT_FAILED
@@ -511,6 +538,11 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
 
 def _cmd_test(args: argparse.Namespace) -> int:
     """S5: run a key's frozen chain over every sample once (04 §7-S5)."""
+    if args.types:
+        error = _load_types(args.types)
+        if error is not None:
+            print(error, file=sys.stderr)
+            return EXIT_USAGE
     store = open_store()
     template = store.get(args.domain, args.key)
     if template is None:
@@ -589,11 +621,15 @@ def _run_cases(
     A missing snapshot is a failure of the gate rather than a silent pass: G2 promises to regress
     "every case under ``samples/`` for this ``tpl_key``" (04 §6), and a chain with no recorded
     snapshot has nothing to regress.
+
+    A story that fetches is answered from the **request cache** (`uniparser2.net`): the runner
+    replays, it never reaches the network.
     """
     cases = find_cases(root, root_domain, tpl_key)
     if case is not None:
         cases = [item for item in cases if item.name == case]
     failures: list[RegressionFailure] = []
+    cache = RequestCache()
     for item in cases:
         value, error = read_input(item)
         if error is not None:
@@ -727,6 +763,32 @@ def _load_chain(path_text: str) -> tuple[Any, str | None]:
         return None, f"cannot read chain file {path}: {exc}"
     except json.JSONDecodeError as exc:
         return None, f"{path} is not valid JSON: {exc}"
+
+
+def _load_types(path_text: str) -> str | None:
+    """Import a host module so its domain types are registered (``register_type``).
+
+    A story names its types (``03`` §3.3) and the host owns them, so the runner needs the host's
+    registrations to build a product. The module is imported for its side effect, exactly like a
+    host recipe does.
+    """
+    path = Path(path_text)
+    if not path.is_file():
+        return f"cannot read the types module {path}: no such file"
+    name = f"up2_types_{path.stem}"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        return f"cannot import the types module {path}"
+    module = importlib.util.module_from_spec(spec)
+    # The module goes into `sys.modules` **before** it runs: a dataclass with `slots=True` looks
+    # its own module up there to rebuild the class.
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        del sys.modules[name]
+        return f"the types module {path} failed to load: {exc!r}"
+    return None
 
 
 def _is_story(source: Any) -> bool:

@@ -36,8 +36,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from uniparser2 import Failed, Ok, Up2Error, compile_field, eval_field, pack, start
+from uniparser2 import Failed, Up2Error, compile_field, eval_field, pack, start
 from uniparser2.core.export import ProductDifference, render_difference
+from uniparser2.net import RequestCache
 
 INPUT_NAME: Final = "input.txt"
 EXPECTED_NAME: Final = "expected.json"
@@ -157,16 +158,16 @@ def record_expected(case: SampleCase, product: Any) -> str | None:
     return None
 
 
-def run_graph(graph: Any, value: Any) -> GraphRun:
+def run_graph(graph: Any, value: Any, *, cache: RequestCache | None = None) -> GraphRun:
     """Run a chain over one input through the executor its shape selects (`03` §2, §5).
 
-    A story runs to its exit through the story executor; a field chain through the field
-    evaluator. Both are synchronous and IO-free: a story that suspends on a ``Request`` cannot
-    continue here, because a snapshot runner has no host to answer it (`03` §4.1) -- and that is
-    reported as a plain error rather than guessed at.
+    A story runs to its collected product through the story executor; a field chain through the
+    field evaluator. Both are synchronous and IO-free: a story that suspends on a ``Request`` is
+    answered from the **request cache**, and a request with no cached answer is a miss -- the
+    runner never reaches the network (`03` §4.1).
     """
     if isinstance(graph, Mapping) and "steps" in graph:
-        return _run_story(graph, value)
+        return _run_story(graph, value, cache)
     return _run_field(graph, value)
 
 
@@ -179,24 +180,58 @@ def _run_field(graph: Any, value: Any) -> GraphRun:
     outcome = eval_field(compiled, value)
     if isinstance(outcome, Failed):
         return GraphRun(error=f"{outcome.reason} {outcome.fix}".rstrip())
-    if not isinstance(outcome, Ok):
-        return GraphRun(error=f"{outcome.reason} (the chain produced no product)")
     return _packed(outcome.value)
 
 
-def _run_story(graph: Any, value: Any) -> GraphRun:
-    """A story bundle: run to its exit; a suspension means a host is needed (`03` §5)."""
+def _run_story(graph: Any, value: Any, cache: RequestCache | None) -> GraphRun:
+    """A story bundle: run to its end, answering every request from the cache (`03` §5)."""
     run = start(graph, value)
     while True:
-        effect = run.next()
+        effect = run.go()
         if effect[0] == "done":
             return _packed(effect[1])
-        return GraphRun(
-            error=(
-                f"the story suspends on a {effect[0]} effect; a snapshot runner has no host to "
-                "answer it (03 §4.1)"
+        if effect[0] == "call":
+            return GraphRun(
+                error=(
+                    "the story calls a host function; a snapshot runner has no host to answer it "
+                    "(03 §4.2)"
+                )
             )
-        )
+        answer, error = _cached_answer(effect, cache)
+        if error is not None:
+            return GraphRun(error=error)
+        run.feed(answer)
+
+
+def _cached_answer(effect: Any, cache: RequestCache | None) -> tuple[Any, str | None]:
+    """The cached answers of one effect: one for a request, one per task for a batch."""
+    if cache is None:
+        return None, _miss(effect)
+    kind, payload = effect[0], effect[1]
+    if kind == "request":
+        found = cache.get(payload)
+        if found is None:
+            return None, _miss(effect)
+        return found, None
+    if not isinstance(payload, list):
+        return None, f"a batch must be a list of tasks, got {type(payload).__name__}"
+    answers = []
+    for task in payload:
+        found = cache.get(task)
+        if found is None:
+            return None, _miss(("request", task))
+        answers.append(found)
+    return answers, None
+
+
+def _miss(effect: Any) -> str:
+    """The message for a request the cache does not hold: the runner never fetches it."""
+    request = effect[1] if isinstance(effect, tuple) else effect
+    url = request.get("url") if isinstance(request, Mapping) else request
+    return (
+        f"the request {url!r} is not in the request cache; run the sample's host once to fill it "
+        "(a snapshot runner never reaches the network)"
+    )
 
 
 def _packed(value: Any) -> GraphRun:

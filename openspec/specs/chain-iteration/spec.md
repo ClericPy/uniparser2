@@ -14,9 +14,8 @@ fan-out mechanism, a named chain container or a template directive.
 list; its result MUST be a list of dictionaries holding exactly one dictionary per input element, in
 input order. Each field chain SHALL be evaluated with the element as its input value.
 
-An empty list MUST yield an empty list, not a missing value. A non-list input MUST fail with
-`UP2-E2002`, naming the type that arrived. A missing input is handled by the shared stage rule: `each`
-does not accept a missing value, so the chain short-circuits before the operator runs.
+An empty list MUST yield an empty list. A non-list input MUST fail with `UP2-E2002`, naming the type
+that arrived. A stage before `each` that cannot read its path fails the chain before the operator runs.
 
 #### Scenario: A list of two strings
 
@@ -103,34 +102,36 @@ element or be visible to another element.
 
 - **WHEN** the chain is `[["each", {"_t": [["py","strip",""]]}], ["ctx","get","locals._t"]]` and the
   value is `["a"]`
-- **THEN** the final read resolves as a missing value — the key is absent — never as the element's
-  temporary
+- **THEN** the final read SHALL fail with `UP2-E2001` — the key is not there — and SHALL NOT resolve
+  the element's temporary
 
 ### Requirement: A failure stays inside its element and no element is dropped
 
-A missing value SHALL stay inside its element: a value that is missing for one element is absent from that
-element alone and does not disturb the others. `each` MUST NOT drop an element silently: the result holds
-one dictionary per input element even when every field of an element resolves to absent, and a failure
-MUST propagate out of `each` with the code the failing stage reported.
+`each` SHALL produce one dictionary per input element, holding the keys its field map declares. A field
+whose query matched nothing SHALL carry the empty value of that action's shape (it is a value, not an
+absent key). `each` MUST NOT drop an element silently, and a failure MUST propagate out of `each` with
+the code the failing stage reported.
 
 #### Scenario: Every field is missing
 
-- **WHEN** the chain is `[["each", {"n": [["ctx","get","locals.nope"]]}]]` and the value is `["a", "b"]`
-- **THEN** the result is `[{}, {}]`, a list of two dictionaries
+- **WHEN** the chain is `[["each", {"n": [["css1","text","h1"]]}]]` and the value is
+  `["<p>a</p>", "<h1>b</h1>"]`
+- **THEN** the result is `[{"n": ""}, {"n": "b"}]`, a list of two dictionaries
 
 #### Scenario: A failing stage propagates
 
-- **WHEN** the chain is `[["each", {"first": [["py","getitem","0"]]}]]` and the value is `["ab"]`
-- **THEN** the outcome is `UP2-E2002`, the code the failing stage reported
+- **WHEN** the chain is `[["each", {"first": [["py","getitem","0"]]}]]` and the value is `[42]`
+- **THEN** the outcome is `UP2-E2018`, the code the failing stage reported
 
 ### Requirement: The field map is validated recursively at compile time
 
-The argument MUST be an object of field name to chain; anything else MUST be rejected at compile time
-with `UP2-E1005` and a fix line showing the accepted writing. Every sub-chain MUST be compiled like a
-top-level chain — so an unknown operator, an unknown action, a malformed parameter or a dangling
-reference inside it is reported at compile time with a pointer that reaches that stage inside the field
-map — and each sub-chain MUST respect the per-chain stage limit. A field map nested deeper than
-`MAX_EACH_DEPTH` MUST fail at compile time with `UP2-E1012`.
+The argument of `each` — and a step's `body` field map, which is the same object shape — MUST be an
+object of field name to chain; anything else MUST be rejected at compile time with `UP2-E1005` and a fix
+line showing the accepted writing. Every sub-chain MUST be compiled like a top-level chain — so an
+unknown operator, an unknown action, a malformed parameter or a dangling reference inside it is reported
+at compile time with a pointer that reaches that stage inside the field map — and each sub-chain MUST
+respect the per-chain stage limit. A field map nested deeper than `MAX_EACH_DEPTH` MUST fail at compile
+time with `UP2-E1012`.
 
 #### Scenario: An argument that is not an object
 
@@ -159,39 +160,69 @@ An input list longer than `MAX_EACH_ITER` MUST fail with `UP2-E2012` before any 
 
 ### Requirement: A story bundle declares ordered steps and a named exit
 
-A story bundle SHALL be a JSON object carrying `steps` (a non-empty array, whose order is execution
-order) and `exit` (the name of the step whose products form the run's output). It MAY carry `globals`
-(a mapping of chain-level read-only constants). It SHALL NOT carry a `chains` table: a parse rule is a
-step.
+A story bundle SHALL be a JSON object carrying `entry` (the name of the step the run starts at), `steps`
+(a non-empty array, whose order is execution order) and `collect` (the name of the step whose products
+form the run's output, collected as a list). It MAY carry `globals` (a mapping of chain-level read-only
+constants). It SHALL NOT carry a `chains` table: a parse rule is a step.
+
+The run SHALL start at the step `entry` names, with the value the caller handed to the run as that
+step's input. `entry` SHALL name a step of the same bundle; a missing `entry` or one that does not name a
+string SHALL be `UP2-E1005` at `/entry`, and one that names no declared step SHALL be `UP2-E1016`, listing
+the declared step names.
 
 A step SHALL be a JSON object with `name`, an optional `type` (the product's type name), exactly one of
-`parse` (an array, one field chain, or an object, a field map) and `call` (a host function name), plus
-`with` only on a `call`. A field map SHALL be evaluated once, over the step's input, with `_`-prefixed
-fields staying in that step's locals. A written `type` SHALL be resolved against the type registry at the
-step boundary: a built-in name or a host registration is built from the product, an unregistered name is
-`UP2-E1011`, and a constructor that refuses the product is `UP2-E2019`, both at that step.
+`body` (an array, one chain, or a `$` reference, or an object, a field map) and `call` (a host function
+name), plus `args` only on a `call`. A field map SHALL be evaluated once, over the step's input, with
+`_`-prefixed fields staying in that step's locals. A written `type` SHALL be resolved against the
+type registry at the step boundary: a built-in name or a host registration is built from the product, an
+unregistered name is `UP2-E1011`, and a constructor that refuses the product is `UP2-E2019`, both at that
+step.
+
+An unknown bundle key and an unknown step key SHALL both be `UP2-E1005`, naming the key: the old
+spellings (`parse`, `with`, `exit`) are not aliased.
 
 #### Scenario: A bundle with one parse step
 
-- **WHEN** the bundle is `{"steps": [{"name": "records", "parse": {"url": [["py","id",""]]},
-  "type": "Record"}], "exit": "records"}` and the run's input is `{"url": "u"}`
+- **WHEN** the bundle is `{"entry": "records", "steps": [{"name": "records", "body": {"url": [["py","strip",""]]},
+  "type": "Record"}], "collect": "records"}` and the run's input is `{"url": " u "}`
 - **THEN** the run SHALL finish with the output `[{"url": "u"}]`
 
-#### Scenario: A step declares both parse and call
+#### Scenario: The run starts at the entry, not at the first step
 
-- **WHEN** a step carries `parse` and `call`
+- **WHEN** the bundle's `steps` array is `[a, b]` and its `entry` is `b`
+- **THEN** the run SHALL execute `b` first, with the caller's value as its input
+
+#### Scenario: A bundle has no entry
+
+- **WHEN** the bundle carries `steps` and `collect` but no `entry`
+- **THEN** compilation SHALL fail with `UP2-E1005` at `/entry`, because the start is declared, never
+  derived from the array order
+
+#### Scenario: An entry names a step that does not exist
+
+- **WHEN** `entry` names a step the bundle does not declare
+- **THEN** compilation SHALL fail with `UP2-E1016`, listing the declared step names
+
+#### Scenario: A step declares both a body and a call
+
+- **WHEN** a step carries `body` and `call`
 - **THEN** compilation SHALL fail with `UP2-E1005`, naming the step
 
 #### Scenario: A bundle has no exit
 
-- **WHEN** the bundle carries `steps` but no `exit`
-- **THEN** compilation SHALL fail with `UP2-E1005`, because the exit is declared, never derived
+- **WHEN** the bundle carries `steps` but no `collect`
+- **THEN** compilation SHALL fail with `UP2-E1005`, because the collected step is declared, never derived
 
 #### Scenario: A bundle carries a chains table
 
 - **WHEN** a bundle carries `chains` beside `steps`
 - **THEN** compilation SHALL fail with `UP2-E1005`: a parse rule is a step, and the bundle has no
   second namespace for one
+
+#### Scenario: A step still writes the old keys
+
+- **WHEN** a step carries `parse` or `with`, or the bundle carries `exit`
+- **THEN** compilation SHALL fail with `UP2-E1005`, naming the unknown key
 
 #### Scenario: A declared type is unknown
 
@@ -202,7 +233,7 @@ step boundary: a built-in name or a host registration is built from the product,
 ### Requirement: Step names are unique, unreserved and resolvable
 
 Every step SHALL declare a non-empty `name` that is unique within the bundle and is not one of the
-reserved reference roots (`globals` / `locals` / `fields` / `in`). Every `next` and `exit` value SHALL
+reserved reference roots (`globals` / `locals` / `in`). Every `entry`, `next` and `collect` value SHALL
 name a step of the same bundle, and the check SHALL happen at compile time.
 
 #### Scenario: Two steps share a name
@@ -217,14 +248,15 @@ name a step of the same bundle, and the check SHALL happen at compile time.
 
 #### Scenario: An exit names a step that does not exist
 
-- **WHEN** `exit` names a step the bundle does not declare
+- **WHEN** `collect` names a step the bundle does not declare
 - **THEN** compilation SHALL fail with `UP2-E1016`, listing the declared step names
 
 ### Requirement: A request step names the step that receives the responses
 
 A step whose `type` is `Request` or `RequestBatch` SHALL declare `next`, naming the step that receives
 the responses; `next` on any other step SHALL be rejected at compile time. A single task item MAY carry
-its own `next`, which overrides the step-level default for that task's answer. The kernel SHALL resolve
+its own `next` — **a string naming a step, or a chain that computes one** — which overrides the
+step-level default for that task's answer. The kernel SHALL resolve
 `next` and SHALL NOT hand it to the host: the task a suspension reports SHALL NOT carry a `next` key.
 
 #### Scenario: A request step without next
@@ -242,6 +274,12 @@ its own `next`, which overrides the step-level default for that task's answer. T
 - **WHEN** a `RequestBatch` step declares `next: "page"` and one of its task items carries
   `next: "feed"`
 - **THEN** that task's answer SHALL be delivered to the step named `feed` and the others' to `page`
+
+#### Scenario: A task computes its next with a chain
+
+- **WHEN** a `RequestBatch` step declares `next: "left"` and one of its task items carries
+  `next: [["py","getitem","parser"]]`
+- **THEN** that task's answer SHALL be delivered to the step the chain produced, and the others' to `left`
 
 #### Scenario: The host never sees next
 
@@ -279,10 +317,10 @@ resume inside the same fan-out.
 
 ### Requirement: The run's output is the exit step's products
 
-The run SHALL be done when execution passes the last step, and its product SHALL be the products of
-the step named by `exit`, collected in order as a list. A step whose chain product is a missing value
-SHALL be skipped, so the list SHALL hold the products that exist and nothing else: no `null` is invented
-for a step that produced nothing. A run whose exit step never executed SHALL be done with an empty list.
+The run SHALL be done when execution passes the last step, and its product SHALL be the products of the
+step `collect` names, collected in order as a list. Every executed step SHALL either contribute its
+product or fail the run: there SHALL be no "skipped step", and no `null` is invented for a step that
+produced nothing. A run whose exit step never executed SHALL be done with an empty list.
 
 #### Scenario: A per-answer exit step
 
@@ -291,13 +329,14 @@ for a step that produced nothing. A run whose exit step never executed SHALL be 
 
 #### Scenario: An exit step that never runs
 
-- **WHEN** execution ends without reaching the step named by `exit`
+- **WHEN** execution ends without reaching the step named by `collect`
 - **THEN** the run SHALL be done with an empty list
 
 #### Scenario: An exit step that produced nothing
 
-- **WHEN** the exit step runs but its chain product is a missing value
-- **THEN** the run's product SHALL be an empty list, and that step SHALL NOT contribute a `null`
+- **WHEN** the exit step runs and its field chains each matched nothing
+- **THEN** the run's product SHALL hold that step's product (its fields carrying the empty values), and
+  SHALL NOT hold a `null`
 
 ### Requirement: `$in` names the current step's own input
 
@@ -308,7 +347,7 @@ chain's input SHALL be the step's input.
 
 #### Scenario: A seed step reads its own input
 
-- **WHEN** a step's chain is `[["py","id",""]]` and its input is the seed URL
+- **WHEN** a step's chain is the whole-chain reference `"$in"` and its input is the seed URL
 - **THEN** the product SHALL be that URL unchanged
 
 #### Scenario: An answer's final URL is the base of a relative link
@@ -322,51 +361,110 @@ chain's input SHALL be the step's input.
 - **WHEN** a step is named `in`
 - **THEN** compilation SHALL fail with `UP2-E1009`
 
-### Requirement: `py.id` returns its input unchanged
+### Requirement: A chain may be a whole-chain reference
 
-The `py` operator SHALL provide an `id` action taking no arguments, whose product is the value it
-received, unchanged and unconverted. It SHALL replace the `["py","str",""]` spelling for a step whose
-value *is* its own input.
+Wherever a chain is expected — the value of a field-map entry, or a step's `body` when it is written as
+an array — a **string beginning with `$`** SHALL be accepted and SHALL mean "the value the reference
+names, unchanged and unconverted". It SHALL be the same reference spelling a parameter uses (`$globals`
+/ `$locals` / `$in` / a step name, with a dotted path), resolved through the same path walk and the same
+scope, and it SHALL be the **only** way to express identity: no single-element stage form SHALL be added.
 
-#### Scenario: The identity on a string
+Inside an `each` field map the chain's **input value** is the current element, so the first stage of such a
+chain consumes that element; `$in` keeps naming the **step's** input (`02` §5). The reference SHALL be
+validated at compile time by the same rules a parameter's reference uses: an unknown root or a step's own
+name is `UP2-E1006`, and a `_`-prefixed key of another step is `UP2-E1014`.
 
-- **WHEN** the chain is `[["py","id",""]]` and the value is `https://example.com/list.html`
-- **THEN** the product SHALL be that same string
+#### Scenario: A field-map entry that is the step's input
 
-#### Scenario: The identity does not convert
+- **WHEN** a step's field map is `{"url": "$in"}` and its input is the string
+  `https://example.com/list.html`
+- **THEN** the field SHALL hold that string, unchanged, with no stage evaluated for it
 
-- **WHEN** the chain is `[["py","id",""]]` and the value is a host object
+#### Scenario: A step's body that is a whole-chain reference
+
+- **WHEN** a step's `body` is the string `"$in"` and the run's input is the seed URL
+- **THEN** the step's product SHALL be that URL
+
+#### Scenario: A reference's value is not converted
+
+- **WHEN** a chain is the reference `"$in"` and the input is a host object
 - **THEN** the product SHALL be that same object
+
+#### Scenario: A reference inside an each field map
+
+- **WHEN** the chain is `[["each", {"whole": "$in", "elem": [["py","upper",""]]}]]`, the value is
+  `["a", "b"]` and the step's input is `{"seed": "s"}`
+- **THEN** the result SHALL be `[{"whole": {"seed": "s"}, "elem": "A"}, {"whole": {"seed": "s"}, "elem": "B"}]`,
+  because the element is the stage's input value while `$in` still names the step's input (`02` §5)
+
+#### Scenario: A chain that opens with a reference
+
+- **WHEN** a chain is `["$globals.base", ["py","strip",""]]` and `globals.base` is `"  a  "`
+- **THEN** the reference SHALL be read first and the stages after it evaluated in order
+
+#### Scenario: A reference root that does not exist
+
+- **WHEN** a chain is the string `"$nope"` and no step or reserved root carries that name
+- **THEN** compilation SHALL fail with `UP2-E1006`, listing the accepted roots
+
+#### Scenario: A step references its own name through a chain reference
+
+- **WHEN** the field map of the step named `rows` is `{"url": "$rows.url"}`
+- **THEN** compilation SHALL fail with `UP2-E1006`
+
+### Requirement: A step unreachable from the entry is rejected
+
+The compiler SHALL draw the story's flow graph over its steps from the step `entry` names, with one edge
+per step (the step at the next array position, or the step a request step's `next` names), and every step
+the walk cannot reach SHALL be rejected at compile time with `UP2-E1018`, whose diagnostic SHALL name the
+unreachable step and point at it.
+
+#### Scenario: A step nothing reaches
+
+- **WHEN** the steps are `start` (a `Request` step whose `next` is `done`) and `done`, and a third step
+  `orphan` is declared after them with nothing jumping to it
+- **THEN** compilation SHALL fail with `UP2-E1018`, naming `orphan`
+
+#### Scenario: The entry is not the first step of the array
+
+- **WHEN** the steps are `[dead, start]` and `entry` is `start`
+- **THEN** compilation SHALL fail with `UP2-E1018`, naming `dead`
+
+#### Scenario: Every step is reachable
+
+- **WHEN** every step is entered by the fall-through edge or by a `next` from a reachable step
+- **THEN** the story SHALL compile
 
 ### Requirement: The run loop suspends on an effect and resumes the same run
 
 `start(bundle, value)` SHALL compile the bundle and run it to the first suspension or to completion.
-`run.next()` SHALL return the current effect as one of `("request", request, next_step)`,
-`("batch", tasks, default_next)`, `("call", name, with)` or `("done", product)`. `run.send(answer)`
+`run.go()` SHALL return the current effect as one of `("request", request, next_step)`,
+`("batch", tasks, default_next)`, `("call", name, args)` or `("done", product)`. `run.feed(answer)`
 SHALL resume the suspended run with the answer and return the next effect or `done`. A suspension
 SHALL NOT end the run: the same run continues, so the kernel still performs no IO.
 
 #### Scenario: A run suspends on a request and then finishes
 
 - **WHEN** a bundle's first step produces `Request` and the host answers it
-- **THEN** `run.next()` SHALL report `("request", …)` before the answer, and after `send` the run SHALL
+- **THEN** `run.go()` SHALL report `("request", …)` before the answer, and after `feed` the run SHALL
   continue at the receiving step
 
 #### Scenario: A call suspends and resumes with the receipt
 
 - **WHEN** a step calls `host.store_records` with `{"table": "records"}`
-- **THEN** `run.next()` SHALL report `("call", "host.store_records", {"table": "records"})`, and a
-  `send(receipt)` SHALL make the receipt that step's product
+- **THEN** `run.go()` SHALL report `("call", "host.store_records", {"table": "records"})`, and a
+  `feed(receipt)` SHALL make the receipt that step's product
 
 #### Scenario: A finished run stays finished
 
-- **WHEN** `run.next()` has reported `done`
-- **THEN** a later `run.next()` SHALL report the same `done` result
+- **WHEN** `run.go()` has reported `done`
+- **THEN** a later `run.go()` SHALL report the same `done` result
 
 ### Requirement: The CLI accepts a story file
 
 `up2 lint` and `up2 trial` SHALL accept a story file — a JSON object carrying `steps` — in addition to a
-field-chain file. `lint` SHALL compile the story and report the step count. `trial` SHALL run the story
+field-chain file. `lint` SHALL compile the story and report the step count, the step `entry` names and the
+step `collect` names. `trial` SHALL run the story
 to its first effect: a finished run SHALL print the product, and a suspension SHALL print the effect as
 a suspended run, because the CLI has no host to answer it. A story file SHALL reject `--global` and
 `--product`: the story carries its own `globals` and its own step names.
@@ -374,7 +472,7 @@ a suspended run, because the CLI has no host to answer it. A story file SHALL re
 #### Scenario: Linting a story
 
 - **WHEN** `up2 lint samples/books.toscrape.com/books/site.json` runs on a valid story
-- **THEN** it SHALL exit 0 and report the number of steps
+- **THEN** it SHALL exit 0 and report the number of steps, its entry and its collected step
 
 #### Scenario: Trialing a story with a request
 
@@ -388,13 +486,13 @@ a suspended run, because the CLI has no host to answer it. A story file SHALL re
 
 ### Requirement: A story's flow is acyclic
 
-The compiler SHALL draw the story's flow graph over its steps, from the first step, with **one edge per
-step**: the step at the next array position, or — for a step whose `type` is `Request` / `RequestBatch`,
-which SHALL declare `next` — the step `next` names. A step the walk enters twice SHALL be rejected at
-compile time with `UP2-E1017`.
+The compiler SHALL draw the story's flow graph over its steps, from the step `entry` names, with **one
+edge per step**: the step at the next array position, or — for a step whose `type` is `Request` /
+`RequestBatch`, which SHALL declare `next` — the step `next` names. A step the walk enters twice SHALL be
+rejected at compile time with `UP2-E1017`.
 
 `next` SHALL remain free to name any step of the bundle, including one written earlier in the array: a
-backward `next` whose target cannot reach the jumping step again SHALL compile and run. `exit` SHALL NOT
+backward `next` whose target cannot reach the jumping step again SHALL compile and run. `collect` SHALL NOT
 be an edge of the flow graph, and `MAX_STORY_STEPS` SHALL bound the graph, not the number of steps a run
 may take.
 
@@ -426,3 +524,90 @@ may take.
 
 - **WHEN** a `next` or an `exit` names a step the bundle does not declare
 - **THEN** compilation SHALL still fail with `UP2-E1016`, not with the flow check
+
+### Requirement: A run carries a `public` scope, shared by every node
+
+A run SHALL expose a third scope, `public`, beside `globals` and `locals`: it is **writable** and
+**readable from any node of the run**, and it lives exactly as long as the run. It SHALL NOT be part
+of the chain data, so it never enters the fingerprint: a run's `public` values are runtime notes, not
+a property of the chain.
+
+The reference root `public` SHALL be reserved, and `$public.<path>` SHALL read it. A write through
+`ctx.set` SHALL accept a `public.` path; a write to `globals`, to a step's product or to any other
+root SHALL still be refused.
+
+`globals` SHALL stay read-only and `locals` SHALL stay private to the scope that wrote it, so the
+three scopes read as constants / shared / private.
+
+#### Scenario: A node writes and the next node reads
+
+- **WHEN** a step's field map writes `["ctx","set","public.page"]` and a later step reads
+  `$public.page`
+- **THEN** the later step SHALL read the written value
+
+#### Scenario: `public` is not chain data
+
+- **WHEN** a run writes `public.page` and the chain is fingerprinted
+- **THEN** the fingerprint SHALL be the same as it was before the write
+
+#### Scenario: A write outside the writable roots is refused
+
+- **WHEN** a step writes `["ctx","set","globals.page"]` or `["ctx","set","in.page"]`
+- **THEN** compilation SHALL fail with `UP2-E1015`, naming the writable roots
+
+#### Scenario: `public` may be collected like any scope
+
+- **WHEN** the chain is `[["ctx","dict",{"p":"public.page"}]]`
+- **THEN** the outcome SHALL be `Ok({"p": <the value of public.page>})`
+
+### Requirement: A `try` directive guards the next stage only
+
+A chain MAY carry a `try` stage whose parameter is one policy: `raise`, `skip` or `break`. It SHALL
+guard **the stage immediately after it** and nothing else.
+
+- `raise` SHALL be the default behaviour of a failing stage: the chain stops and the run fails.
+- `skip` SHALL keep the value the chain already carried into the failing stage and continue with the
+  next stage.
+- `break` SHALL end the chain at that point and answer with the value the chain carried into the
+  failing stage.
+
+A guarded stage that **succeeds** SHALL disarm the guard, so a `try` never affects a later failure.
+Two `try` stages in a row SHALL be a compile error, and a `try` as the last stage of a chain SHALL be a
+compile error, because it would guard nothing.
+
+The policies are **control, not degradation**: `skip` and `break` keep a value the chain already had;
+neither of them SHALL turn an exception into a value.
+
+#### Scenario: A guarded failure is skipped
+
+- **WHEN** the chain is `[["const", "keep"], ["try", "skip"], ["py", "int", ""]]` and the input is
+  `"not-a-number"`
+- **THEN** the outcome SHALL be `Ok("keep")`
+
+#### Scenario: A guarded failure breaks the chain
+
+- **WHEN** the chain is `[["const", "keep"], ["try", "break"], ["py", "int", ""]]` and the input is
+  `"not-a-number"`
+- **THEN** the outcome SHALL be `Ok("keep")`, and the stages after the guarded one SHALL NOT be
+  evaluated
+
+#### Scenario: A guarded success disarms the guard
+
+- **WHEN** the chain is `[["const", ""], ["try", "skip"], ["py", "strip", ""], ["py", "int", ""]]` and
+  the input is `"not-a-number"`
+- **THEN** the chain SHALL fail at the `py.int` stage — the guard covered only the stage next to it
+
+#### Scenario: An unguarded failure fails the run
+
+- **WHEN** the chain is `[["const", "keep"], ["py", "int", ""]]` and the input is `"not-a-number"`
+- **THEN** the run SHALL fail with `UP2-E2005`
+
+#### Scenario: Two guards in a row are a compile error
+
+- **WHEN** the chain is `[["try", "skip"], ["try", "skip"], ["py", "strip", ""]]`
+- **THEN** compilation SHALL fail with `UP2-E1005`, naming the rule
+
+#### Scenario: A guard at the end of a chain is a compile error
+
+- **WHEN** the chain is `[["py", "strip", ""], ["try", "skip"]]`
+- **THEN** compilation SHALL fail with `UP2-E1005`, naming the rule

@@ -94,8 +94,6 @@ def test_report_exposes_action_params_and_dependencies() -> None:
     actions = {action.name: action for action in report["py"].actions}
     assert [param.name for param in actions["replace"].params] == ["old", "new"]
     assert actions["strip"].params == ()
-    assert actions["default"].accepts_missing is True
-    assert actions["strip"].accepts_missing is False
 
 
 def test_report_dicts_is_json_shaped() -> None:

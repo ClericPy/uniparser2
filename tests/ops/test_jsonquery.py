@@ -2,7 +2,7 @@
 
 jmespath is an optional dependency, so there are two layers of coverage:
 1. **Stand-in** (runs by default): verifies this operator's glue logic — whether the input is JSON
-   text or an already-parsed value, no match ⇒ ``Missing``, an invalid expression ⇒ compile-time
+   text or an already-parsed value, no match ⇒ ``None``, an invalid expression ⇒ compile-time
    ``E1005``, a query-time exception ⇒ ``E2005``;
 2. **Real jmespath** (runs only when installed): verifies the wiring against the real library.
 """
@@ -15,7 +15,6 @@ import pytest
 
 from uniparser2 import (
     Failed,
-    Missing,
     Ok,
     Outcome,
     Scope,
@@ -105,8 +104,8 @@ def test_projection_returns_list(fake_jmespath: None) -> None:
     assert run([["json", "items[*].url"]], data) == Ok(["u1", "u2"])
 
 
-def test_no_match_is_missing(fake_jmespath: None) -> None:
-    assert isinstance(run([["json", "nope"]], {"a": 1}), Missing)
+def test_no_match_yields_none(fake_jmespath: None) -> None:
+    assert run([["json", "nope"]], {"a": 1}) == Ok(None)
 
 
 def test_invalid_expression_is_schema_error(fake_jmespath: None) -> None:
@@ -123,11 +122,11 @@ def test_bad_json_text_is_e2005(fake_jmespath: None) -> None:
 
 
 def test_non_json_input_is_type_failure(fake_jmespath: None) -> None:
-    """``12`` is a legal JSON value, so a plain no-match is only ``Missing``.
+    """``12`` is a legal JSON value, so a plain no-match is ``None``.
 
     A non-JSON value (a set, say) is the one that reports ``UP2-E2002``.
     """
-    assert isinstance(run([["json", "a"]], 12), Missing)
+    assert run([["json", "a"]], 12) == Ok(None)
     outcome = run([["json", "a"]], {"a": {1, 2}})
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2002"
@@ -158,23 +157,24 @@ def test_real_jmespath_when_installed() -> None:
     pytest.importorskip("jmespath")
     text = '{"data": {"list": [{"url": "u1"}, {"url": "u2"}]}}'
     assert run([["json", "data.list[*].url"]], text) == Ok(["u1", "u2"])
-    assert isinstance(run([["json", "data.nope"]], text), Missing)
+    assert run([["json", "data.nope"]], text) == Ok(None)
 
 
 def test_json_text_is_materialized_once_per_run(fake_jmespath: None) -> None:
     """Two fields over one JSON text are one parse, not two (``03`` §6)."""
     text = '{"data": {"html": "<p>x</p>", "url": "u"}}'
     bundle = {
+        "entry": "record",
         "steps": [
             {
                 "name": "record",
-                "parse": {"html": [["json", "data.html"]], "url": [["json", "data.url"]]},
+                "body": {"html": [["json", "data.html"]], "url": [["json", "data.url"]]},
             }
         ],
-        "exit": "record",
+        "collect": "record",
     }
     run = start(bundle, text)
-    assert run.next() == ("done", [{"html": "<p>x</p>", "url": "u"}])
+    assert run.go() == ("done", [{"html": "<p>x</p>", "url": "u"}])
     cache = run.scope.materializer
     assert len(cache) == 1
     assert cache.bytes > len(text.encode("utf-8"))

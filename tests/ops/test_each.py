@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Missing, Ok, Outcome, Up2Error, compile_field, eval_field
+from uniparser2 import Failed, Ok, Outcome, Up2Error, compile_field, eval_field
 
 
 def run(chain: Any, value: Any) -> Outcome:
@@ -52,10 +52,11 @@ def test_a_non_list_input_is_a_type_error() -> None:
 
 
 @pytest.mark.covers("each", "each")
-def test_a_missing_input_short_circuits_the_stage() -> None:
-    """``each`` does not accept a missing value: the shared stage rule applies."""
+def test_an_unreadable_source_fails_before_each_runs() -> None:
+    """A path that cannot be read is a failure (`UP2-E2001`), so `each` never sees it."""
     outcome = run([["ctx", "get", "locals.nope"], ["each", {"n": [["py", "len", ""]]}]], ["a"])
-    assert isinstance(outcome, Missing)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
 
 
 @pytest.mark.covers("each", "each")
@@ -121,20 +122,21 @@ def test_an_element_reads_a_value_from_the_calling_scope() -> None:
 def test_an_element_local_does_not_outlive_the_element() -> None:
     chain = [["each", {"_t": [["py", "strip", ""]]}], ["ctx", "get", "locals._t"]]
     outcome = run(chain, ["a"])
-    assert isinstance(outcome, Missing)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
 
 
 @pytest.mark.covers("each", "each")
-def test_an_element_is_kept_even_when_every_field_is_absent() -> None:
-    chain = [["each", {"n": [["ctx", "get", "locals.nope"]]}]]
-    assert run(chain, ["a", "b"]) == Ok([{}, {}])
+def test_an_element_is_kept_even_when_every_field_is_empty() -> None:
+    chain = [["each", {"n": [["re", "search", "zzz"]]}]]
+    assert run(chain, ["a", "b"]) == Ok([{"n": ""}, {"n": ""}])
 
 
 @pytest.mark.covers("each", "each")
-def test_a_missing_field_is_absent_from_the_element() -> None:
-    """Missing means "not there": the key is absent, never `""` and never `null`."""
-    chain = [["each", {"gone": [["ctx", "get", "locals.nope"]], "n": [["py", "len", ""]]}]]
-    assert run(chain, ["ab"]) == Ok([{"n": 2}])
+def test_a_field_that_matched_nothing_carries_the_empty_value() -> None:
+    """A no-match is a value: the key is present, carrying the shape's empty value."""
+    chain = [["each", {"gone": [["re", "search", "zzz"]], "n": [["py", "len", ""]]}]]
+    assert run(chain, ["ab"]) == Ok([{"gone": "", "n": 2}])
 
 
 @pytest.mark.covers("each", "each")
@@ -258,7 +260,10 @@ def test_a_missing_key_does_not_fall_through_to_an_outer_name() -> None:
             },
         ]
     ]
-    assert run(chain, [["x"]]) == Ok([{"kids": [{}]}])
+    outcome = run(chain, [["x"]])
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
+    assert "_a" in outcome.reason
 
 
 @pytest.mark.covers("each", "each")

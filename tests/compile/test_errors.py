@@ -131,7 +131,6 @@ def test_e1007_ref_kind_rejects_literal(monkeypatch: pytest.MonkeyPatch) -> None
         original.summary,
         (ParamSpec("base", Kind.REF),),
         original.requires,
-        original.accepts_missing,
     )
     monkeypatch.setattr(py_op, "actions", {**py_op.actions, "urljoin": patched})
     assert compile_error([["py", "urljoin", "/a/"]]) == "UP2-E1007"

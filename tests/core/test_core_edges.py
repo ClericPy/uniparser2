@@ -15,7 +15,6 @@ import pytest
 
 from uniparser2 import (
     Failed,
-    Missing,
     Ok,
     Outcome,
     Ref,
@@ -33,12 +32,6 @@ from uniparser2.core.refs import parse_path_text, parse_ref
 from uniparser2.core.registry import ActionSpec, Call, Op
 
 # ---------------------------------------------------------------- values diagnostics
-
-
-def test_missing_sentinel_has_readable_repr() -> None:
-    assert repr(values.MISSING) == "<MISSING>"
-    assert values.preview(values.MISSING) == "<MISSING>"
-    assert values.type_name(values.MISSING) == "missing"
 
 
 def test_opaque_is_reported_as_opaque() -> None:
@@ -139,7 +132,6 @@ def test_ref_kind_success_path(monkeypatch: pytest.MonkeyPatch) -> None:
         original.summary,
         (ParamSpec("base", Kind.REF),),
         original.requires,
-        original.accepts_missing,
     )
     monkeypatch.setattr(py_op, "actions", {**py_op.actions, "urljoin": patched})
     compiled = compile_field([["py", "urljoin", "$globals.base"]], products=())
@@ -255,9 +247,10 @@ def test_the_scope_view_merges_the_chain() -> None:
 # ---------------------------------------------------------------- evaluator outcomes
 
 
-def test_missing_short_circuits_non_accepting_next_step() -> None:
+def test_a_query_that_matched_nothing_flows_on() -> None:
+    """A no-match is a value, so the chain continues with it."""
     chain = [["re", "search", r"\d+"], ["py", "strip", ""]]
-    assert isinstance(eval_field(compile_field(chain), "abc"), Missing)
+    assert eval_field(compile_field(chain), "abc") == Ok("")
 
 
 def test_failed_short_circuits_the_rest_of_the_chain() -> None:

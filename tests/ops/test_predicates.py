@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Missing, Ok, Up2Error, compile_field, eval_field
+from uniparser2 import Failed, Ok, Up2Error, compile_field, eval_field
 
 HTML = '<ul class="list"><li>x</li></ul>'
 
@@ -215,10 +215,12 @@ def test_negation_is_not_equal_against_a_boolean() -> None:
 
 
 @pytest.mark.covers("py", "or")
-def test_a_missing_candidate_short_circuits_before_or_runs() -> None:
-    """`or` falls back for present-but-empty candidates, not for absent ones."""
+def test_an_unreadable_candidate_fails_before_or_runs() -> None:
+    """`or` falls back for present-but-empty candidates, not for a path that cannot be read."""
     absent = [["py", "or", ["$locals._a", "fallback"]]]
-    assert isinstance(run(absent, "in"), Missing)
+    outcome = run(absent, "in")
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
     present = [["const", ""], ["ctx", "set", "locals._a"], *absent]
     assert run(present, "in") == Ok("fallback")
 
@@ -240,14 +242,13 @@ def test_css1_exists_on_a_matching_structure() -> None:
 
 @pytest.mark.covers("css", "exists")
 def test_css_exists_is_false_when_nothing_matches() -> None:
-    """The whole reason `exists` exists: `nodes` would report a missing value here."""
+    """`exists` answers a boolean, so no predicate has to reason about an empty value."""
     pytest.importorskip("selectolax")
     assert run([["css", "exists", ".nope"]], HTML) == Ok(False)
 
 
 @pytest.mark.covers("css", "exists")
-def test_nodes_still_reports_a_missing_value() -> None:
-    """`exists` is a new action, not a change to `nodes`."""
+def test_nodes_yields_an_empty_list() -> None:
+    """`exists` is a boolean view of the same fact; `nodes` answers the shape's empty value."""
     pytest.importorskip("selectolax")
-    outcome = run([["css", "nodes", ".nope"]], HTML)
-    assert isinstance(outcome, Missing)
+    assert run([["css", "nodes", ".nope"]], HTML) == Ok([])

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Missing, Ok, Outcome, Up2Error, compile_field, eval_field
+from uniparser2 import Failed, Ok, Outcome, Up2Error, compile_field, eval_field
 
 
 def run(chain: Any, value: Any) -> Outcome:
@@ -21,9 +21,9 @@ def compile_error(chain: Any) -> str:
 
 
 @pytest.mark.covers("re", "search")
-def test_match_returns_group_zero_or_missing() -> None:
+def test_match_returns_group_zero_or_empty() -> None:
     assert run([["re", "search", r"\d+"]], "a12b") == Ok("12")
-    assert isinstance(run([["re", "search", r"\d+"]], "abc"), Missing)
+    assert run([["re", "search", r"\d+"]], "abc") == Ok("")
 
 
 @pytest.mark.covers("re", "group")
@@ -33,14 +33,14 @@ def test_group_by_index_and_by_name() -> None:
 
 
 @pytest.mark.covers("re", "group")
-def test_group_unmatched_is_missing() -> None:
-    assert isinstance(run([["re", "group", {"pattern": r"(\d+)", "group": 1}]], "abc"), Missing)
+def test_group_unmatched_yields_empty() -> None:
+    assert run([["re", "group", {"pattern": r"(\d+)", "group": 1}]], "abc") == Ok("")
 
 
 @pytest.mark.covers("re", "findall")
 def test_all_returns_findall_results() -> None:
     assert run([["re", "findall", r"\d+"]], "a1b22") == Ok(["1", "22"])
-    assert isinstance(run([["re", "findall", r"\d+"]], "abc"), Missing)
+    assert run([["re", "findall", r"\d+"]], "abc") == Ok([])
 
 
 def test_non_text_input_is_type_failure() -> None:

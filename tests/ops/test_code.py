@@ -19,7 +19,7 @@ import pytest
 
 import uniparser2 as up2
 from uniparser2.core import registry
-from uniparser2.core.errors import Failed, Missing, Ok, Outcome
+from uniparser2.core.errors import Failed, Ok, Outcome
 from uniparser2.core.refs import Scope
 from uniparser2.ops import code as code_op
 from uniparser2.ops.htmldom import DomNode
@@ -338,16 +338,14 @@ def test_return_value_is_last_expression(sandbox: Any) -> None:
     assert _run(_code("print('hi')")) == Ok(None)
 
 
-def test_a_missing_upstream_short_circuits(sandbox: Any) -> None:
-    """``code`` does not declare accepts_missing, so an upstream Missing short-circuits.
-
-    The outcome stays ``Missing``: nothing settles it into a value.
-    """
+def test_an_unreadable_upstream_stops_the_chain(sandbox: Any) -> None:
+    """A path that cannot be read fails the stage before ``code`` runs (`UP2-E2001`)."""
     outcome = up2.eval_field(
         up2.compile_field([["ctx", "get", "locals.nope"], ["code", {"src": "1"}]]),
         None,
     )
-    assert isinstance(outcome, Missing)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
 
 
 # ------------------------------------------------ 6. policy API

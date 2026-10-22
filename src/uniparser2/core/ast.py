@@ -107,14 +107,20 @@ class CompiledField:
     ``name`` is the field-map key this chain was compiled as, or ``""`` for a top-level chain. It is
     what the trace reports as ``field`` (`06` §5.1), so a missing ``title`` inside an ``each`` field
     map is distinguishable from a missing ``price`` inside the same map.
+
+    ``stages`` is empty exactly when the chain was written as a **whole-chain reference**: a string
+    beginning with ``$`` means "the value the reference names, unchanged" (`03` §2), so it carries
+    no stage at all. That is the only way to express identity -- no one-element stage form exists.
     """
 
     stages: tuple[CompiledStage, ...]
     source: tuple[Stage, ...]
     name: str = ""
+    ref: Ref | None = None
+    """Set when the chain **is** one reference: it carries no stage and resolves to that value."""
 
     def dumps(self) -> str:
-        return dumps(self.source)
+        return _dumps_lists(_as_lists(self.source))
 
 
 def parse_stage(raw: Any, /, *, pointer: str = "") -> Stage:
@@ -159,7 +165,12 @@ def dumps(stages: Any) -> str:
 
     ``dumps(loads(dumps(x))) == dumps(x)`` holds character by character.
     """
-    return json.dumps(_as_lists(stages), separators=(",", ":"), ensure_ascii=False)
+    return _dumps_lists(_as_lists(stages))
+
+
+def _dumps_lists(stages: list[list[Any]]) -> str:
+    """The one JSON writing of an already-converted stage list."""
+    return json.dumps(stages, separators=(",", ":"), ensure_ascii=False)
 
 
 def loads(source: Any, *, pointer: str = "") -> tuple[Stage, ...]:
@@ -176,11 +187,19 @@ def loads(source: Any, *, pointer: str = "") -> tuple[Stage, ...]:
 
 def _as_lists(stages: Any) -> list[list[Any]]:
     if isinstance(stages, CompiledField):
-        return [stage.to_list() for stage in stages.source]
+        return [_stage_list(stage) for stage in stages.source]
     out: list[list[Any]] = []
     for item in stages:
-        out.append(item.to_list() if isinstance(item, Stage) else list(item))
+        out.append(_stage_list(item) if isinstance(item, Stage) else list(item))
     return out
+
+
+def _stage_list(stage: Stage) -> list[Any]:
+    """One stage of a compiled source; a whole-chain reference writes back as its own text."""
+    if stage.op != REF_OPERATOR:
+        return stage.to_list()
+    slot = stage.slot1
+    return [REF_OPERATOR, slot.raw if isinstance(slot, Ref) else str(slot)]
 
 
 def _split_stages(source: Any, *, pointer: str = "") -> list[Any]:

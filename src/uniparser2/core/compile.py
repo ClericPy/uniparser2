@@ -52,8 +52,18 @@ def compile_field(
     depth: int = 0,
     pointer: str = "",
     name: str = "",
+    index_key: bool = False,
 ) -> CompiledField:
-    """Compile a stage array / field chain / JSON string / compiled field into ``CompiledField``.
+    """Compile a stage array / field chain / reference / JSON string into ``CompiledField``.
+
+    A string beginning with ``$`` is a **whole-chain reference** (`03` §2): the field is the value
+    that reference names, unchanged. It is the only way to express identity -- no single-element
+    stage form exists -- and it resolves through the same reference checks a parameter's reference
+    does, so an unknown root and a self-reference fail here.
+
+    ``index_key`` marks a field-map field whose name is a **routing key** (``next``): a plain string
+    there is the routing value itself (`03` §4.1.1), the same way a step-level ``next`` is a string,
+    instead of a JSON document to parse.
 
     ``depth`` counts the enclosing ``each`` field maps, ``pointer`` is the JSON Pointer prefix this
     chain sits at inside the chain being compiled, and ``name`` is the field-map key it is compiled
@@ -681,6 +691,11 @@ def _directive_params(
 
 
 def _check_refs(params: Mapping[str, Param], *, products: tuple[str, ...], pointer: str) -> None:
+    """Every reference in a parameter tree (or in a whole-chain reference) must resolve.
+
+    A chain and a parameter are checked against the same roots, because a leading `$` means the same
+    thing in both positions (`03` §2).
+    """
     for ref in _iter_refs(params):
         if ref.root in RESERVED_ROOTS:
             continue

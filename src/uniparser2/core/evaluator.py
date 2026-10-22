@@ -77,8 +77,31 @@ def eval_field(
                 outcome=current,
                 scope=active_scope,
                 ms=elapsed_ms(started_at),
+                position=index + _marker_offset(compiled),
             )
+        if armed is not None and isinstance(current, Failed):
+            if armed == "skip":
+                # Keep the value the chain already carried, and carry on with the next stage.
+                current = Ok(incoming)
+                continue
+            if armed == "break":
+                return Ok(incoming)
     return current
+
+
+def _marker_offset(compiled: CompiledField) -> int:
+    """How many whole-chain reference markers precede this chain's stages in its own source."""
+    return 1 if _opening_marker(compiled) else 0
+
+
+def _opening_marker(compiled: CompiledField) -> bool:
+    """Whether the chain opens with a whole-chain reference marker instead of an operator."""
+    return bool(compiled.source) and _is_ref_marker(compiled.source[0])
+
+
+def _is_ref_marker(stage: Any) -> bool:
+    """Whether a source stage is the marker of a whole-chain reference (`03` §2)."""
+    return isinstance(stage, Stage) and stage.op == REF_OPERATOR
 
 
 def _subchain_runner(trace: Trace | None) -> registry.ChainRunner:

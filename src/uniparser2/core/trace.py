@@ -171,14 +171,19 @@ class Trace:
         outcome: Outcome,
         scope: Scope,
         ms: float,
+        position: int | None = None,
     ) -> None:
-        """Record one evaluated stage, with the fan-out index of the scope it ran in."""
+        """Record one evaluated stage, with the fan-out index of the scope it ran in.
+
+        ``position`` is the stage's index inside the chain **source**; it is the stage's own index
+        except when the chain opens with a whole-chain reference, whose marker occupies slot 0.
+        """
         state, detail = _state_of(outcome)
         self._emit(
             step=self._step,
             item=scope.iteration if scope.iteration is not None else self._item,
             field=field,
-            stage=stage.index,
+            stage=stage.index if position is None else position,
             op=stage.op_name,
             action=stage.action,
             params=compiled_params(stage.params),
@@ -283,6 +288,27 @@ def _produced(outcome: Outcome) -> Any:
 def compiled_params(params: Mapping[str, Param]) -> JsonValue:
     """The **compiled** named parameters as chain data (`06` §5.1): what the engine understood."""
     return {str(key): _param_json(item) for key, item in params.items()}
+
+
+def _chain_json(node: CompiledField) -> JsonValue:
+    """One compiled chain: its reference, or its stages (`06` §5.1).
+
+    A chain written as a whole-chain reference has no stage (`03` §2), so it renders as the
+    reference it is -- exactly as a reference parameter does, never as an operator not there.
+    """
+    if node.ref is not None:
+        return {"kind": "chain", "ref": _param_json(node.ref)}
+    return {
+        "kind": "chain",
+        "stages": [
+            {
+                "op": stage.op_name,
+                "action": stage.action,
+                "params": compiled_params(stage.params),
+            }
+            for stage in node.stages
+        ],
+    }
 
 
 def _param_json(node: Any) -> JsonValue:

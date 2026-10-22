@@ -68,13 +68,13 @@
 
 | Blocker | Original problem | Ruling | Lands in |
 |---|---|---|---|
-| **A** | `parse` lacks the semantics of "node splitting", so the old `nodes`+`[:20]` has nowhere to live | **valid, fixed**: splitting is promoted to a first-class field `select` (including a continuation stage for truncation) | `03` §4.1, §11.1 |
+| **A** | `body` lacks the semantics of "node splitting", so the old `nodes`+`[:20]` has nowhere to live | **valid, fixed**: splitting is promoted to a first-class field `select` (including a continuation stage for truncation) | `03` §4.1, §11.1 |
 | **B** | can a chain argument position reference `$node.slot` (affects the task override) | **valid, fixed**: an argument position is judged by the kind in the operator Schema; a `ref_or_literal` position may hold a reference | `02` §3.2, `03` §11.1 |
 | **C** | a non-empty `headers` has no place in the collection story | **partially valid, re-attributed**: request headers belong to the **host**; when needed they are assembled by `emit.produces="request"`. The chain itself no longer carries download configuration | `03` §5.2, §11.1 |
 | **D** | are `channel/source/region` seed constants or products of list parsing (Q44 and §2.3 contradict each other) | **valid, decided as an either/or**: they are always produced in `fields` as `["const", …]`; `seed` only injects, and materialization is the consuming operator's job (`03` §3.1) | `03` §8.1 |
 | **E** | the name of the propagated container was undefined, so `list_title` and `region` landed in different places | **valid, dissolved**: the container concept is deleted — a field without a `_` prefix is propagated down automatically, and there is only one path | `03` §8, §8.2 |
 | **F** | a single-route story still had to write `routes` + `default_route` (boilerplate noise) | **valid, fixed**: `routes` may be omitted, and a single target goes straight to `next` | `03` §4.4 |
-| **G** | the per-item semantics of `parse` and the origin of `route` were not explicit | **valid, fixed**: the presence of `select` means per-item; `route_field` defaults to `route`; lint checks this statically | `03` §4.1, §4.4, L14 |
+| **G** | the per-item semantics of `body` and the origin of `route` were not explicit | **valid, fixed**: the presence of `select` means per-item; `route_field` defaults to `route`; lint checks this statically | `03` §4.1, §4.4, L14 |
 | **M** | the old "2 detail + `url_patterns`" has no place (and the two patterns are identical) | **valid, in two steps**: in `L1/L2` split into multiple chains and let the caller choose by URL (an explicit signal); in `L4` reconsider `variants` (a restricted-signal allowlist) | `03` §12, §11.2 |
 | **N** | `cast datetime` conflicts with `ArticleItem.pub_time: str` / the encoding contract | **valid, fixed**: `datetime` is removed from the `cast` vocabulary; time belongs to `time` (output `str`); the export type is declared by `schema` | `02` §6.6, §6.7 |
 | **O** | the terminal state `parser="none"` conflicts with the dispatch semantics of `resolve_parser_name` | **valid, dissolved**: `emit` is the chain's terminal, and "no further dispatch" is a structural fact; the `parser` field is removed along with the `doc` concept | `03` §1.1 |
@@ -85,7 +85,7 @@
 | **T** | `referer_info` is empty during collection; the two propagation paths are mutually exclusive | **valid, dissolved**: a single path (fields without a `_` prefix) | `03` §8.2 |
 | **U** | the ctx write-permission boundary and the timing of write-back were undefined | **valid, decided**: the write surface is hard-limited to `locals.*`; there is no concept of "write-back" (the export is assembled by `emit`) | `02` §6.8 |
 | **V** | the article row's `list_title` was already lost at `doc_register` | **valid, dissolved**: there is no `doc`/`doc_register`; a field is either in the chain or in `inputs` | `03` §8.3 |
-| **W** | the relation between field error policies and the two business gates was undefined | **partially valid, re-attributed**: the kernel produces only the tri-state (`02` §5); "is the trio complete" is a **host** gate, not part of the kernel | `02` §5, `03` §11.2 |
+| **W** | the relation between field error policies and the two business gates was undefined | **partially valid, re-attributed**: the kernel produces only the two outcomes (`02` §5); "is the trio complete" is a **host** gate, not part of the kernel | `02` §5, `03` §11.2 |
 
 **Summary**: of the 18, **17 are dissolved or corrected at the chain-spec level** (item **M** moved from "left to `variants` in L4" to "the host picks the story", `03` §1), and 1 (**W**) is judged a host concern and explicitly demarcated.
 
@@ -113,7 +113,7 @@
 | Deliverable | Content |
 |---|---|
 | Engineering scaffold | `pyproject.toml` (`dependencies = []`), `uv.lock`, `src` layout, dev group, ruff/mypy/pytest configuration |
-| Kernel | `values` (value domain + `Opaque` + `canonicalize`), `errors` (tri-state + error codes), `limits`, `ast`, `registry` (`@op` + `find_spec` probing), `compile` (stage Schema + action slots + argument kind validation + selector/regex pre-compilation), `evaluator` (single-stage evaluation + tri-state short-circuit), `refs` (reference parsing and evaluation), `export` (the single packing point) |
+| Kernel | `values` (value domain + `Opaque` + `canonicalize`), `errors` (the two outcomes + error codes), `limits`, `ast`, `registry` (`@op` + `find_spec` probing), `compile` (stage Schema + action slots + argument kind validation + selector/regex pre-compilation), `evaluator` (single-stage evaluation; a failure stops the chain), `refs` (reference parsing and evaluation), `export` (the single packing point) |
 | **11 operators** (the original was written before `code`; there were 10 before `each`, see "L1 acceptance item status" below) | §2.1–§2.7 of the `04` parser-syntax draft: `css` / `css1` / `json` / `re` / `py` (allowlist functions) / `udf` / time parsing, **the complete behavior of every operator**; plus `xpath` needed for XML, the `ctx` scope operator, the literal `const` and the `each` iteration operator (`time`/`cast` were later merged into `py`, see D-02-14) |
 | **The ctx operator** | `globals` read-only + `locals` writable + `get`/`set`/`del`/`map`; a write outside the surface is a compile-time error |
 | Error codes | `02` §7 (compile-time `E1xxx`) + §7.1 (runtime `E2xxx`) fully implemented in code |
@@ -137,6 +137,10 @@
 
 ### L1 progress (landed this round, measured)
 
+> **Historical snapshot**: the numbers below are what L1 measured when it landed (10 operators,
+> 59 pairs, 31 `py` functions, `--on-missing`). They are kept as the record of that round; the
+> current figures are in `docs/report/up2-report.md` (11 operators, 74 pairs, 42 `py` functions).
+
 This round started from "build the scaffold + the conformance mechanism first, and run a closed loop with a small number of operators". Completed:
 
 | Item | Status | Measured |
@@ -155,7 +159,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | # | Item | Result |
 |---|---|---|
 | 1 | `css` engine contract assertions | yes — all green on the real selectolax. Two real API facts were caught along the way: selectolax 0.4.12's `Node` **has neither `clone()` nor `outer_html`** (`node.html` is the outer HTML); inner HTML can only be assembled from the direct children of `iter(include_text=True)` |
-| 2 | real jmespath integration | yes — the `data.list[*].url` projection and "not found ⇒ `Missing`" both pass |
+| 2 | real jmespath integration | yes — the `data.list[*].url` projection and "not found ⇒ `None`" both pass |
 | 3 | real dateparser (natural language) | yes — branches such as `2026\u5e749\u670826\u65e5` pass |
 | 4 | `core/` coverage ≥ 95% | yes — **98.3%** (`compile`/`registry`/`values`/`udfs`/`conformance`/`export` are all 100%); the gate is frozen as `uv run pytest --cov=uniparser2.core --cov-fail-under=95` |
 | 5 | XML support | yes — the `xpath` operator (lxml) was added. Measurement confirmed that selectolax cannot serve as an XML parser, while lxml alone has no CSS selector (`lxml.cssselect` needs an extra `cssselect`) — XPath is a native lxml capability, so XML goes through XPath, without adding `cssselect` and without needing bs4 |
@@ -190,9 +194,9 @@ This round started from "build the scaffold + the conformance mechanism first, a
 
 | Deliverable | Content |
 |---|---|
-| Field-map orchestration | multi-field evaluation over one input, cross-field `locals` references, chain-level / step-level / field-level overrides of `on_missing` / `on_error` |
+| Field-map orchestration | multi-field evaluation over one input, cross-field `locals` references — the per-field error policies were retired (`01` `D-01-1`) and the third outcome was removed later (`empty-value-semantics`) |
 | **Lists and nesting** | `each` iteration (one dictionary per element, with the per-element scope), `$lit` escaping, arbitrarily deep nested `dict`/`list` |
-| **The story** | the step sequence (`name` / `type`, `parse` = a chain or a field map, `call` = a host function, `next` = the receiving step), the type registry and the step-boundary validation (`L8`) — the executor and the run loop (`start` / `next` / `send`) **landed** in `story-jump-and-naming`, and the registry (`register_type`, `UP2-E1011` / `UP2-E2019`) in `add-type-registry` |
+| **The story** | the step sequence (`name` / `type`, `body` = a chain, a whole-chain reference or a field map, `call` = a host function, `next` = the receiving step), the declared `entry` / `collect` endpoints with the unreachable-step lint (`UP2-E1018`), the type registry and the step-boundary validation (`L8`) — the executor and the run loop (`start` / `next` / `send`) **landed** in `story-jump-and-naming`, the registry (`register_type`, `UP2-E1011` / `UP2-E2019`) in `add-type-registry`, and the entry / chain-reference change in `entry-and-input` (`py.id` retired with it) |
 | Effects | `Request` / `RequestBatch` → the host's own answer (`03` §4.1); `call` → a receipt that is JSON; trace versus suspension |
 | materialization | the run-scoped, byte-capped cache (`03` §6) — load-bearing for acceptance item 7 (**landed** in `add-materialization-cache`) |
 | lint | every live rule of `03` §10, each with at least one test (L20 is retired with `presets`) |
@@ -201,7 +205,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 | cases | the two `ah.gov.cn` flows as **stories** (`03` §11) + samples + snapshots; a set of "pure structure" stories (multi-level nesting, a list of lists, a list turned into a dict) |
 
 > **Story supersession (design note `03` v0.2, design notes only)**: the L2 structure layer is a **story** —
-> a linear sequence of typed steps — instead of the v0.1 node graph. `seed` / `parse` / `emit`, `entry`,
+> a linear sequence of typed steps — instead of the v0.1 node graph. `seed` / `body` / `emit`, `entry`,
 > `nodes`, `next` / `routes` / `default_route`, the `emit` export shapes (`record` / `flat` / `request`),
 > the `result` template and the graph lints are all retired; `03` §12.1 records the rulings and the
 > alternatives each one rejected. Dispatch by the product's type name lives in the **host**, and a step

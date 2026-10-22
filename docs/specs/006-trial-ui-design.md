@@ -49,8 +49,8 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 │ ① Input                │ ② Chain editor                 │ ③ Output                         │
 │                        │                                │                                  │
 │ ○ Sample file          │ {                              │ ── exit product ──               │
-│ ○ Paste text           │   "globals": { … },            │ {                                │
-│ ○ Load file...         │   "steps": [ ... ]             │   "url": "https://...",          │
+│ ○ Paste text           │   "entry": "…",                │ {                                │
+│ ○ Load file...         │   "globals": { … },            │   "url": "https://...",          │
 │                        │   "steps": [ ... ]             │   "title": "..."                 │
 │ ┌───────────────────┐  │                                │ }                                │
 │ │ text/HTML preview │  │ (inline error highlight +      │                                  │
@@ -83,7 +83,7 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 | ① Input | Provides the **run's input** (the first step's input; `03` §2) | Pick from the sample directory, paste, load a file; show the auto-sniffed format (html/xml/json/text) |
 | ② Chain editor | Edit the chain JSON, lint in real time | Inline highlighting of errors; the right-hand side lists the **error code + `fix` + the enumeration of allowed values** (the same source as `04` §8) |
 | ③ Output | Shows the run's **exit product** (`03` §9) and a summary of this run | Collapsible tree of the product JSON; highlight the built-in `Request` fields; "Save as snapshot" |
-| ④ Single-step trace | Shows the evaluation step by step | Filter `Missing`/`Failed`; click any step to expand its full input and output values |
+| ④ Single-step trace | Shows the evaluation step by step | Filter `Ok`/`Failed`; click any step to expand its full input and output values |
 
 **Layout principle**: the trace fills the lower half of the screen instead of being squeezed into a popup — it is the reason this tool exists.
 
@@ -146,7 +146,7 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 
 ### 5.1 `TraceEvent`
 
-One event per **evaluated stage** (a stage the tri-state short-circuit skips records nothing), plus one
+One event per **evaluated stage** (a stage a failure stopped the chain before records nothing), plus one
 per **suspension**. A stage event:
 
 ```jsonc
@@ -180,7 +180,7 @@ A suspension event carries the same sequence and the same `input` / `output` sha
   "stage": null,
   "op": null,
   "action": null,                          // a `call` puts the host function here
-  "params": null,                          // a `call` puts its compiled `with` tree here
+  "params": null,                          // a `call` puts its compiled `args` tree here
   "input":  {"type": "str", "preview": "\"<html>…\"", "size": 190464},
   "output": {"type": "list", "preview": "[{\"url\": \"https://…\"}, …]", "size": 2410},
   "state": "Ok",
@@ -192,10 +192,10 @@ A suspension event carries the same sequence and the same `input` / `output` sha
 
 | Design point | Content |
 |---|---|
-| **Values are not sent back in full** | A large value (an HTML document, a long body) returns only `type` / `preview` (the value's display text cut to 200 characters, with the `...(+N)` marker saying how much was dropped) / `size` (the length of the whole text); expanding it calls `get_value(seq)` for the whole thing on demand — `get_value(seq, side="input")` for the other side of the row (the default is the event's output). A stage that produced no value (a `Missing`, and a `Failed` too) shows the missing sentinel, and a failure is named by `state` + `detail` |
-| **Parameters are already compiled** | `params` are the **compiled** named parameters (the named AST of `02`), so the UI shows "what the engine actually understands" rather than the chain author's original wording — **this is the only effective way to investigate "what I wrote is not what it understood"**. A leaf says what it is (`{"kind": "ref", "target": "globals.base_url"}` / `{"kind": "lit", "value": …}`), an `each` carries its compiled field map (`{"kind": "fields", …}`) and a `call` its `with` tree |
+| **Values are not sent back in full** | A large value (an HTML document, a long body) returns only `type` / `preview` (the value's display text cut to 200 characters, with the `...(+N)` marker saying how much was dropped) / `size` (the length of the whole text); expanding it calls `get_value(seq)` for the whole thing on demand — `get_value(seq, side="input")` for the other side of the row (the default is the event's output). A failed stage shows `null` as its output, and the failure is named by `state` + `detail` |
+| **Parameters are already compiled** | `params` are the **compiled** named parameters (the named AST of `02`), so the UI shows "what the engine actually understands" rather than the chain author's original wording — **this is the only effective way to investigate "what I wrote is not what it understood"**. A leaf says what it is (`{"kind": "ref", "target": "globals.base_url"}` / `{"kind": "lit", "value": …}`), an `each` carries its compiled field map (`{"kind": "fields", …}`) and a `call` its `args` tree |
 | **Fan-out is visible** | The `item` field makes a problem such as "the title of the 3rd result is missing" locatable. It has two sources, because a story fans out in two places: `each` numbers the element (its position in input order) and a `RequestBatch` numbers the answer its receiving step is running (its position in task order). When one fan-out sits inside the other the **innermost** index wins, because the event is about the field chain that is running |
-| **`Missing` has a starting point** | Within one trace it is obvious from which **stage** a field starts to be `Missing` (the acceptance of `04` §7-S3 depends on it). `field` is what keeps two fields of one map apart, so the row that ends missing names the chain it belonged to |
+| **An empty value is a stage row like any other** | A query that matched nothing records a normal `Ok` event carrying the shape's empty value (`""` / `[]` / `None`), so the row says which stage produced it. `field` is what keeps two fields of one map apart, so the row names the chain it belonged to |
 | **It is a debugging aid, not the replay format** | A trace is collected only when the caller asks for one, it lives in memory for as long as the run does, and it holds no answer. What replays a run is the host's log of the suspensions it answered (`03` §13 O6) |
 
 ---

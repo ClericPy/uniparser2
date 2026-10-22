@@ -1,6 +1,6 @@
 # Operator reference
 
-The registry declares **11 operators and 61 `(operator, action)` pairs**; all of them are listed below.
+The registry declares **11 operators and 72 `(operator, action)` pairs**; all of them are listed below.
 The READMEs carry a one-screen summary of what the engine ships; this page is the reference next to
 it: what each action means, which writing its parameter slot takes, and a set of chains whose outputs
 were produced by running them.
@@ -54,15 +54,14 @@ and a JSON Pointer. `uv run up2 lint <chain.json>` performs exactly that check.
 | `remove` | a copy of the node with the matching nodes pruned |
 | `self` | the node handle itself (for a later stage) |
 | `nodes` | the set of matching nodes |
-| `exists` | `true` / `false`: does the selector match at least one node (**never** `Missing`) |
+| `exists` | `true` / `false`: does the selector match at least one node |
 
 `css` yields **every** match (a list), `css1` only the first (a scalar) — the cardinality is explicit
 rather than a switch, because a silent truncation is worse than a longer name. An empty selector means
 "the node itself".
 
-Use `exists` rather than `nodes` when the chain only needs a decision: `["css","nodes",S]` reports
-`Missing` when nothing matches (and a missing value is not there, `01` §4.2), while `["css","exists",S]`
-answers `false`.
+Use `exists` when the chain only needs a decision: `["css","nodes",S]` answers `[]` when nothing
+matches (an empty value, `01` §4.2), while `["css","exists",S]` answers `false`.
 
 ### `xpath` — XPath on XML (engine: lxml, extra `[xml]`)
 
@@ -103,13 +102,12 @@ actions use Python's own spellings, so a chain reads like the expression it mean
 | text | `strip` · `strip_tags` · `normalize_space` · `upper` · `lower` · `replace {"old","new"}` · `split {"sep","maxsplit"?}` · `join` · `slice` · `len` |
 | collections | `first` · `last` · `flatten` · `uniq` · `sort {"key"?,"reverse"?}` · `getitem` |
 | host object | `getattr` — read an attribute of the value that flows in (a method is never called) |
-| identity | `id` — return the input unchanged (a step whose value *is* its own input) |
 | URL | `urljoin` · `urlsplit` |
 | encoding / hash | `b64_encode` · `b64_decode` · `sha256` |
 | conversion | `str` · `int` · `float` · `bool` · `list` · `from_json` |
 | predicate | `==` · `!=` · `<` · `<=` · `>` · `>=` · `in` (one parameter each; `["py","==",200]`) |
 | selection | `or` · `and` (Python's, over an **array** of already-computed operands: `["py","or",["$locals._a","fallback"]]`) |
-| fallback | `default` — the only action that can swallow `Missing`; its value may be any JSON value, a container included |
+| fallback | `default` — replaces `None` or an empty string in one field; its value may be any JSON value, a container included |
 | time (input) | `parse_time` — a time string → the canonical `%Y-%m-%d %H:%M:%S`, in the order **explicit `format`** → **built-in table** (no dependency) → **natural-language detection** (`[time]`); `lang` restricts the detection, `date_order` (`MDY`/`DMY`/`YMD`, default `DMY`) decides an ambiguous slash writing, `now` (e.g. `"$globals.now"`) pins the base clock of a relative expression |
 | time (output) | `strftime` — the canonical string → another layout (`%Y/%m/%d`), allowlisted to directives that no locale or platform decides |
 | formats | `html_to_markdown` (`[md]`) |
@@ -128,30 +126,30 @@ whether the value is one of those, and "the URL contains `/public/`" puts the el
 `[["const","/public/"],["py","in","$locals.url"]]`.
 
 `or` / `and` answer with an **operand**, not a boolean (`or` over `["", 0]` answers `0`, which is
-Python's answer), so they serve both selection and judgement. Their operands have to **exist**: a missing
-reference short-circuits the whole stage before the action runs — every operator's parameters behave that
-way — so "take A, else B" covers candidates that are present but empty, and one that may be absent is made
-present first (`[["css1","text","h1"],["py","default",""]]`). To negate a boolean, compare it:
+Python's answer), so they serve both selection and judgement. Their operands have to **exist**: a path
+that cannot be read fails the whole stage before the action runs — every operator's parameters behave that
+way — so "take A, else B" covers candidates that are present but empty, and one that may be empty is
+defaulted first (`[["css1","text","h1"],["py","default",""]]`). To negate a boolean, compare it:
 `["py","!=",true]`; there is deliberately no `not` action.
 
 `getitem` is the **only subscript action** (Python's `__getitem__`): a sequence by integer index, a
 mapping by string key, a str by character, and **no coercion** — `["py","getitem","0"]` on a list is
 `UP2-E2002`, never index `0`. A key or an index the value does not have is `UP2-E2018` (the value is
-there, the subscript is not — `KeyError: 'text' — the dict has no key 'text'`), never `Missing`. Its
+there, the subscript is not — `KeyError: 'text' — the dict has no key 'text'`), never an empty value. Its
 parameter is a literal or a reference, so `["py","getitem","$globals.key"]` reads a computed key.
 
 `getattr` is its twin for a **host object**: it reads the value's own attribute
 (`["py","getattr","status_code"]` on a response, `["py","getattr","attributes"]` on a `selectolax`
 node), which is what a value that is not JSON needs. An absent attribute is `UP2-E2002` and its `reason`
 begins with the exception's own class — `AttributeError: 'Response' object has no attribute 'txet'` — and
-an attribute that is **callable** is refused with the same code: a method is never called (a
+An attribute that is **callable** is refused with the same code: a method is never called (a
 zero-argument method such as `selectolax`'s `decompose` mutates the tree), so the `fix` names the operator
 to use instead (`["css","text",""]`) or a `udf`. A value with no attributes at all (an integer, say) is
 the same `AttributeError` failure.
 
-`id` returns its input unchanged and takes no arguments: it is the action for a step whose value **is**
-its own input (`["py","id",""]` on a seed URL), where `["py","str",""]` used to serve as the identity
-(and silently converted anything that was not a string).
+**Identity is not an action**: where a step's value **is** its own input, the chain is the reference
+`"$in"` (or `["$in", …]` to read a field of it first). `py.id` was retired with the identity stages
+(`03` §2, §12.6 E4).
 
 The parameter slot is written bare for `urljoin` / `slice` / `getitem` / `getattr` / `join` / `urlsplit` /
 `default` / `strftime` / `==` / `!=` / `<` / `<=` / `>` / `>=` / `in` / `or` / `and`, and as a named
@@ -170,13 +168,43 @@ because the format wins and the language could never take effect.
 | Action | Meaning |
 |---|---|
 | `get` | read a scope path |
-| `set` | write the upstream value into `locals` |
-| `del` | delete a path in `locals` |
-| `map` | collect several paths into a list or a dict |
+| `set` | write the upstream value into `locals` or `public` |
+| `del` | delete a path in `locals` or `public` |
+| `dict` | collect several paths into an object (`name → path`) |
+| `list` | collect several paths into a list (an array of paths) |
 
 Paths are written bare, without `$` and without a `ctx.` prefix: `["ctx", "set", "locals.year"]`.
-`globals` is read-only and `locals` is local to the current evaluation; a write outside `locals.*` is
-`UP2-E1015` at compile time.
+`globals` is read-only and `locals` is local to the current evaluation; a write outside `locals.*` or
+`public.*` is `UP2-E1015` at compile time. One polymorphic `map` used to answer two different types
+depending on its parameter's shape; the two actions now say which shape they produce
+(`ctx-dict-list-and-py-table`).
+
+### The scopes
+
+| Scope | Lifetime | Writable | What it is |
+|---|---|---|---|
+| `globals` | the chain | no | the chain's static constants (fingerprinted) |
+| `public` | the run | yes (`ctx.set`) | the run's own notes — shared by every node, never fingerprinted |
+| `locals` | the current field | yes (`ctx.set`) | the field's scratch space |
+
+`$public.x` reads the shared scope, so a value written in one node is readable in the next. It is
+**not** a writable `globals`: `globals` is covered by the fingerprint, so writing it would break
+"same chain, same result".
+
+### `try` — a guard directive, not an operator
+
+`["try","skip"]` / `["try","break"]` / `["try","raise"]` protects **the stage immediately after it**:
+
+| Policy | When the guarded stage fails |
+|---|---|
+| `raise` | the run fails (the default — the same as not writing it) |
+| `skip` | the chain keeps the value it carried into that stage and carries on |
+| `break` | the chain ends there, answering with the value it carried |
+
+A guarded stage that **succeeds** disarms the guard, so a `try` never swallows a later failure. Two
+`try` stages in a row, or a `try` at the end of a chain, are compile errors (`UP2-E1005`): a guard that
+protects nothing is a mistake. The directive never turns an exception into a value — `skip` and `break`
+keep a value the chain already had.
 
 ### `const` — a literal (standard library)
 
@@ -289,7 +317,33 @@ Each line below is a real run; the input is named in the note.
 | `uv run up2 lint chain.json` | compile-time validation, without executing |
 | `uv run up2 trial chain.json --input 'text=…' --json` | run it on local inputs; `--global`, `--product` |
 | `uv run up2 conformance --check` | the audit behind this project: every declared `(operator, action)` has a case, every implemented error code is asserted |
+| `uv run up2 snapshot chain.json --domain D --key K --case C --accept` | freeze a case's product as its expected product |
+| `uv run up2 test D K` | regress a stored chain over its samples; a story that fetches replays the **request cache** (`.cache/requests/`), and the CLI never reaches the network |
 
 `tools/demo_report.py` renders the same kind of catalogue as an HTML page for local browsing
 (`.cache/report/up2-report.html`): every declared pair, grouped by operator, with a real run per case,
 the multi-stage compositions and the compile-time invalid forms.
+
+## Fetching a page
+
+The kernel never fetches anything: a story that produces a `Request` suspends the run, and the **host**
+answers. The package offers a default for that side:
+
+```python
+from uniparser2.net import RequestCache, fetch
+
+answer = fetch({"url": "https://example.com/page", "method": "GET"})   # → Response(text=…, url=…)
+```
+
+The request is the kernel's own `Request` product: `url` (required), `method`, `headers`, `timeout`,
+`params`, and a body that is **base64 text** (`body`) or a JSON value (`json`) — a body is binary and
+the request dictionary is JSON throughout.
+
+`RequestCache` keeps the answers under `.cache/requests/` (never committed), keyed by the whole
+request, so a second run replays them instead of the network:
+
+```python
+cache = RequestCache()
+answer = cache.get(request) or fetch(request)   # a miss is a miss
+cache.put(request, answer)
+```

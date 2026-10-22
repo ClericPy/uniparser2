@@ -301,7 +301,7 @@ reserved for something else.
 |---|---|
 | `root_domain` | site identity; use `local` for practice |
 | `tpl_key` | human-readable business name; matches `^[\w\u4e00-\u9fff][\w\u4e00-\u9fff.-]{0,63}$` |
-| Product target | confirm the `type` of each step, above all the one `exit` names (a host-registered type, or a built-in one; `03` §3) |
+| Product target | confirm the `type` of each step, above all the one `collect` names (a host-registered type, or a built-in one; `03` §3), and the step `entry` names |
 | Sample input | **at least 1 real input**, placed at `samples/<root_domain>/<tpl_key>/<case>/input.txt` |
 
 **Acceptance**: `up2 ops` can list the available operators and actions (read it before drafting; do not write action names from memory).
@@ -319,9 +319,9 @@ up2 ops --json      # operators / actions / arity and slot roles / argument sche
 
 The LLM (or a person) produces the chain JSON, **using only operators and actions that appear in `ops.json`**. While drafting, these must be decided explicitly:
 
-1. what the run's input is (the **first step's input**; there is no `seed` and no input field, `03` §2) and that materialization is on demand (`03` §6);
+1. what the run's input is (the **`entry` step's input**; there is no `seed` and no input field, `03` §2) and that materialization is on demand (`03` §6);
 2. whether per-item parsing is needed (an `each` stage inside the chain that holds the list);
-3. each step's `type` (`03` §3), and the `exit` it declares;
+3. each step's `type` (`03` §3), the `entry` the run starts at and the `collect` it declares;
 4. how a value that may be absent is handled: a field whose chain ends in a miss is simply **absent** from the product (`01` §4.2), so a fallback is written at the action level (`py.default` / `py.or`), not configured for the whole run.
 
 **Acceptance**: a parsable JSON file is produced.
@@ -351,8 +351,8 @@ up2 trial chain.json --input text=@… --trace --json    # the per-stage trace (
 > without it, and the events are the trial bench's own data structure (`06` §5.1), so the CLI and
 > the UI cannot disagree. A story file is accepted too, and is run to its first effect: a suspension
 > is reported as `suspended` with the effect, because a CLI has no host to answer a request — the
-> trace then ends at the effect event that suspended it. A `Missing` outcome is still reported as
-> `{"state": "missing", "reason": …}`.
+> trace then ends at the effect event that suspended it. A query that matched nothing is an ordinary
+> `{"state": "ok"}` result carrying the shape's empty value.
 
 ### S4 · Freezing the snapshot
 
@@ -365,6 +365,11 @@ up2 snapshot chain.json --domain <domain> --key <tpl_key> --case <case> --accept
 
 > `--accept` is the **only way to write a snapshot**; `up2 trial` never writes one automatically, which avoids "recording a wrong product as the right one because it ran once". The command name in the earlier draft had no `--domain` / `--key`, and the case cannot be placed without them: the layout is keyed by the business identity (`05` §3).
 
+**A story that fetches is answered from the request cache** (`uniparser2.net`): the runner replays the
+cached answers, so a live site can be frozen and regressed **offline**. A request with no cached
+answer is a **miss** — the runner reports it and stops, because **the CLI never reaches the network**:
+a host fetches, the runner replays. The cache lives under `.cache/requests/` and is never committed.
+
 ### S5 · Regression
 
 ```bash
@@ -373,7 +378,7 @@ up2 test <domain> <tpl_key> --case <case>   # or just one
 uv run pytest tests/snapshots -q     # the in-project snapshot cases (05 §4)
 ```
 
-**Acceptance**: all green. On failure, a **structured difference** is printed (JSON Pointer + expected value + actual value), not a string diff — and `publish` refuses the same way (G2 of §6). A story that suspends cannot be regressed here: a snapshot runner has no host to answer a `Request`, and it says so instead of guessing (`03` §4.1).
+**Acceptance**: all green. On failure, a **structured difference** is printed (JSON Pointer + expected value + actual value), not a string diff — and `publish` refuses the same way (G2 of §6). A story that suspends is answered from the request cache; a `call` still needs a host, and the runner says so instead of guessing (`03` §4.2).
 
 ### S6 · Publish
 
@@ -405,8 +410,8 @@ up2 doctor [--fix]                           # chains and audit correspond? --fi
 | Step | Failure symptom | Handling |
 |---|---|---|
 | S2 | a compile error (`UP2-E1xxx`) | fix the chain per `fix`; the lint rules **must not** be changed or skipped |
-| S3 | `Failed` (`UP2-E2xxx`) | the diagnostic names the stage it failed at (its JSON Pointer) and the `fix`; usually a misspelt selector or a type mismatch; `up2 trial --trace` names the step, the field and the stage that failed and carries its `code` / `reason` as data (`06` §5.1; a `Missing` outcome is the `{"state": "missing"}` result) |
-| S3 | too many fields produce `Missing` | check whether the field chain that carries the `each` stage produced the elements you thought, and whether the selectors match the current page version; `--trace` shows the `Missing` starting point and the `item` it belongs to |
+| S3 | `Failed` (`UP2-E2xxx`) | the diagnostic names the stage it failed at (its JSON Pointer) and the `fix`; usually a type mismatch or an unreadable path; `up2 trial --trace` names the step, the field and the stage that failed and carries its `code` / `reason` as data (`06` §5.1) |
+| S3 | too many empty fields | check whether the field chain that carries the `each` stage produced the elements you thought, and whether the selectors match the current page version; a no-match is the shape's empty value, and `--trace` shows the stage that produced it and the `item` it belongs to |
 | S5 | a snapshot difference | first decide whether "the chain regressed" or "the page changed"; the latter needs updated samples, a fresh `--accept`, and a statement of that in the audit `note` |
 | S6 | `UP2-E3002` | the `tpl_key` character set is illegal |
 | S6 | `UP2-E3003` | chain and audit are inconsistent (leftovers of a file-Store crash) → `up2 doctor --fix` |
@@ -433,20 +438,21 @@ up2 doctor [--fix]                           # chains and audit correspond? --fi
 | 1 | comma-packed arguments: `["py","replace","\u65e7,\u65b0"]` | usually a silently wrong value | use a positional array `["py","replace",["\u65e7","\u65b0"]]` |
 | 2 | an unescaped literal starting with `$`: `"price": "$100"` | `UP2-E1006` | write `{"$lit": "$100"}` |
 | 3 | referencing a later step | `UP2-E1006` | a referenced step must sit earlier in the order |
-| 4 | referencing a `_`-prefixed field **across steps** | `UP2-E1014` | `_` is local to its step; inside the step use `$fields._x`, across steps use a field without the `_` prefix |
+| 4 | referencing a `_`-prefixed field **across steps** | `UP2-E1014` | `_` is local to its step; inside the step use `$locals._x`, across steps use a field without the `_` prefix |
 | 5 | `ctx.set` writing `globals.x` | `UP2-E1015` | the write surface is limited to `locals.*` |
 | 6 | a misspelt value mode (css: `["css","innerHTML","div.c"]`; xpath: `["xpath","innerText","//item"]`) | `UP2-E1002` | use `["css","html","div.c"]` / `["xpath","text","//item"]` (slot 2 = mode, slot 3 = selector); read `up2 ops --json` first |
-| 7 | a `chain` name that `chains` does not provide | new lint L9 (`03` §10) | add the entry, or fix the name |
+| 7 | a bundle with no `entry` | `UP2-E1005` | name the step the run starts at: `"entry": "<step name>"` (`03` §2) |
 | 8 | forgetting the `each` stage, so the fields run once over the whole page (or `each` receives something that is not a list) | the list version fails loudly with `UP2-E2002`; the "ran once over the page" version is a wrong product at runtime | only S3's `trace` can reveal the latter; the `tpl_key` name and the samples should hint that this is a list page |
 | 9 | `["py","int"]` (a 3-ary operator written with two positions) | `UP2-E1004` | a stage's length equals its arity exactly: for a function without arguments write `""` in position 3, i.e. `["py","int",""]`; `datetime` is not on the allowlist, so parse time with `["py","parse_time","zh"]` |
 | 10 | `["re","group","<pattern>"]` missing the group name | `UP2-E1005` | use a named object `["re","group",{"pattern":"…","group":1}]` |
 | 11 | putting a node handle straight into the product (forgetting `text`/`@attr`) | `UP2-E2003` | serialize the `Opaque` handle into text first |
-| 12 | writing `$fields.title` inside **another** step | `UP2-E1006` | `$fields` is valid only inside the step that declares the field map; another step writes `$<step key>.title` |
+| 12 | a step nothing reaches (nothing falls through to it and no `next` names it) | `UP2-E1018` | point a `next` at it, take it out of the flow, or make it the `entry` |
 | 13 | a step key using a reserved name (`globals`) or duplicated | `UP2-E1009` | change the key |
 | 14 | `tpl_key` carrying `:` or `/` | `UP2-E3002` | pick a name inside the character set |
 | 15 | parsing an answer object as HTML without reading its body first | `UP2-E2002` | `css` sees the object, not text: start the chain with `["py","getattr","text"]` (`03` §4.1) |
 | 16 | a field chain longer than 32 stages / `each` nested deeper than 3 levels / one field map holding more than 256 fields | `UP2-E1012` | split the chain, spread the nesting over several steps, or switch to `udf` |
 | 17 | an empty field map, or a field name that is empty or contains `.` | `UP2-E1005` | declare at least one field, and name each one so a `$…` path can address it |
+| 18 | a `$`-prefixed chain that names something no root or step provides (`"url": "$nope"`) | `UP2-E1006` | a chain reference reads a reserved root (`$globals` / `$locals` / `$in`) or an earlier step (`$rows.url`); to pass the input on unchanged write `"$in"` (`03` §2) |
 
 ---
 

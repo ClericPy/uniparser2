@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from uniparser2 import (
-    Missing,
+    Failed,
     Ok,
     Ref,
     Scope,
@@ -103,7 +103,8 @@ def _run_error(story: Any, value: Any = None) -> str:
 def test_a_minimal_story_compiles() -> None:
     story = compile_story(_parse_story())
     assert [step.name for step in story.steps] == ["records"]
-    assert story.exit == "records"
+    assert story.entry == "records"
+    assert story.collect == "records"
     assert story.steps[0].type == "Record"
 
 
@@ -203,23 +204,22 @@ def _cycle_error(story: dict[str, Any]) -> Any:
 def test_a_backward_next_that_closes_a_loop_is_rejected_at_compile_time() -> None:
     """`next` may point at any step; a loop is an authoring error the run could never finish."""
     diagnostic = _cycle_error(
-        _parse_story(
-            steps=[
+        _bundle(
+            [
                 {
                     "name": "feed",
-                    "parse": {"url": [["py", "id", ""]]},
+                    "body": {"url": "$in"},
                     "type": "Request",
                     "next": "page",
                 },
-                {"name": "page", "parse": {"n": [["py", "len", ""]]}, "type": "dict"},
+                {"name": "page", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
                 {
                     "name": "again",
-                    "parse": {"url": [["py", "id", ""]]},
+                    "body": {"url": "$in"},
                     "type": "Request",
                     "next": "feed",
                 },
-            ],
-            exit="page",
+            ]
         )
     )
     # The message carries the travel path, and the pointer names the jump that closes the loop.
@@ -229,16 +229,15 @@ def test_a_backward_next_that_closes_a_loop_is_rejected_at_compile_time() -> Non
 
 def test_a_step_that_jumps_to_itself_is_a_loop() -> None:
     diagnostic = _cycle_error(
-        _parse_story(
-            steps=[
+        _bundle(
+            [
                 {
                     "name": "bad",
-                    "parse": {"url": [["py", "id", ""]]},
+                    "body": {"url": "$in"},
                     "type": "Request",
                     "next": "bad",
                 }
-            ],
-            exit="bad",
+            ]
         )
     )
     assert "bad -> bad" in diagnostic.message
@@ -250,17 +249,17 @@ def test_a_backward_next_into_a_region_that_cannot_reach_it_compiles() -> None:
     `fan`'s jump points backwards, but no path leads from `left` back to `fan`: the flow stays a
     chain of distinct steps, so the story compiles and runs.
     """
-    story = {
-        "steps": [
+    story = _bundle(
+        [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "fan",
             },
             {
                 "name": "fan",
-                "parse": {
+                "body": {
                     "items": [
                         ["const", [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}]]
                     ]
@@ -459,15 +458,14 @@ def test_a_task_may_override_next() -> None:
                 "type": "RequestBatch",
                 "next": "left",
             },
-            {"name": "left", "parse": {"side": [["const", "left"]]}, "type": "dict"},
-            {"name": "right", "parse": {"side": [["const", "right"]]}, "type": "dict"},
-            {"name": "joined", "parse": {"n": [["py", "len", ""]]}, "type": "dict"},
-        ],
-        "exit": "joined",
-    }
+            {"name": "left", "body": {"side": [["const", "left"]]}, "type": "dict"},
+            {"name": "right", "body": {"side": [["const", "right"]]}, "type": "dict"},
+            {"name": "joined", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+        ]
+    )
     run = start(story, "seed")
-    run.next()
-    effect = run.send(Answer("home"))
+    run.go()
+    effect = run.feed(Answer("home"))
     assert effect == ("batch", [{"url": "a"}, {"url": "b"}], "left")
     # The host never sees `next`: it is the kernel's routing key. The tuple's second slot is a union
     # of every effect shape, so it goes through an explicitly typed variable (the device
@@ -768,9 +766,10 @@ def test_dollar_in_reads_a_key_of_the_input() -> None:
     assert eval_field(compile_field(chain), None, scope=scope) == Ok(True)
 
 
-def test_dollar_in_without_an_input_is_missing() -> None:
+def test_dollar_in_without_an_input_fails() -> None:
     outcome = eval_field(compile_field([["py", "urljoin", "$in.url"]]), "a.html", scope=Scope())
-    assert isinstance(outcome, Missing)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
     assert "no input was handed" in outcome.reason
 
 

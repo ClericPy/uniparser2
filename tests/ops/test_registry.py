@@ -42,20 +42,21 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
         "ctx",
         "code",
     }
-    assert len(pairs) == 73
+    assert len(pairs) == 74
     assert len([pair for pair in pairs if pair[0] == "py"]) == 42
     assert len([pair for pair in pairs if pair[0] == "css"]) == 8
     assert len([pair for pair in pairs if pair[0] == "css1"]) == 8
     assert len([pair for pair in pairs if pair[0] == "xpath"]) == 3
     assert len([pair for pair in pairs if pair[0] == "re"]) == 3
-    assert len([pair for pair in pairs if pair[0] == "ctx"]) == 4
+    assert len([pair for pair in pairs if pair[0] == "ctx"]) == 5
     assert len([pair for pair in pairs if pair[0] == "json"]) == 1
     assert len([pair for pair in pairs if pair[0] == "const"]) == 1
     assert len([pair for pair in pairs if pair[0] == "each"]) == 1
     assert len([pair for pair in pairs if pair[0] == "udf"]) == 1
     assert len([pair for pair in pairs if pair[0] == "code"]) == 1
     assert ("re", "search") in pairs
-    assert ("ctx", "map") in pairs
+    assert ("ctx", "dict") in pairs
+    assert ("ctx", "list") in pairs
     assert ("const", "const") in pairs
     # `each` is a 2-slot operator with a single action, so its action name never appears in a chain
     # either; its argument is a field map, which the compiler compiles recursively.

@@ -22,7 +22,6 @@ import pytest
 
 from uniparser2 import (
     Failed,
-    Missing,
     Ok,
     Opaque,
     Outcome,
@@ -104,15 +103,9 @@ def test_undefined_prefix_is_compile_time_error(xml_ready: None) -> None:
     assert "ns" in info.value.diagnostic.fix
 
 
-def test_default_namespace_is_silently_empty_but_explained(xml_ready: None) -> None:
-    """The classic sitemap trap: ``//loc`` silently returns empty.
-
-    The diagnostic has to explain the default namespace.
-    """
-    outcome = run([["xpath", "text", "//loc"]])
-    assert isinstance(outcome, Missing)
-    assert SM_NS in outcome.reason
-    assert "local-name()" in outcome.reason
+def test_default_namespace_is_empty_and_needs_local_name(xml_ready: None) -> None:
+    """The classic sitemap trap: ``//loc`` matches nothing, so the result is ``[]``."""
+    assert run([["xpath", "text", "//loc"]]) == Ok([])
 
 
 def test_default_namespace_workarounds(xml_ready: None) -> None:
@@ -129,7 +122,7 @@ def test_cdata_text_is_intact(xml_ready: None) -> None:
 def test_case_sensitive_tag_names(xml_ready: None) -> None:
     """XML is case sensitive: ``//Title`` and ``//title`` are two different elements."""
     assert run([["xpath", "text", "//title"]], RSS) == Ok(["Title"])
-    assert isinstance(run([["xpath", "text", "//Title"]], RSS), Missing)
+    assert run([["xpath", "text", "//Title"]], RSS) == Ok([])
 
 
 def test_nodes_returns_opaque_list(xml_ready: None) -> None:
@@ -241,19 +234,20 @@ def test_real_lxml_roundtrip() -> None:
 def test_xml_text_is_materialized_once_per_run(xml_ready: None) -> None:
     """Two fields over one XML document are one parse, not two (``03`` §6)."""
     bundle = {
+        "entry": "record",
         "steps": [
             {
                 "name": "record",
-                "parse": {
+                "body": {
                     "title": [["xpath", "text", "//title"]],
                     "creator": [["xpath", "text", {"expr": "//dc:creator", "ns": NS_DC}]],
                 },
             }
         ],
-        "exit": "record",
+        "collect": "record",
     }
     run = start(bundle, RSS)
-    assert run.next() == ("done", [{"title": ["Title"], "creator": ["Reporter A"]}])
+    assert run.go() == ("done", [{"title": ["Title"], "creator": ["Reporter A"]}])
     cache = run.scope.materializer
     assert len(cache) == 1
     assert cache.bytes > 0

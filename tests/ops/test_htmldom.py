@@ -21,7 +21,6 @@ import pytest
 
 from uniparser2 import (
     Failed,
-    Missing,
     Ok,
     Opaque,
     Outcome,
@@ -154,9 +153,9 @@ def test_attr_action_returns_list_and_first_scalar(fake: FakeEngine) -> None:
     assert run([["css1", "@href", "a"]], "<p>x</p>") == Ok("/p/1")
 
 
-def test_attr_missing_is_missing_for_both(fake: FakeEngine) -> None:
-    assert isinstance(run([["css", "@href", "h1"]], "<p>x</p>"), Missing)
-    assert isinstance(run([["css1", "@href", "h1"]], "<p>x</p>"), Missing)
+def test_attr_missing_yields_the_empty_value(fake: FakeEngine) -> None:
+    assert run([["css", "@href", "h1"]], "<p>x</p>") == Ok([])
+    assert run([["css1", "@href", "h1"]], "<p>x</p>") == Ok("")
 
 
 def test_attr_without_name_is_action_error() -> None:
@@ -195,10 +194,10 @@ def test_empty_selector_uses_context_itself(fake: FakeEngine) -> None:
     assert run([["css1", "text", ""]], "hello") == Ok("hello")
 
 
-def test_no_match_is_missing(fake: FakeEngine) -> None:
-    assert isinstance(run([["css", "text", "none"]], "<p>x</p>"), Missing)
-    assert isinstance(run([["css1", "text", "none"]], "<p>x</p>"), Missing)
-    assert isinstance(run([["css", "nodes", "none"]], "<p>x</p>"), Missing)
+def test_no_match_yields_the_empty_value(fake: FakeEngine) -> None:
+    assert run([["css", "text", "none"]], "<p>x</p>") == Ok([])
+    assert run([["css1", "text", "none"]], "<p>x</p>") == Ok("")
+    assert run([["css", "nodes", "none"]], "<p>x</p>") == Ok([])
 
 
 def test_node_handles_cannot_escape_through_pack(fake: FakeEngine) -> None:
@@ -327,10 +326,11 @@ def test_empty_selector_compiles_on_real_engine() -> None:
 def test_one_document_is_materialized_once_per_run(fake: FakeEngine) -> None:
     """Twenty fields over one document are one parse, not twenty (``03`` §6)."""
     bundle = {
+        "entry": "record",
         "steps": [
             {
                 "name": "record",
-                "parse": {
+                "body": {
                     "title": [["css1", "text", "h1"]],
                     "link": [["css1", "@href", "a"]],
                     "all": [["css", "text", "a"]],
@@ -338,10 +338,10 @@ def test_one_document_is_materialized_once_per_run(fake: FakeEngine) -> None:
                 "type": "dict",
             }
         ],
-        "exit": "record",
+        "collect": "record",
     }
     run = start(bundle, "<p>x</p>")
-    assert run.next() == ("done", [{"title": "Title", "link": "/p/1", "all": ["One", "Two"]}])
+    assert run.go() == ("done", [{"title": "Title", "link": "/p/1", "all": ["One", "Two"]}])
     cache = run.scope.materializer
     assert len(cache) == 1
     assert cache.bytes == run.scope.materializer.bytes
@@ -349,11 +349,15 @@ def test_one_document_is_materialized_once_per_run(fake: FakeEngine) -> None:
 
 def test_two_runs_do_not_share_a_document(fake: FakeEngine) -> None:
     """Nothing is shared across runs: each run materializes its own (``03`` §6)."""
-    bundle = {"steps": [{"name": "a", "parse": {"t": [["css1", "text", "h1"]]}}], "exit": "a"}
+    bundle = {
+        "entry": "a",
+        "steps": [{"name": "a", "body": {"t": [["css1", "text", "h1"]]}}],
+        "collect": "a",
+    }
     first = start(bundle, "<p>x</p>")
     second = start(bundle, "<p>x</p>")
-    first.next()
-    second.next()
+    first.go()
+    second.go()
     assert first.scope.materializer is not second.scope.materializer
     assert len(first.scope.materializer) == 1
     assert len(second.scope.materializer) == 1

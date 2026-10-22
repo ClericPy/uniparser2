@@ -29,7 +29,6 @@ import pytest
 
 from uniparser2 import (
     Failed,
-    Missing,
     Ok,
     Outcome,
     Scope,
@@ -71,9 +70,9 @@ COVERS_PAIRS = (
     ("py", "float"),
     ("py", "bool"),
     ("py", "list"),
+    ("py", "items"),
     ("py", "from_json"),
     ("py", "getattr"),
-    ("py", "id"),
 )
 
 WHITELIST_SIZE = 42
@@ -86,10 +85,6 @@ def ok(expected: Any) -> Callable[[Outcome], bool]:
         return isinstance(outcome, Ok) and outcome.value == expected
 
     return check
-
-
-def missing() -> Callable[[Outcome], bool]:
-    return lambda outcome: isinstance(outcome, Missing)
 
 
 def failed(code: str) -> Callable[[Outcome], bool]:
@@ -154,9 +149,9 @@ CASES: tuple[tuple[str, object, object, Callable[[Outcome], bool]], ...] = (
     ("float", "1.5", (), ok(1.5)),
     ("bool", "false", (), ok(False)),
     ("list", "[1,2]", (), ok([1, 2])),
+    ("items", {"a": 1, "b": 2}, (), ok([["a", 1], ["b", 2]])),
     ("from_json", '{"a":1}', (), ok({"a": 1})),
     ("getattr", _HOST_RESPONSE, "status", ok(200)),
-    ("id", {"url": "u"}, (), ok({"url": "u"})),
 )
 
 
@@ -235,11 +230,12 @@ def test_unknown_function_is_e1003() -> None:
     assert info.value.diagnostic.code == "UP2-E1003"
 
 
-def test_default_swallows_missing() -> None:
-    """``py.default`` is the only action that can catch ``MISSING`` (``accepts_missing``)."""
+def test_default_replaces_none_and_empty() -> None:
+    """``py.default`` replaces ``None`` and the empty string; a failed stage is not caught."""
     chain = [["re", "search", r"\d+"], ["py", "default", "none"]]
-    compiled = compile_field(chain)
-    assert eval_field(compiled, "abc") == Ok("none")
+    assert eval_field(compile_field(chain), "abc") == Ok("none")
+    assert run([["py", "default", "none"]], None) == Ok("none")
+    assert run([["py", "default", "none"]], "") == Ok("none")
 
 
 def test_default_keeps_present_value() -> None:
@@ -307,8 +303,8 @@ def test_getitem_missing_key_is_e2018() -> None:
     assert outcome.reason == "KeyError: 'text' — the dict has no key 'text'"
 
 
-def test_first_on_empty_list_is_missing() -> None:
-    assert isinstance(run([["py", "first", ""]], []), Missing)
+def test_first_on_empty_list_yields_none() -> None:
+    assert run([["py", "first", ""]], []) == Ok(None)
 
 
 # ---------------------------------------------------------------- getattr (host objects)
@@ -375,10 +371,11 @@ def test_getattr_on_a_selectolax_node() -> None:
     assert "callable" in method.reason
 
 
-def test_id_returns_its_input_unchanged() -> None:
-    payload = {"url": "https://example.com"}
-    assert run([["py", "id", ""]], payload) == Ok(payload)
-    assert run([["py", "id", ""]], "https://example.com") == Ok("https://example.com")
+def test_the_identity_action_is_gone() -> None:
+    """`py.id` was deleted with the identity stages (`03` §2): a chain reference spells identity."""
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "id", ""]])
+    assert info.value.diagnostic.code == "UP2-E1003"
 
 
 def test_split_empty_separator_is_failed() -> None:
@@ -446,10 +443,13 @@ def test_sort_key_enum_is_validated_at_compile_time() -> None:
     assert diagnostic.pointer == "/0/2/key"
 
 
-def test_container_value_for_an_any_typed_parameter_still_compiles() -> None:
-    """``py.default.value`` accepts any JSON value: a container is a value there, not a binding."""
+def test_a_container_fallback_compiles_and_a_failure_is_not_caught() -> None:
+    """``py.default.value`` accepts any JSON value; a failed stage is not a fallback case."""
     chain = [["ctx", "get", "locals.nope"], ["py", "default", {"a": 1}]]
-    assert run(chain, "hi") == Ok({"a": 1})
+    outcome = run(chain, "hi")
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
+    assert run([["const", ""], ["py", "default", {"a": 1}]], "hi") == Ok({"a": 1})
 
 
 def test_named_form_of_a_multi_parameter_action_is_unaffected() -> None:
@@ -551,12 +551,12 @@ def test_parse_time_natural_language_without_lang_is_detected() -> None:
     assert run([["py", "parse_time", ""]], "24. September 2026") == Ok("2026-09-24 00:00:00")
 
 
-def test_parse_time_empty_text_is_missing() -> None:
-    assert isinstance(run([["py", "parse_time", ""]], "   "), Missing)
+def test_parse_time_empty_text_yields_empty() -> None:
+    assert run([["py", "parse_time", ""]], "   ") == Ok("")
 
 
-def test_parse_time_none_value_is_missing() -> None:
-    assert isinstance(run([["py", "parse_time", ""]], None), Missing)
+def test_parse_time_none_value_yields_empty() -> None:
+    assert run([["py", "parse_time", ""]], None) == Ok("")
 
 
 def test_parse_time_non_text_input_is_type_failure() -> None:

@@ -1,8 +1,8 @@
 """``ctx`` operator: scope reads and writes (design docs 02 §6.8, 03 §8).
 
-**The write side is hard-limited to locals**: writing globals or a node product is ``UP2-E1015``.
+**The write side is hard-limited to locals**: writing globals or a step's product is ``UP2-E1015``.
 Paths are always written as bare path literals (``locals._tmp``), with no ``$`` and no ``ctx.``
-prefix.
+prefix. ``fields`` was a second name for ``locals`` and is retired (`rename-and-unify`).
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import pytest
 
 from uniparser2 import (
     Failed,
-    Missing,
     Ok,
     Outcome,
     Scope,
@@ -42,8 +41,10 @@ def test_get_reads_globals_and_locals() -> None:
 
 
 @pytest.mark.covers("ctx", "get")
-def test_get_missing_path_is_missing() -> None:
-    assert isinstance(run([["ctx", "get", "locals._nope"]], None), Missing)
+def test_get_missing_path_is_a_failure() -> None:
+    outcome = run([["ctx", "get", "locals._nope"]], None)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
 
 
 @pytest.mark.covers("ctx", "set")
@@ -83,27 +84,31 @@ def test_del_nonexistent_path_is_noop() -> None:
     assert run([["ctx", "del", "locals._nope"]], "v", scope=scope) == Ok("v")
 
 
-@pytest.mark.covers("ctx", "map")
-def test_map_builds_list_from_paths() -> None:
+@pytest.mark.covers("ctx", "list")
+def test_list_builds_a_list_from_paths() -> None:
     scope = Scope(globals={"base": "B"}, locals={"a": 1, "b": 2})
-    assert run([["ctx", "map", ["locals.a", "locals.b"]]], None, scope=scope) == Ok([1, 2])
+    assert run([["ctx", "list", ["locals.a", "locals.b"]]], None, scope=scope) == Ok([1, 2])
 
 
-@pytest.mark.covers("ctx", "map")
-def test_map_builds_dict_from_name_to_path() -> None:
+@pytest.mark.covers("ctx", "dict")
+def test_dict_builds_an_object_from_name_to_path() -> None:
     scope = Scope(globals={"base": "B"}, locals={"_t": "T"})
-    chain = [["ctx", "map", {"title": "locals._t", "base": "globals.base"}]]
+    chain = [["ctx", "dict", {"title": "locals._t", "base": "globals.base"}]]
     assert run(chain, None, scope=scope) == Ok({"title": "T", "base": "B"})
 
 
-@pytest.mark.covers("ctx", "map")
-def test_map_short_circuits_on_missing_path() -> None:
-    chain = [["ctx", "map", ["locals._nope"]]]
-    assert isinstance(run(chain, None), Missing)
+@pytest.mark.covers("ctx", "list")
+def test_list_fails_on_a_path_that_cannot_be_read() -> None:
+    """A path that does not exist is a failure (`UP2-E2001`), never an empty value."""
+    chain = [["ctx", "list", ["locals._nope"]]]
+    outcome = run(chain, None)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2001"
 
 
-def test_map_requires_paths_not_scalars() -> None:
-    assert compile_error([["ctx", "map", "locals.a"]]) == "UP2-E1005"
+def test_list_requires_an_array_and_dict_an_object() -> None:
+    assert compile_error([["ctx", "list", "locals.a"]]) == "UP2-E1005"
+    assert compile_error([["ctx", "dict", ["locals.a"]]]) == "UP2-E1005"
 
 
 def test_unknown_action_is_e1002() -> None:
@@ -112,6 +117,15 @@ def test_unknown_action_is_e1002() -> None:
 
 def test_get_rejects_non_readable_root() -> None:
     assert compile_error([["ctx", "get", "nope.a"]]) == "UP2-E1005"
+
+
+def test_the_retired_fields_root_is_not_readable() -> None:
+    """`fields` was a second name for `locals` and is retired: one writable root, one spelling."""
+    assert compile_error([["ctx", "get", "fields.title"]]) == "UP2-E1005"
+
+
+def test_the_retired_fields_root_is_not_writable() -> None:
+    assert compile_error([["ctx", "set", "fields._tmp"]]) == "UP2-E1015"
 
 
 def test_chain_uses_local_across_steps() -> None:

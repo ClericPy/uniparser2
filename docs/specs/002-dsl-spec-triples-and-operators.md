@@ -355,7 +355,7 @@ returns `{"a":1}`), `join.sep` and `parse_time.lang` (both `str()`-coerced). A *
 
 The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser's directive table lives in Python's `_strptime` and is the same on every platform, while `strftime` delegates unknown directives to the C library — glibc passes `%Q` through verbatim and the Windows CRT raises, so a `strftime` probe gave the same chain two verdicts on two operating systems. Asking the parser also means the verdict matches what the operator does at run time: the set therefore follows the interpreter (measured on 3.12.11 / 3.13.12 / 3.14.3, `%T` / `%e` / `%-d` are accepted from 3.13 on, and a stray `%` is read as a literal by 3.12 but rejected by 3.13+).
 
-**Function table (41 functions, a closed set; anything outside the table is `UP2-E1003`)**:
+**Function table (42 functions, a closed set; anything outside the table is `UP2-E1003`)**:
 
 > **Dependencies are declared per action** (a convergence made while implementing L1): `requires` can hang not only off an operator but also off a **single
 > action** — `html_to_markdown` needs `html-to-markdown`, whereas `strip` in the same operator needs nothing at all. When a dependency is missing, that
@@ -428,7 +428,7 @@ The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser'
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 41 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (42 named functions) | "this chain can do at most these 42 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -578,7 +578,7 @@ is in §6.12).
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 41 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (42 named functions) | "this chain can do at most these 42 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -704,7 +704,7 @@ falsely reject legal constructs that the sandbox does not support anyway. The au
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 41 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (42 named functions) | "this chain can do at most these 42 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 

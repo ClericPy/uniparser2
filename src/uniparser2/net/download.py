@@ -67,7 +67,7 @@ def fetch(request: Mapping[str, Any]) -> Response:
     headers.setdefault("User-Agent", _USER_AGENT)
     timeout = _timeout_of(request)
     data = _body_of(request, headers)
-    target = _with_params(url, _mapping_of(request, "params"))
+    target = with_params(url, _mapping_of(request, "params"))
     request_object = Request(target, data=data, headers=headers, method=method)  # noqa: S310
     try:
         # `_url_of` admits http(s) only, so `urlopen` never sees another scheme.
@@ -159,11 +159,16 @@ def encode_body(body: bytes) -> str:
     return base64.b64encode(body).decode("ascii")
 
 
-def _with_params(url: str, params: Mapping[str, Any]) -> str:
-    """Append the query parameters, if the request carries any."""
+def with_params(url: str, params: Mapping[str, Any]) -> str:
+    """Append the query parameters, if the request carries any.
+
+    The parameters are sorted by name, so the same parameter set is the same query string whatever
+    order it was written in -- and the cache, whose key is over the URL the request is **sent** to,
+    agrees with the downloader.
+    """
     if not params:
         return url
-    query = urlencode({str(key): str(value) for key, value in params.items()})
+    query = urlencode({str(key): str(value) for key, value in sorted(params.items())})
     separator = "&" if "?" in url else "?"
     return f"{url}{separator}{query}"
 
@@ -179,4 +184,5 @@ __all__ = [
     "decode_body",
     "encode_body",
     "fetch",
+    "with_params",
 ]

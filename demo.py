@@ -368,11 +368,16 @@ def section_python() -> None:
 
 
 def section_scope() -> None:
-    heading("6. `ctx` — the scope: locals are writable, globals are read-only")
+    heading("6. `ctx` — the scope: locals and public are writable, globals are read-only")
     one("set then get", [["ctx", "set", "locals.k"], ["ctx", "get", "locals.k"]], "kept")
     one(
-        "map collects several paths",
-        [["ctx", "set", "locals.k"], ["ctx", "map", {"a": "locals.k"}]],
+        "dict collects several paths",
+        [["ctx", "set", "locals.k"], ["ctx", "dict", {"a": "locals.k"}]],
+        "v",
+    )
+    one(
+        "list collects several paths",
+        [["ctx", "set", "locals.k"], ["ctx", "list", ["locals.k"]]],
         "v",
     )
     one(

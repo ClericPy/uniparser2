@@ -160,6 +160,46 @@ def test_the_key_is_over_the_decoded_body() -> None:
     )
 
 
+def test_the_key_covers_the_query_parameters() -> None:
+    """Two pages of one URL are two requests: reusing the first answer is a silent wrong answer."""
+    base = {"url": "http://x/list"}
+    assert request_key({**base, "params": {"page": 1}}) != request_key(
+        {**base, "params": {"page": 2}}
+    )
+
+
+def test_the_key_is_over_the_url_the_request_is_sent_to() -> None:
+    """The parameters are folded into the URL, so the two spellings are one request."""
+    with_params = {"url": "http://x/list", "params": {"a": 1, "b": 2}}
+    in_the_url = {"url": "http://x/list?a=1&b=2"}
+    assert request_key(with_params) == request_key(in_the_url)
+
+
+def test_the_key_does_not_depend_on_the_order() -> None:
+    """The same request written in another order is the same request."""
+    assert request_key({"url": "http://x/", "headers": {"A": "1", "B": "2"}}) == request_key(
+        {"url": "http://x/", "headers": {"B": "2", "A": "1"}}
+    )
+    assert request_key({"url": "http://x/", "params": {"a": 1, "b": 2}}) == request_key(
+        {"url": "http://x/", "params": {"b": 2, "a": 1}}
+    )
+
+
+def test_two_pages_are_two_entries(tmp_path: Path) -> None:
+    """The regression this key shape exists for: page 1 must not answer page 2."""
+    cache = RequestCache(tmp_path)
+    first = {"url": "http://x/list", "params": {"page": 1}}
+    second = {"url": "http://x/list", "params": {"page": 2}}
+    cache.put(first, Response(text="PAGE ONE", url="http://x/list?page=1"))
+    cache.put(second, Response(text="PAGE TWO", url="http://x/list?page=2"))
+    one = cache.get(first)
+    two = cache.get(second)
+    assert one is not None
+    assert one.text == "PAGE ONE"
+    assert two is not None
+    assert two.text == "PAGE TWO"
+
+
 def test_a_miss_is_a_miss(tmp_path: Path) -> None:
     cache = RequestCache(tmp_path)
     assert cache.get({"url": "http://x/"}) is None

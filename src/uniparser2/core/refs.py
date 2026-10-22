@@ -229,7 +229,7 @@ class Scope:
         return _walk_path(scope.locals, ref)
 
     def read_text(self, text: str, /, *, pointer: str = "") -> Outcome:
-        """Read by bare-path text (used by ctx.get / ctx.map)."""
+        """Read by bare-path text (used by ctx.get / ctx.dict / ctx.list)."""
         return self.read(parse_path_text(text, pointer=pointer))
 
     def write_text(self, text: str, value: Any, /, *, pointer: str = "") -> None:

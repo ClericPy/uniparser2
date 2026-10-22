@@ -270,11 +270,13 @@ outcome = up2.eval_field(chain, "published in 2026-09", scope=scope)
 match outcome:
     case up2.Ok(value=value):
         print(value)  # 2026
-    case up2.Missing(reason=reason):
-        print("missing:", reason)  # not there; the key is absent from a product, not "" or null
     case up2.Failed(code=code, reason=reason, fix=fix):
         print(code, reason, fix)  # deterministic error code + one-line remedy; the run failed
 ```
+
+**There are two outcomes, not three.** A query that matched nothing is a **value** — the empty value
+of its shape (`""` / `[]` / `None`) — so the chain carries on; a stage that *fails* stops the chain and
+is reported with its code. There is no "missing" state to match on.
 
 **A step's `type` is a shape** (`03` §3): the host registers name → constructor with
 `register_type(name, constructor)`, and the kernel builds it from the product at the **step boundary**.

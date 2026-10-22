@@ -288,7 +288,7 @@ class CssOp: ...
 | **Regex backtracking (ReDoS)** | at compile time a **nested-quantifier check** is run on regexes and reports `UP2-E1013`. **Measured correction**: Python 3.13/3.14 `re` **has no `timeout` argument**, so **there is no timeout backstop at runtime** — static detection catches only the most classic shape (`(a+)+`), and missed shapes such as overlapping alternations are a recorded gap (`02` §6.3) |
 | **Resource exhaustion** | see §9 limits: the shape of a chain is validated entirely at compile time, and the iteration count is validated at runtime |
 | **Reference out of bounds** | a reference may only point at a **declared** scope and the **declared product keys** of preceding steps; a `_`-prefixed key referenced **across steps** is rejected (`UP2-E1014`), while within its own step it is legal |
-| **Cycles** | a story's **flow is acyclic**: `next` may name any step (`03` §12.5), but the graph the executor walks — one edge per step, the next array position or the step a request step's `next` names — must let no step be entered twice, checked at compile time (`UP2-E1017`, `03` §10 L12). The v0.1 node graph and its `UP2-E1104` check stay retired; `each` field-map nesting depth is limited; the path list of `ctx.map` cannot reference itself |
+| **Cycles** | a story's **flow is acyclic**: `next` may name any step (`03` §12.5), but the graph the executor walks — one edge per step, the next array position or the step a request step's `next` names — must let no step be entered twice, checked at compile time (`UP2-E1017`, `03` §10 L12). The v0.1 node graph and its `UP2-E1104` check stay retired; `each` field-map nesting depth is limited; the path list of `ctx.dict` / `ctx.list` cannot reference itself |
 | **Deserialization** | chains are read from JSON only, never with `pickle`/`yaml.load` (unsafe loaders are never used); after a Store reads a chain back it **must `compile()` again**, and the compile product in storage is never trusted |
 
 ---
@@ -345,8 +345,8 @@ deletes it:
 
 | Removed | Where it was |
 |---|---|
-| `Policy` / `DEFAULT_POLICY` / `MISSING_STRATEGIES` / `ERROR_STRATEGIES` | `core/evaluator.py` |
-| the `policy` parameter of `eval_field` | `core/evaluator.py`, `core/__init__.py` |
+| `Policy` / `DEFAULT_POLICY` / `MISSING_STRATEGIES` / `ERROR_STRATEGIES` | `core/evaluator.py` (gone with it) |
+| the `policy` parameter of `eval_field` | `core/evaluator.py`, `core/__init__.py` (gone with it) |
 | `--on-missing` / `--on-error` | `up2 trial` (`cli/main.py`) |
 | the `policy` block | the story JSON (`03` §2) |
 

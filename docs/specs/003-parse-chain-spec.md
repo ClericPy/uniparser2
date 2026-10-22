@@ -282,7 +282,7 @@ kernel is unaffected either way (it performs no IO).
 rides beside them (a task is a request with exactly one extra key), but the kernel strips it before the
 effect is handed over: **the host never sees `next`**. That flatness is not cosmetic — a field map's value
 must be a chain, so a nested `{"request": {…}}` item is `UP2-E1004` (measured) and would force the link
-through a `_url` local plus `ctx.map`. Flat keeps the common case one key longer than the request it
+through a `_url` local plus `ctx.dict`. Flat keeps the common case one key longer than the request it
 describes.
 
 #### 4.1.1 `next`, and the per-task override
@@ -310,12 +310,16 @@ The `Request` structure is v0.1's built-in, unchanged:
 | `body` | `str` (**base64**) | `null` |
 | `json` | `json` | `null` |
 | `timeout` | `float` | `30.0` |
-| `follow_redirects` | `bool` | `true` |
 
 **The body is base64 text.** A body is binary, and the request dictionary is JSON throughout — it
 lives in chain data, in a cache key and in a journal — so `body` carries base64 and the downloader
 decodes it before sending. A request with a `json` key sends that value as JSON instead, and the two
 are alternatives.
+
+**There is no `follow_redirects` key.** Whether a redirect is followed is a **host** decision, like
+the client, the retries and the proxy: a chain says *what* to fetch, and the host says *how*. The
+downloader follows redirects, and the answer carries the **final** URL, so a chain that needs to know
+where it ended reads `url`.
 
 The kernel assembles and **never sends**: which HTTP client, how much concurrency, how many retries,
 whether to add hotlink-protection headers — all of it is the host's.

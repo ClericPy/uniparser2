@@ -206,12 +206,12 @@ def _run_story(graph: Any, value: Any, cache: RequestCache | None) -> GraphRun:
 def _cached_answer(effect: Any, cache: RequestCache | None) -> tuple[Any, str | None]:
     """The cached answers of one effect: one for a request, one per task for a batch."""
     if cache is None:
-        return None, _miss(effect)
+        return None, _miss(effect, None)
     kind, payload = effect[0], effect[1]
     if kind == "request":
         found = cache.get(payload)
         if found is None:
-            return None, _miss(effect)
+            return None, _miss(effect, cache)
         return found, None
     if not isinstance(payload, list):
         return None, f"a batch must be a list of tasks, got {type(payload).__name__}"
@@ -219,18 +219,23 @@ def _cached_answer(effect: Any, cache: RequestCache | None) -> tuple[Any, str | 
     for task in payload:
         found = cache.get(task)
         if found is None:
-            return None, _miss(("request", task))
+            return None, _miss(("request", task), cache)
         answers.append(found)
     return answers, None
 
 
-def _miss(effect: Any) -> str:
-    """The message for a request the cache does not hold: the runner never fetches it."""
+def _miss(effect: Any, cache: RequestCache | None) -> str:
+    """The message for a request the cache does not hold: the runner never fetches it.
+
+    The message names the cache directory, because the usual cause is looking in the wrong place:
+    the cache is relative to the working directory the command ran in.
+    """
     request = effect[1] if isinstance(effect, tuple) else effect
     url = request.get("url") if isinstance(request, Mapping) else request
+    where = cache.root if cache is not None else RequestCache().root
     return (
-        f"the request {url!r} is not in the request cache; run the sample's host once to fill it "
-        "(a snapshot runner never reaches the network)"
+        f"the request {url!r} is not in the request cache ({where}); run the sample's host once "
+        "from the same directory to fill it (a snapshot runner never reaches the network)"
     )
 
 

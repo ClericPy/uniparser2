@@ -111,8 +111,8 @@ Shared input for this section:
 - tier ★★★ Core
 - note: prune → take HTML → convert to Markdown (the standard body-extraction trio)
 - chain:
-  - `["css", "remove", "script,style"]` → `Ok(value=<DomNode HTMLParser>)`
-  - `["css1", "html", "div.content"]` → `Ok(value='\n      \n      <p>To all municipal governments:</p>\n      <p>The Government Service Item List is hereby issued to you; please comply.</p>\n      <a class="download" hre…`
+  - `["css", "remove", "script,style"]` → `Ok(value='<opaque DomNode>')`
+  - `["css1", "html", "div.content"]` → `Ok(value='"\\n      \\n      <p>To all municipal governments:</p>\\n      <p>The Government Service Item List is hereby issued to you; please comply.</p>\\n      <a class=\\"download\\" hre…)`
   - `["py", "html_to_markdown", ""]` → `Ok(value='To all municipal governments:\n\nThe Government Service Item List is hereby issued to you; please comply.\n\n[Download the list](/files/list.pdf)\n')`
 - input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
 - output: `Ok(value='To all municipal governments:\n\nThe Government Service Item List is hereby issued to you; please comply.\n\n[Download the list](/files/list.pdf)\n')` (Ok)
@@ -128,7 +128,7 @@ Shared input for this section:
 - tier ★★★ Core
 - note: node set → count
 - chain:
-  - `["css", "nodes", "ul.rel a"]` → `Ok(value=[<DomNode Node>, <DomNode Node>])`
+  - `["css", "nodes", "ul.rel a"]` → `Ok(value=['<DomNode Node>', '<DomNode Node>'])`
   - `["py", "len", ""]` → `Ok(value=2)`
 - input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
 - output: `Ok(value=2)` (Ok)
@@ -137,7 +137,7 @@ Shared input for this section:
 - tier ★★★ Core
 - note: node set → one dictionary per list item (each): the per-item shape
 - chain:
-  - `["css", "nodes", "ul.rel li"]` → `Ok(value=[<DomNode Node>, <DomNode Node>])`
+  - `["css", "nodes", "ul.rel li"]` → `Ok(value='/p/2.html')`
   - `["each", {"title": [["css1", "text", "a"]], "href": [["css1", "@href", "a"]]}]` → `Ok(value=[{'title': 'Related one', 'href': '/p/1.html'}, {'title': 'Related two', 'href': '/p/2.html'}])`
 - input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
 - output: `Ok(value=[{'title': 'Related one', 'href': '/p/1.html'}, {'title': 'Related two', 'href': '/p/2.html'}])` (Ok)
@@ -320,7 +320,7 @@ Shared input for this section:
 
 #### `default` — fall back when the value is None or an empty string
 - tier ★★★ Core · parameter slot: the value itself · `value: ref_or_literal`
-- note: fallback for empty/None/missing (accepts_missing)
+- note: fallback for None / "" only (a missing upstream is a failure, not a value)
 - chain: `[["py", "default", "fallback value"]]`
 - input: `''`
 - output: `Ok(value='fallback value')` (Ok)
@@ -1086,8 +1086,8 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - note: the guard covers the NEXT stage only, and never turns the error into a value
 - chain:
   - `["const", "keep"]` → `Ok(value='keep')`
-  - `["try", "skip"]` → `Ok(value='keep')`
-  - `["py", "int", ""]` → `Ok(value='keep')`
+  - `["try", "skip"]` → `(a directive: it does no work)`
+  - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
 - input: `'not-a-number'`
 - output: `Ok(value='keep')` (Ok)
 
@@ -1096,8 +1096,8 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - note: the stages after the guarded one are not evaluated
 - chain:
   - `["const", "keep"]` → `Ok(value='keep')`
-  - `["try", "break"]` → `Ok(value='keep')`
-  - `["py", "int", ""]` → `Ok(value='keep')`
+  - `["try", "break"]` → `(a directive: it does no work)`
+  - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
 - input: `'not-a-number'`
 - output: `Ok(value='keep')` (Ok)
 
@@ -1106,8 +1106,8 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - note: UP2-E2005: the run fails
 - chain:
   - `["const", "keep"]` → `Ok(value='keep')`
-  - `["try", "raise"]` → `Ok(value='keep')`
-  - `["py", "int", ""]` → `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'keep'", fix='py.int expects an integer, a float, a bool, or a string of digits; …`
+  - `["try", "raise"]` → `(a directive: it does no work)`
+  - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
 - input: `'not-a-number'`
 - output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'keep'", fix='py.int expects an integer, a float, a bool, or a string of digits; …` (Failed)
 
@@ -1116,9 +1116,9 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - note: the guard covered one stage only: the later failure still fails the run
 - chain:
   - `["const", ""]` → `Ok(value='')`
-  - `["try", "skip"]` → `Ok(value='')`
+  - `["try", "skip"]` → `(a directive: it does no work)`
   - `["py", "strip", ""]` → `Ok(value='')`
-  - `["py", "int", ""]` → `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: ''", fix='py.int expects an integer, a float, a bool, or a string of digits; chec…`
+  - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: '')`
 - input: `'not-a-number'`
 - output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: ''", fix='py.int expects an integer, a float, a bool, or a string of digits; chec…` (Failed)
 

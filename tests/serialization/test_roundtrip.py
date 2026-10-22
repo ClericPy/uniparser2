@@ -26,8 +26,10 @@ CHAINS: tuple[Any, ...] = (
         ["py", "lower", ""],
         ["ctx", "get", "locals._up"],
     ],
-    [["ctx", "map", {"title": "locals._t", "base": "globals.base"}]],
+    [["ctx", "dict", {"title": "locals._t", "base": "globals.base"}]],
     [["py", "urljoin", "$globals.base_url"]],
+    [["try", "skip"], ["py", "int", ""]],
+    [["$in", ["py", "getattr", "url"]]],
 )
 
 

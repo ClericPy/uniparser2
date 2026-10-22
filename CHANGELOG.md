@@ -41,6 +41,25 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   answers live under `.cache/requests/` — never committed — keyed by the whole request, so a second
   run replays them instead of the network.
 
+### Fixed
+
+- **The request cache no longer answers one page with another page's answer**: the cache key is now a
+  digest of the **normalized** request — the query parameters folded into the URL, the body decoded to
+  its bytes, the whole thing written as JSON with sorted keys — so `?page=1` and `?page=2` are two
+  entries instead of one, and the same request written in another order is still one entry.
+- **The operator report shows what a stage really did**: the steps come from the run's **trace**
+  instead of from re-evaluating prefixes, so a failure a `try` guard caught is shown as the failure it
+  was, and the directive itself is shown as the directive it is.
+- **`uniparser2.core` no longer exports the deleted `Missing`**: the name was still in `__all__`, so
+  `from uniparser2.core import *` raised `AttributeError`.
+- **The `ctx` diagnostic names every readable root**: the fix line of an unreadable root said
+  "globals / locals" while the accepted list said three roots, `public` among them.
+- **The `dsl-operators` specification names the third scope**: the `ctx` requirement still described
+  `locals` as the only writable root, which contradicted the implementation.
+- **The README, the demo and the serialization cases speak the current dialect**: the README's
+  example matched on the deleted `up2.Missing`, the demo ran a chain with the retired `ctx.map`
+  action (and skipped it), and the fixed-point test case used `ctx.map` as well.
+
 ### Changed
 
 - **BREAKING — an outcome is a value or a failure** (`01` §4, `02` §5; change `empty-value-semantics`):

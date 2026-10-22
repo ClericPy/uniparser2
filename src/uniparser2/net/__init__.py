@@ -13,7 +13,7 @@ written against the standard library.
 from __future__ import annotations
 
 from .cache import CACHE_DIR, RequestCache, request_key
-from .download import DEFAULT_TIMEOUT, Response, decode_body, encode_body, fetch
+from .download import DEFAULT_TIMEOUT, Response, decode_body, encode_body, fetch, with_params
 
 __all__ = [
     "CACHE_DIR",
@@ -24,4 +24,5 @@ __all__ = [
     "encode_body",
     "fetch",
     "request_key",
+    "with_params",
 ]

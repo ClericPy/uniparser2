@@ -358,7 +358,7 @@ def _py_cases() -> list[Case]:
             "default",
             "",
             "fallback value",
-            "fallback for empty/None/missing (accepts_missing)",
+            'fallback for None / "" only (a missing upstream is a failure, not a value)',
         ),
         ("Common", 1, "getitem", ["a", "b"], 1, "list index (out of range ⇒ UP2-E2018)"),
         ("Common", 2, "last", [1, 2], "", "last item"),
@@ -804,26 +804,75 @@ def _render_value(value: Any) -> str:
 def _run(case: Case) -> Ran:
     """Run one case for real, recording what every stage produced.
 
-    The chain is compiled **whole** and then evaluated stage by stage, rather than compiled prefix
-    by prefix: a `try` directive guards the *next* stage, so a prefix that ends at the directive
-    is not a legal chain on its own (``UP2-E1005``) — the report would show a compile error for a
-    chain that runs perfectly well.
+    The chain is compiled **whole** and evaluated once, and the steps come from the **trace** rather
+    than from re-evaluating prefixes. Two reasons:
+
+    - a `try` directive guards the *next* stage, so a prefix that ends at the directive is not a
+      legal chain on its own (``UP2-E1005``) -- the report would show a compile error for a chain
+      that runs perfectly well;
+    - the trace records what each stage **actually** did. A guarded failure is a real failure the
+      guard caught, and the report must show it as one: a prefix walk would show the value the
+      guard substituted and hide the failure entirely.
     """
     scope = up2.Scope(globals=dict(case.scope_globals), locals=dict(case.scope_locals))
     try:
         compiled = up2.compile_field(case.chain)
     except up2.Up2Error as exc:
         return Ran(case, "compile error", "", [], exc.diagnostic)
-    steps: list[tuple[str, str]] = []
-    for index in range(len(compiled.stages)):
-        prefix = _prefix_of(compiled, index)
-        try:
-            outcome = up2.eval_field(prefix, case.value, scope=scope)
-        except up2.Up2Error as exc:
-            return Ran(case, "compile error", "", steps, exc.diagnostic)
-        steps.append((json.dumps(case.chain[index], ensure_ascii=False), _render_value(outcome)))
-    outcome = up2.eval_field(compiled, case.value, scope=scope)
+    trace = up2.Trace()
+    try:
+        outcome = up2.eval_field(compiled, case.value, scope=scope, trace=trace)
+    except up2.Up2Error as exc:
+        return Ran(case, "compile error", "", [], exc.diagnostic)
+    steps = _steps_of(case, compiled, trace)
     return Ran(case, type(outcome).__name__, _render_value(outcome), steps)
+
+
+def _steps_of(case: Case, compiled: Any, trace: Any) -> list[tuple[str, str]]:
+    """The chain's stages and what each one did, from the trace's own events.
+
+    A stage's position is its index in the chain **source**, so the events line up with the source
+    one for one. A `try` directive does no work and records no event: it is shown as the directive
+    it is, with no output of its own.
+    """
+    by_position = {event.stage: event for event in trace.events}
+    steps: list[tuple[str, str]] = []
+    for index, source_stage in enumerate(compiled.source):
+        text = json.dumps(source_stage.to_list(), ensure_ascii=False)
+        event = by_position.get(index)
+        if event is None:
+            steps.append((text, "(a directive: it does no work)"))
+            continue
+        steps.append((text, _event_text(event)))
+    return steps
+
+
+def _event_text(event: Any) -> str:
+    """What one stage's event shows: its value, or the failure it reported."""
+    if event.state == "Failed":
+        detail = event.detail or {}
+        code = detail.get("code", "UP2-E????")
+        reason = detail.get("reason", "")
+        return f"Failed({code}: {reason})"
+    return f"Ok(value={_render_value(_event_value(event))})"
+
+
+def _event_value(event: Any) -> Any:
+    """The value an event carries.
+
+    The trace's ``preview`` is the value in **JSON**, so a string arrives quoted; it is decoded
+    back, so the report shows the same repr the other steps show.
+    """
+    view = event.output
+    if view is None:
+        return None
+    text = getattr(view, "preview", None)
+    if text is None:
+        return view
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return text
 
 
 def _prefix_of(compiled: Any, index: int) -> Any:

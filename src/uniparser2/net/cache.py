@@ -14,6 +14,7 @@ it never fetches by itself. The host decides what a miss means.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from collections.abc import Mapping
@@ -21,30 +22,49 @@ from pathlib import Path
 from typing import Any, Final
 
 from .download import Response, decode_body
+from .download import with_params as _with_params
 
 CACHE_DIR: Final = Path(".cache") / "requests"
-"""Where the cached answers live: a local directory, never committed."""
+"""Where the cached answers live: a local directory, never committed.
+
+The path is **relative to the working directory**, so the cache belongs to the project the command
+runs in. A caller that wants one place for several projects passes an absolute root to
+:class:`RequestCache`.
+"""
 
 DIGEST_SIZE: Final = 16
 """The digest width in bytes: 128 bits keep an accidental collision out of reach."""
 
 
 def request_key(request: Mapping[str, Any]) -> str:
-    """The cache key of one request: a digest of the method, the URL, the headers and the body.
+    """The cache key of one request: a digest of the **normalized** request.
 
-    The body is part of the key because two POSTs to one URL are two requests -- reusing the first
-    answer for the second is a silent wrong answer. The key is over the **decoded** bytes, so the
-    same body written as base64 text and offered as raw bytes is one request, hence one key.
+    The request is normalized first -- the query parameters folded into the URL, the body decoded
+    to its bytes -- and the result is written as JSON with sorted keys, so the key is a digest of
+    what the request actually *is* rather than of how it was spelled. Two spellings of the same
+    request (a body as base64 text and as raw bytes, a parameter order that differs) are one
+    request, hence one key; two different requests (``POST`` and ``GET`` on one URL, ``?page=1``
+    and ``?page=2``) are two keys, because reusing the first answer for the second is a silent
+    wrong answer.
     """
-    method = str(request.get("method") or "GET").upper()
-    url = str(request.get("url") or "")
-    headers = request.get("headers") or {}
-    header_text = "\n".join(f"{key}={value}" for key, value in sorted(headers.items()))
-    body = _body_bytes(request)
-    blob = b"\n".join(
-        [method.encode("utf-8"), url.encode("utf-8"), header_text.encode("utf-8"), body]
-    )
+    normalized = _normalized(request)
+    blob = json.dumps(normalized, sort_keys=True, default=str, ensure_ascii=False).encode("utf-8")
     return hashlib.blake2b(blob, digest_size=DIGEST_SIZE).hexdigest()
+
+
+def _normalized(request: Mapping[str, Any]) -> dict[str, Any]:
+    """The request as it will be sent: the URL with its query, the body as bytes, the rest as is."""
+    params = request.get("params") or {}
+    headers = request.get("headers") or {}
+    normalized: dict[str, Any] = {
+        "method": str(request.get("method") or "GET").upper(),
+        "url": _with_params(str(request.get("url") or ""), params),
+        "headers": {str(key): str(value) for key, value in headers.items()},
+    }
+    body = _body_bytes(request)
+    if body:
+        normalized["body"] = base64.b64encode(body).decode("ascii")
+    return normalized
 
 
 def _body_bytes(request: Mapping[str, Any]) -> bytes:

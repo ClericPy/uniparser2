@@ -245,28 +245,36 @@ consuming operator, not only for the ones whose pruning is visible today.
 - **WHEN** a stage hands out a node of a materialized document and a later stage reads that node
 - **THEN** the node SHALL resolve against the document it came from, unchanged
 
-### Requirement: The ctx surface names one writable root
+### Requirement: The ctx surface names its readable and writable roots
 
-The `ctx` operator's readable roots SHALL be `globals` and `locals`, and its writable root SHALL be
-`locals` alone. A `ctx.get` / `ctx.map` path whose root is neither SHALL be `UP2-E1005` naming the
-accepted roots, and a `ctx.set` / `ctx.del` path outside `locals` SHALL be `UP2-E1015`. `fields` SHALL NOT
-be accepted by either: it was a second name for `locals` and is retired (`chain-iteration`, "A reference
-path may walk an object").
+The `ctx` operator's readable roots SHALL be `globals`, `locals` and `public`, and its writable roots
+SHALL be `locals` and `public`. A `ctx.get` / `ctx.dict` / `ctx.list` path whose root is none of them
+SHALL be `UP2-E1005` naming the accepted roots, and a `ctx.set` / `ctx.del` path outside `locals` and
+`public` SHALL be `UP2-E1015`. `globals` is read-only because a chain's constants must not change
+mid-run (`01` §4); `public` is writable because it is the run's own notes, not chain data
+(`chain-iteration`, "A run carries a `public` scope"). `fields` SHALL NOT be accepted by either: it
+was a second name for `locals` and is retired (`chain-iteration`, "A reference path may walk an
+object").
 
 #### Scenario: a write to the retired root
 
 - **WHEN** the chain is `["ctx","set","fields._tmp"]` and it is compiled
-- **THEN** compilation SHALL fail with `UP2-E1015`, and the accepted prefixes SHALL be `locals` alone
+- **THEN** compilation SHALL fail with `UP2-E1015`, and the accepted prefixes SHALL be `locals` and `public`
 
 #### Scenario: a read of the retired root
 
 - **WHEN** the chain is `["ctx","get","fields.title"]` and it is compiled
-- **THEN** compilation SHALL fail with `UP2-E1005`, listing `globals` and `locals` as the readable roots
+- **THEN** compilation SHALL fail with `UP2-E1005`, listing `globals`, `locals` and `public` as the readable roots
 
 #### Scenario: the writable root still works
 
 - **WHEN** the chain is `[["ctx","set","locals._tmp"], ["ctx","get","locals._tmp"]]` and the input is `7`
 - **THEN** the result SHALL be `7`, because `locals` is the scope a write lands in
+
+#### Scenario: the run's shared scope is writable
+
+- **WHEN** the chain is `[["ctx","set","public.page"], ["ctx","get","public.page"]]` and the input is `7`
+- **THEN** the result SHALL be `7`, because `public` is the run's shared scope (`chain-iteration`)
 
 ### Requirement: A query that matches nothing yields the empty value of its shape
 

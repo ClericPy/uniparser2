@@ -196,7 +196,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 |---|---|
 | Field-map orchestration | multi-field evaluation over one input, cross-field `locals` references — the per-field error policies were retired (`01` `D-01-1`) and the third outcome was removed later (`empty-value-semantics`) |
 | **Lists and nesting** | `each` iteration (one dictionary per element, with the per-element scope), `$lit` escaping, arbitrarily deep nested `dict`/`list` |
-| **The story** | the step sequence (`name` / `type`, `body` = a chain, a whole-chain reference or a field map, `call` = a host function, `next` = the receiving step), the declared `entry` / `collect` endpoints with the unreachable-step lint (`UP2-E1018`), the type registry and the step-boundary validation (`L8`) — the executor and the run loop (`start` / `next` / `send`) **landed** in `story-jump-and-naming`, the registry (`register_type`, `UP2-E1011` / `UP2-E2019`) in `add-type-registry`, and the entry / chain-reference change in `entry-and-input` (`py.id` retired with it) |
+| **The story** | the step sequence (`name` / `type`, `body` = a chain, a whole-chain reference or a field map, `call` = a host function, `next` = the receiving step), the declared `entry` / `collect` endpoints with the unreachable-step lint (`UP2-E1018`), the type registry and the step-boundary validation (`L8`) — the executor and the run loop (`start` / `go` / `feed`) **landed** in `story-jump-and-naming`, the registry (`register_type`, `UP2-E1011` / `UP2-E2019`) in `add-type-registry`, and the entry / chain-reference change in `entry-and-input` (`py.id` retired with it) |
 | Effects | `Request` / `RequestBatch` → the host's own answer (`03` §4.1); `call` → a receipt that is JSON; trace versus suspension |
 | materialization | the run-scoped, byte-capped cache (`03` §6) — load-bearing for acceptance item 7 (**landed** in `add-materialization-cache`) |
 | lint | every live rule of `03` §10, each with at least one test (L20 is retired with `presets`) |
@@ -218,7 +218,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 
 **Acceptance**
 
-1. It can produce and snapshot: `list[dict]` (a list page with 20 items), a `dict` containing a `list[dict]` (two or more levels of nesting), a list turned into a `dict` (`ctx.map`), and a `Request` product (assembled only; handed to the host as an effect).
+1. It can produce and snapshot: `list[dict]` (a list page with 20 items), a `dict` containing a `list[dict]` (two or more levels of nesting), a list turned into a `dict` (`ctx.dict`), and a `Request` product (assembled only; handed to the host as an effect).
 2. The `ah.gov.cn` collection **story** produces 20 items on a real page fragment, crossing the network boundary through one `RequestBatch` effect; the detail story produces a single record of the registered `Article` type.
 3. Each "fixed" blocker among the 18 of draft `02` has a corresponding test (**named item by item**, see §2).
 4. All 22 behavior tests of the old v3's `test_parsers.py` pass in the form of a "behavior dictionary" (API compatibility is not required).

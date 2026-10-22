@@ -316,10 +316,11 @@ lives in chain data, in a cache key and in a journal — so `body` carries base6
 decodes it before sending. A request with a `json` key sends that value as JSON instead, and the two
 are alternatives.
 
-**There is no `follow_redirects` key.** Whether a redirect is followed is a **host** decision, like
-the client, the retries and the proxy: a chain says *what* to fetch, and the host says *how*. The
-downloader follows redirects, and the answer carries the **final** URL, so a chain that needs to know
-where it ended reads `url`.
+**There is no `follow_redirects` key.** It is a parameter of the **request method** — of the HTTP
+client, not of the request a chain declares: whether a redirect is followed is the client's business,
+like its retries and its proxy. A chain says *what* to fetch; the client says *how*. The downloader
+follows redirects, and the answer carries the **final** URL, so a chain that needs to know where it
+ended reads `url`.
 
 The kernel assembles and **never sends**: which HTTP client, how much concurrency, how many retries,
 whether to add hotlink-protection headers — all of it is the host's.

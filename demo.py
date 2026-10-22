@@ -228,7 +228,8 @@ FEED_DOCS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("RSS 1.0 / RDF — rdf:about, dc:date", SAMPLE_RDF, RDF_CHAINS),
 )
 
-# The tri-state is fixed: a missing value is not there, a failed stage always fails the run.
+# The outcome model is fixed: a query that matches nothing is an empty value, and a failed stage
+# always fails the run.
 _LIMIT = 62
 SHOWN: set[str] = set()
 
@@ -251,8 +252,6 @@ def render(value: Any) -> str:
 def render_outcome(outcome: up2.Outcome) -> str:
     if isinstance(outcome, up2.Ok):
         return render(outcome.value)
-    if isinstance(outcome, up2.Missing):
-        return f"Missing ({outcome.reason})" if outcome.reason else "Missing"
     return f"{outcome.code} {outcome.reason}"
 
 
@@ -466,16 +465,22 @@ def section_code() -> None:
 
 
 def section_tristate() -> None:
-    heading("10. Tri-state — what an absent or broken value means")
-    one("a selector that matched nothing is missing, not empty", [["re", "search", r"\d+"]], "abc")
+    heading("10. Outcomes — what an absent or broken value means")
+    one(
+        "a query that matched nothing is an empty value, not an error",
+        [["re", "search", r"\d+"]],
+        "abc",
+    )
     one("a broken rule always fails the run", [["py", "int", ""]], "abc")
     one(
         "the failure stops the chain at the stage that failed",
         [["py", "int", ""], ["py", "strip", ""]],
         "abc",
     )
-    print("\n   `Missing` is not a value: the field is absent from the product. There is no policy")
-    print("   to configure; `py.default`/`py.or` fall back for one field when a chain needs it.")
+    print('\n   There is no third state: `""` / `[]` / `null` are ordinary values, and everything')
+    print(
+        "   else fails with a code. `py.default` replaces `None` or an empty string in one field."
+    )
 
 
 def section_diagnostics() -> None:

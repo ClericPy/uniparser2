@@ -12,6 +12,76 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Added
 
+- **The snapshot runner answers a story's requests from the request cache** (change
+  `cached-snapshot-runs`; `04` §7-S4/S5): `up2 snapshot` and `up2 test` replay the cached answers, so
+  a chain that fetches can be frozen and regressed **offline**. A request with no cached answer is a
+  **miss** — the runner reports it and stops, because the CLI never reaches the network. A `call`
+  still needs a host, and the runner says so.
+- **The request's body is base64 text** (change `cached-snapshot-runs`; `03` §4.1): a body is binary
+  and the request dictionary is JSON throughout — it lives in chain data, in a cache key and in a
+  journal — so `body` carries base64 and the downloader decodes it before sending. A `json` key
+  carries a JSON value instead, and the two are alternatives.
+- **A third scope, `public`** (change `public-scope-and-try`; `01` §4, `03` §8): the run's own
+  notes — writable from any node (`ctx.set public.x`) and readable from any node (`$public.x`),
+  shared across the nodes of one run and outliving an `each` element. The three scopes read as
+  **constants / shared / private**: `globals` is the chain's read-only constants (fingerprinted),
+  `public` is runtime state (never fingerprinted), `locals` is one field's scratch space. `globals`
+  stays read-only: writing it would break "same chain, same result".
+- **A `try` directive** (change `public-scope-and-try`; `02` §5): `["try","skip"]` /
+  `["try","break"]` / `["try","raise"]` guard **the stage immediately after them**. `skip` keeps the
+  value the chain carried into that stage and carries on, `break` ends the chain with it, and `raise`
+  is the default. A guarded stage that **succeeds** disarms the guard, so a `try` never swallows a
+  later failure; two in a row, or one at the end of a chain, are compile errors (`UP2-E1005`). The
+  directive is **not** an operator — the operators stay pure — and it never turns an exception into a
+  value.
+- **A default downloader and a request cache** (change `default-host-downloader`): the new
+  `uniparser2.net` package fetches the request dictionary the kernel hands over and answers with a
+  response carrying `text` and `url` — the shape the sample hosts read with `py.getattr`. It is
+  **synchronous and standard-library only** (the runtime dependencies stay empty), and the cached
+  answers live under `.cache/requests/` — never committed — keyed by the whole request, so a second
+  run replays them instead of the network.
+
+### Changed
+
+- **BREAKING — an outcome is a value or a failure** (`01` §4, `02` §5; change `empty-value-semantics`):
+  the third state (`Missing`), the `MISSING` sentinel and `accepts_missing` are gone. A query that
+  matches nothing answers the **empty value of its shape** — `""` for text, `[]` for a list, `None` for
+  a node handle or a JSON query — and the chain keeps going; a path that cannot be walked is
+  `UP2-E2001`. A field map has no absent key and a step no longer "produces nothing": every executed
+  step contributes a product or fails the run. `py.default` now replaces `None` / `""` only, and the
+  trace records `Ok` / `Failed`.
+- **BREAKING — the story's keys are `body` / `args` / `collect`** (change `rename-and-unify`):
+  `parse` → `body`, `with` → `args`, `exit` → `collect`, and a task item's `next` may be a plain
+  string. The run object's methods are `go()` / `feed()`. `$fields` is deleted (`$locals` is the one
+  spelling of the current scope).
+- **BREAKING — `ctx.map` is split into `ctx.dict` and `ctx.list`**, and `py` gains `items`
+  (change `ctx-dict-list-and-py-table`): the action name now states the result shape, and
+  `py.items` (`dict → [[key, value], …]`) is the zero-dependency way to iterate an object. The
+  conversion actions' `fix` text no longer recommends a fallback operator.
+
+### Added
+
+- **A story declares where it starts, and a dead step is a compile error** (`03` §2, §10 L13, §12.6):
+  `entry` is a required top-level key naming the step the run starts at, symmetric with `collect` — a bundle
+  without it is `UP2-E1005` at `/entry`, and one that names no declared step is `UP2-E1016`, listing the
+  steps. `up2 lint` prints the entry beside the exit. The flow the cycle lint already walks is now asked
+  the second question it can answer: every step **unreachable from the entry** is the new `UP2-E1018` at
+  compile time, with the step's name and a pointer at it, so a step nobody jumps to and the fall-through
+  never passes is no longer silently dead. The entry may name **any** step — including one written later —
+  and the lint then reports the ones the flow cannot arrive at. Conformance: 72 declared pairs, 37
+  implemented error codes, each with a case.
+- **A chain may be a reference, and that is the only identity** (`03` §2, §12.6): wherever a chain is
+  expected — a field-map value, or a step's `body` — a **string beginning with `$`** means "the value the
+  reference names, unchanged": `"url": "$in"` is the step's own input, `"$in.url"` is a field of it, and a
+  chain may open with one (`["$globals.base", ["py","strip",""]]`). It is the same spelling `args` already
+  uses for an argument, and it is the **only** way to express identity: no single-element stage form was
+  added. `py.id` is **deleted** with its two uses in the samples — `py` now holds 41 functions and the
+  registry 72 pairs (from 42 and 73) — and a chain that opened with the identity stage simply drops it,
+  because a chain's first stage already receives the input. Both sample bundles lost their identity stages
+  and gained `entry`, and both host recipes take the seed URL from the command line (the site root by
+  default) instead of passing `globals.base_url`, which is the urljoin base of the chains rather than the
+  URL a run starts at.
+
 - **A story's flow is now acyclic, checked at compile time** (`03` §10 L12, §12.5; closes `03` §13 O9):
   `next` stays free to name any step, including one written *earlier* — the samples' own fan-out shape
   does that — but a run may not come back to a step it is already executing, and the new `UP2-E1017`
@@ -25,7 +95,7 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   (64) bounds that graph, not the number of steps a run may take: a forward jump remains legal.
 
 - **The trace, and `up2 trial --trace`** (`06` §5.1, `03` §4.4): a run can now be read stage by stage.
-  `Trace` collects one event per **evaluated stage** (a stage the tri-state short-circuit skips records
+  `Trace` collects one event per **evaluated stage** (a stage a failure stopped the chain before records
   nothing) plus one per **suspension**, each carrying `seq`, `step`, `item`, `field`, `stage`, `op`,
   `action`, `params`, `input`, `output`, `state`, `detail` and `ms`. `params` are the **compiled** named
   parameters, so a default the author never wrote — or an `each`'s compiled field map — is visible;
@@ -68,7 +138,7 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   kernel still performs no IO. A step's keys are `name` and `type` (they were `key` / `out`); the
   `chains` table is gone, because a parse rule is a step; a request step declares **`next`**, the step
   that receives the answers (a single task may override it, and the kernel strips it before the host
-  sees the request); and a top-level **`exit`** names the step whose products are the run's output.
+  sees the request); and a top-level **`collect`** names the step whose products are the run's output.
   `$in` names this step's own input, so `["py","id",""]` replaces the `["py","str",""]` workaround.
   `up2 lint` and `up2 trial` accept a story file and report a suspension as such.
 

@@ -8,10 +8,14 @@
 > **状态**：`0.5.0`。**L1**（DSL 算子层）已完成：**11 个算子**——`css` / `css1`（HTML 选择器，前者取全部、
 > 后者只取首个，selectolax）、`xpath`（XML，lxml）、`json`（jmespath）、`re`、`py`（42 个白名单函数）、
 > `udf`（宿主注册，链里不含代码）、`code`（链内代码，语言级沙箱，**默认不存在**，见「安全提示」），
-> 外加作用域算子 `ctx`、积木 `const` 与迭代算子 `each`，共 73 对 `(算子, 动作)`。**L2 已起步**：站点包
-> （**story**）可编译可运行——`start(bundle, value)` / `run.next()` / `run.send(answer)`，`Request` /
+> 外加作用域算子 `ctx`、积木 `const` 与迭代算子 `each`，共 74 对 `(算子, 动作)`。**L2 已起步**：站点包
+> （**story**）可编译可运行——`start(bundle, value)` / `run.go()` / `run.feed(answer)`，`Request` /
 > `RequestBatch` / `call` 挂起运行、其答复恢复**同一个**运行——两个 `samples/*/site.json` 都能通过随仓库提交的
-> 宿主脚本（`samples/*/host.py`，用 `register_type` 注册样本自己的领域类型）对真实站点端到端跑通。命令行
+> 宿主脚本（`samples/*/host.py`，用 `register_type` 注册样本自己的领域类型，并从命令行取种子 URL）对真实站点
+> 端到端跑通。抓取用的是包自带的默认实现（`uniparser2.net`）：一个同步的、纯标准库下载器，外加放在
+> `.cache/requests/` 的请求缓存，第二遍运行直接重放缓存的答复而不再走网络。站点包**两端都需声明**：`entry` 指明运行从哪一步开始、`collect` 指明哪一步的产物离开；
+> 从 `entry` 不可达的步骤在编译期即报 `UP2-E1018`。链也可以写成**引用**（`"url": "$in"`），恒等即以此表达——
+> 恒等阶段 `py.id` 已删除。命令行
 > 可试：`uv run up2 lint samples/books.toscrape.com/books/site.json`，完整运行用
 > `uv run python samples/books.toscrape.com/host.py`。**类型注册表**也已落地：宿主用
 > `register_type(name, constructor)` 注册类型，内核在**步骤边界**用它校验产物。运行作用域的**物化缓存**也
@@ -37,14 +41,14 @@
 | **链是数据** | 一条解析链就是一个 JSON 数组，可存文件、可入库、可 diff、可由 LLM 生成；序列化是**逐字符稳定**的不动点 |
 | **纯函数、零 IO** | 同输入同链 → 同输出；内核不联网、不读文件、不用协程，因此可重放、可快照回归、可在 CI 里跑 |
 | **出口只有一个装箱点** | 任何出链的值都过同一个函数：拒绝 DOM 句柄等不可序列化值，链的行为不会从缝里漏出去 |
-| **缺失 ≠ 错误** | 三态 `Ok` / `Missing` / `Failed` 分开，一个字段没抽到不会炸掉整条链，坏规则则在**编译期**就被拦住 |
+| **没匹配到 ≠ 错误** | 只有两种结果：`Ok`（值，可能是 `""` / `[]` / `null`）与 `Failed`（带错误码）。一个字段没抽到不会炸掉整条链，坏规则则在**编译期**就被拦住 |
 | **规则内没有宿主能力** | 规则够不到任何宿主能力：不 import 第三方、不读文件、不联网、不起进程；定制逻辑只能通过宿主注册的具名函数（`udf`）进入，定制面可控。唯一例外是**可选**的 `code` 沙箱——默认与 `uniparser2[all]` 都不装它（见下「安全提示」） |
 | **依赖按算子可选** | 内核零第三方依赖；每个算子（甚至每个动作）声明自己的依赖，缺了只是那个动作不可用并给出安装命令 |
 
 ## 现在有什么（L1）
 
-**算子层**已完成，且有机械审计：11 个算子、73 对 `(算子, 动作)`，每一对都有覆盖用例
-（`uv run up2 conformance --check`）；35 个已实现的错误码每一个都有测试断言。它上面已落地 **L3 的第一片
+**算子层**已完成，且有机械审计：11 个算子、72 对 `(算子, 动作)`，每一对都有覆盖用例
+（`uv run up2 conformance --check`）；37 个已实现的错误码每一个都有测试断言。它上面已落地 **L3 的第一片
 ——模板仓库**：`up2 publish` 把链绑定到 `(root_domain, tpl_key)` 身份、拒绝不过 lint 的链、把指纹写进
 只增不改的审计表，`up2 get` / `up2 audit` 读回来——底层可以是文件仓库或 SQLite（`UP2_HOME`、`UP2_STORE`）。
 
@@ -54,8 +58,8 @@
 | `xpath` | lxml（`[xml]`） | `text` · `self` · `nodes`（XML；XPath 是 lxml 原生能力） |
 | `json` | jmespath（`[json]`） | `get`——jmespath 表达式，留空表示根 |
 | `re` | 标准库 | `search` · `group` · `findall` |
-| `py` | 标准库；`parse_time` 的自然语言路径需 `[time]`，`html_to_markdown` 需 `[md]` | 42 个白名单纯函数：`int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `getattr` `id` · `len` `first` `last` `flatten` `uniq` `sort` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` · `==` `!=` `<` `<=` `>` `>=` `in` `or` `and`（谓词，Python 的写法） |
-| `ctx` | 标准库 | `get` · `set` · `del` · `map`（作用域读写） |
+| `py` | 标准库；`parse_time` 的自然语言路径需 `[time]`，`html_to_markdown` 需 `[md]` | 42 个白名单纯函数：`int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `getattr` · `len` `first` `last` `flatten` `uniq` `sort` · `items` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` · `==` `!=` `<` `<=` `>` `>=` `in` `or` `and`（谓词，Python 的写法） |
+| `ctx` | 标准库 | `get` · `set` · `del` · `dict` · `list`（作用域读写） |
 | `udf` | 宿主注册 | 宿主事先注册的任意函数；链里只带名字 |
 | `code` | pydantic-monty（`[code]`，刻意不在 `[all]` 里） | `run`——链内代码，跑在语言级沙箱里（见「安全提示」） |
 | `const` | 标准库 | 字面量积木 |
@@ -72,7 +76,7 @@
 `up2 snapshot` / `test` / `doctor` 与随仓库提交的样例 `samples/local/demo/` 一并可用；设计里 L2/L3
 的其余部分还没实现：没有 `up2 studio` 验证台，没有 `up2 list`
 （`TemplateStore.list` 方法已在，只是没有命令打印它）；ADR 也还没写。没有 `seed` /
-`parse` / `emit` 节点类型，也没有 `routes`——那套模型已随 story 模型退役，剩下的就是上面这张清单。
+`body` / `emit` 节点类型，也没有 `routes`——那套模型已随 story 模型退役，剩下的就是上面这张清单。
 CLI 是 `ops` / `conformance` / `lint` / `trial` / `snapshot` / `test` / `publish` / `get` / `audit` /
 `doctor`；公开 API 是
 `compile_field` /
@@ -131,6 +135,21 @@ uv run up2 ops --json               # 机读：交给 LLM 生成链时先喂这�
   ["py", "default", 0]
 ]
 ```
+
+某一步可能失败时，可以在它前面加一道守卫——`["try","skip"]` 保留链上已有的值继续往下走，
+`["try","break"]` 就此结束并交出手上的值；被守的那步**成功**时守卫立刻失效：
+
+```jsonc
+// chain.json —— 年份可选，其余字段不是
+[
+  ["try", "skip"],
+  ["re", "group", {"pattern": "(\\d{4})", "group": 1}],
+  ["py", "int", ""]
+]
+```
+
+三个作用域读作**常量 / 共享 / 私有**：`globals` 是链里只读的常量，`public` 是这次运行自己的
+便签（任何节点都能写、且不进指纹），`locals` 是单个字段的草稿区。
 
 ```bash
 uv run up2 lint chain.json                                   # 编译期校验（不执行）
@@ -214,9 +233,7 @@ outcome = up2.eval_field(chain, "published in 2026-09", scope=scope)
 
 match outcome:
     case up2.Ok(value=value):
-        print(value)  # 2026
-    case up2.Missing(reason=reason):
-        print("missing:", reason)  # 缺失即"不在这里"：产品里没有这个键，不是 "" 也不是 null
+        print(value)  # 2026；没匹配到就是空值（"" / [] / null），不是错误
     case up2.Failed(code=code, reason=reason, fix=fix):
         print(code, reason, fix)  # 确定性错误码 + 一句话修法
 ```
@@ -241,14 +258,15 @@ class Article:  # 字段就是产品的键；缺 title 就在这一步失败，�
 
 up2.register_type("Article", Article)
 bundle = {
+    "entry": "record",
     "steps": [
         {
             "name": "record",
-            "parse": {"url": [["py", "getattr", "url"]], "title": [["css1", "text", "h1"]]},
+            "body": {"url": ["$in", ["py", "getattr", "url"]], "title": [["css1", "text", "h1"]]},
             "type": "Article",
         }
     ],
-    "exit": "record",
+    "collect": "record",
 }
 run = up2.start(bundle, response)  # 缺 title 就在这一步失败，而不是等到出口
 ```
@@ -268,7 +286,7 @@ run = up2.start(bundle, response)  # 缺 title 就在这一步失败，而不是
 ```
 uniparser2/
 ├── src/uniparser2/
-│   ├── core/           值域 / 三态 / 引用 / 注册表 / 编译 / 求值 / 出口装箱 / 一致性审计
+│   ├── core/           值域 / 两种结果 / 引用 / 注册表 / 编译 / 求值 / 出口装箱 / 一致性审计
 │   │   └── （零第三方依赖、无 IO、无协程）
 │   ├── ops/            算子实现（basic · regex · pyops · ctx；每个算子自声明动作与依赖）
 │   ├── store/          模板仓库（Template + 指纹 + FileStore / SqliteStore + publish 三道门）

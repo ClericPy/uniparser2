@@ -97,17 +97,26 @@ $<root>[.<segment>][.<segment>]…
 |---|---|---|---|
 | `globals` | the chain-level environment (the story's `globals`), consistent across steps | — | all steps |
 | `locals` | this step's locals (`_`-prefixed fields + `ctx.set locals.*`) | this step | only this step |
-| `fields` | shorthand for this step's field-map product | — | only this step |
+| `in` | this step's own input value | — | only this step |
 | `<step key>` | the product of an earlier step | — | only its **later** steps |
 
-**The run's input value has no root**: it is the first stage's input, and a step that wants its own input
-reads it as the chain's first stage (`03` §2).
+`$locals` was a second name for `locals` and is **retired** (change `rename-and-unify`): one namespace, one
+spelling. A bundle that writes it is `UP2-E1006`, an unknown reference root.
+
+**The run's input value is read as `$in`** (`03` §2): it is the first stage's input value, and a step that
+needs a field of its own input writes `$in.url` rather than a `locals` round-trip.
+
+**A chain may be a reference.** Wherever a chain is expected — a field-map value, or a step's `body` when it
+is an array — a **string beginning with `$`** is a whole-chain reference: the value it names, unchanged.
+`"$in"` is identity, `"$in.url"` is a field of the step's input, and a chain may open with one
+(`["$globals.base", ["py","strip",""]]`). This is the same spelling a `ref_or_literal` parameter uses, and it
+is the only way to express identity — there is no single-element stage form (`03` §2, §12.6 E4).
 
 - **Only dotted paths are supported, not array indices** (settled by Q24 in `01`). To take an index, use the explicit operator `["py","getitem",0]`.
 - **Multi-level dotted paths** are supported (`$article.meta.url`) — Q24 in `01` already settled that dotted paths are supported.
 - **References can only point backwards**: `$<step key>` must be a step preceding the current one, otherwise `UP2-E1006` (a direct consequence of the
   sequential-execution semantics of `N7`).
-- **Referencing the current step's own key is forbidden**: inside this step use `$fields.<key>` (this is exactly what the hint attached to `UP2-E1006` says).
+- **Referencing the current step's own key is forbidden**: the compile error points at `$in` (its own input) or at the step's own name.
 - **A dotted path dispatches on the value it walks** (`03` §13 O12): a mapping is read by key, a sequence by a digit index and a host object by `getattr`.
   An attribute that is **callable** is refused with `UP2-E2002`, the same way `py.getattr` refuses one — a method is not a value, and it could not leave the
   run anyway (`UP2-E2003`); the fix hint names `["css","text",""]` or a `udf`.
@@ -141,7 +150,7 @@ To write "a literal that starts with `$`" in a `ref_or_literal` position, use a 
 ```
 
 **This is a direct answer to blocker R in the `02` worked-example draft** (the internal source material, not shipped in this repository): §7 of the `04`
-parser-syntax draft mentioned `$get` without ever defining it, and the reference forms it used (`$fields.*` / a dotted path / a
+parser-syntax draft mentioned `$get` without ever defining it, and the reference forms it used (`$locals.*` / a dotted path / a
 plain literal) were all guesswork. This design's rule can be stated in one sentence:
 
 > **A leading `$` ⇒ a reference; a literal starting with `$` uses `{"$lit": …}`; everything else is a literal.**
@@ -199,28 +208,30 @@ Evaluation rules:
 | Current state | Behaviour of the next stage |
 |---|---|
 | `Ok(v)` | feed `v` as the input of the next stage and keep evaluating |
-| `Missing` | **short-circuit this field** (later stages do not run) and stay missing: the key is absent from a field-map product and the item is skipped in a batch — never `""`, never `null` (`01` §4.2) |
 | `Failed` | **stop the chain** and fail the run with the code of the stage that failed; nothing degrades it |
 
 - The first stage's input = the field's `input` (the step's input by default; inside `each`'s field map it is the current element, §6.9).
 - Fields are evaluated in **declaration order** (a JSON object preserves order), so a later field can reference the `_` local values produced by an earlier one.
 - **The number of stages is a hard stability boundary**: exceeding `MAX_STEPS_PER_FIELD` is a compile error (`01` §9).
 
-**`accepts_missing`: the only exception to the short-circuit rule (a mechanism filled in while implementing L1)**
+**A query that matches nothing is a value, not a state.** There is no third outcome and no per-action
+flag (`empty-value-semantics`): every accessor answers the empty value of the shape it produces —
+`""` for text, `[]` for a list, `None` for a node handle or a JSON query — and the chain keeps
+evaluating. `py.default` replaces `None` or `""` in one field; a stage that *fails* is never caught by
+it.
 
-`Missing` short-circuits the following stages, but **the stage immediately after it**, if it declares `accepts_missing`, can catch the "missing" as its input —
-`py.default` exists precisely for this ("fall back when empty/None/missing"). In that case the evaluator passes the `MISSING` sentinel instead of
-short-circuiting.
-
-| Point | Explanation |
-|---|---|
-| only the **immediately adjacent** stage can catch it | in `[re, ctx.set, py.default]` a missing `re` short-circuits at `ctx.set`, so `default` never gets a chance; to fall back, `default` must directly follow the stage that produced the missing |
-| currently only `py.default` declares it | it is the only "missing handler" in the closed set; future additions must declare it explicitly and cannot be guessed from the name |
-| the fallback belongs to the chain, not to the engine | the stage that catches the missing value decides what comes out (`py.default` answers its parameter); the engine itself never invents `""` or `null` (`01` §4.2) |
+**A `try` directive guards the next stage** (`public-scope-and-try`): `["try","skip"]` /
+`["try","break"]` / `["try","raise"]` protect **the stage immediately after them** and nothing else. On
+a failure `skip` keeps the value the chain carried into that stage and carries on, `break` ends the
+chain with that same value, and `raise` is the default behaviour. A guarded stage that **succeeds**
+disarms the guard, so a `try` never swallows a later failure. The directive is **not** an operator — it
+changes what the evaluator does with the next stage's outcome, so the operators stay pure — and it
+never turns an exception into a value. Two directives in a row, or a directive at the end of a chain,
+are compile errors (`UP2-E1005`): a guard that protects nothing is a mistake, not a no-op.
 
 > **Deviation record D-02-3**: the `04` parser-syntax draft describes `remove` as "delete a node (a side effect)". This design removes side effects — `remove`
 > returns a **pruned copy** as the input of the next stage, affecting only this field's chain. Reasons: (a) invariant I5 of `01` requires operators to be
-> side-effect free, otherwise chains cannot be replayed and fields bleed into each other; (b) when `parse` runs the fields over N items one by one, a shared
+> side-effect free, otherwise chains cannot be replayed and fields bleed into each other; (b) when `body` runs the fields over N items one by one, a shared
 > mutable DOM means that the deletion made for one item affects the next — a trap that is bound to be stepped on. The cost is that every `$remove` needs one
 > tree clone, for which a place has been reserved in the limits of `01` §9 and in the performance tests of `05` §4.4.
 
@@ -235,14 +246,14 @@ short-circuiting.
 
 | Accessor | Selector kind | `css` (all matches) | `css1` (first match) |
 |---|---|---|---|
-| `text` | selector (literal) | `list[str]` | `str` (no match ⇒ `Missing`) |
-| `html` | selector | `list[str]` | `str` |
-| `outer` | selector | `list[str]` | `str` |
-| `@<attribute name>` | selector | `list[str]` | `str` (attribute absent ⇒ `Missing`) |
-| `nodes` | selector | `list[Opaque]` (all matches; empty ⇒ `Missing`) | `list[Opaque]` (0 or 1) |
-| `self` | selector | `Opaque` (first match; use `nodes` for all) | `Opaque` |
+| `text` | selector (literal) | `list[str]` (no match ⇒ `[]`) | `str` (no match ⇒ `""`) |
+| `html` | selector | `list[str]` (no match ⇒ `[]`) | `str` (no match ⇒ `""`) |
+| `outer` | selector | `list[str]` (no match ⇒ `[]`) | `str` (no match ⇒ `""`) |
+| `@<attribute name>` | selector | `list[str]` (no match / attribute absent ⇒ `[]`) | `str` (attribute absent ⇒ `""`) |
+| `nodes` | selector | `list[Opaque]` (no match ⇒ `[]`) | `list[Opaque]` (0 or 1) |
+| `self` | selector | `Opaque` (first match; use `nodes` for all) | `Opaque` (no match ⇒ `None`) |
 | `remove` | selector | a **copy** with **all** matches pruned (a pure function, see D-02-3) | a copy with the **first** match pruned |
-| `exists` | selector | `bool`: true when at least one node matches, **never** `Missing` | `bool` (the first-match flag does not change existence) |
+| `exists` | selector | `bool`: true when at least one node matches | `bool` (the first-match flag does not change existence) |
 
 - **`text` excludes the text of `script`/`style`/`noscript`** (the noise tags are pruned on the copy before the text is taken); it does not normalise whitespace
   (use `py.normalize_space`).
@@ -284,7 +295,7 @@ short-circuiting.
 
 | Slot 2 | Product |
 |---|---|
-| a jmespath expression (literal, **pre-compiled at compile time**) | an arbitrary JSON value; no result ⇒ `Missing` |
+| a jmespath expression (literal, **pre-compiled at compile time**) | an arbitrary JSON value; no result ⇒ `None` |
 
 An empty path `""` = take the root (settled by the `04` draft). The input may be a `str` (automatically `json.loads`-ed) or an already parsed value. The
 registry still keeps one action name (`get`) to declare the parameter table and for the conformance audit, but it **does not appear in the chain**.
@@ -298,9 +309,9 @@ registry still keeps one action name (`get`) to declare the parameter table and 
 
 | Action | Slot 3 | Product |
 |---|---|---|
-| `search` | regex (literal) | the whole `group(0)` of the first match; no hit ⇒ `Missing` |
-| `group` | `{"pattern": "…", "group": <index\|group name>}` | the named capture group of that match; no hit ⇒ `Missing` |
-| `findall` | regex (literal) | `list[str]` (`re.findall`); empty ⇒ `Missing` |
+| `search` | regex (literal) | the whole `group(0)` of the first match; no hit ⇒ `""` |
+| `group` | `{"pattern": "…", "group": <index\|group name>}` | the named capture group of that match; no hit ⇒ `""` |
+| `findall` | regex (literal) | `list[str]` (`re.findall`); no hit ⇒ `[]` |
 
 - **The action is called `search` rather than `match`**: the implementation is `re.search(...).group(0)` (find the first one from the start), whereas Python's
   `re.match` is **anchored at the start** — the two have different semantics. The `04` draft's description of `$match` says "whole-match group(0)", i.e. search
@@ -344,7 +355,7 @@ returns `{"a":1}`), `join.sep` and `parse_time.lang` (both `str()`-coerced). A *
 
 The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser's directive table lives in Python's `_strptime` and is the same on every platform, while `strftime` delegates unknown directives to the C library — glibc passes `%Q` through verbatim and the Windows CRT raises, so a `strftime` probe gave the same chain two verdicts on two operating systems. Asking the parser also means the verdict matches what the operator does at run time: the set therefore follows the interpreter (measured on 3.12.11 / 3.13.12 / 3.14.3, `%T` / `%e` / `%-d` are accepted from 3.13 on, and a stray `%` is read as a literal by 3.12 but rejected by 3.13+).
 
-**Function table (42 functions, a closed set; anything outside the table is `UP2-E1003`)**:
+**Function table (41 functions, a closed set; anything outside the table is `UP2-E1003`)**:
 
 > **Dependencies are declared per action** (a convergence made while implementing L1): `requires` can hang not only off an operator but also off a **single
 > action** — `html_to_markdown` needs `html-to-markdown`, whereas `strip` in the same operator needs nothing at all. When a dependency is missing, that
@@ -365,9 +376,8 @@ The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser'
 | Text | `join` | `separator` | `list` → `str` | `04` |
 | Text | `upper` / `lower` | — | upper/lower case | `04` |
 | Collections | `slice` | `":20"` / `"1:5"` / `"::-1"` | slice a string or a list | `04` |
-| Collections | `getitem` | `at` (`ref_or_literal`) | take a subscript — a sequence by index, a mapping by key, a str by character, **no coercion**; a subscript that is not there is `UP2-E2018` (an error, not `Missing`) | `04` (merged with `get`) |
+| Collections | `getitem` | `at` (`ref_or_literal`) | take a subscript — a sequence by index, a mapping by key, a str by character, **no coercion**; a subscript that is not there is `UP2-E2018` (an error, not an empty value) | `04` (merged with `get`) |
 | Host object | `getattr` | `ref_or_literal` (the attribute name, required, no default) | read an attribute of the value that flows in (a response object, a library node); an absent attribute is `UP2-E2002` whose `reason` begins with the exception's own class (`AttributeError: 'Response' object has no attribute 'txet'`), and an attribute that is **callable** is refused — a method is never called, and never becomes a value | new (host objects may flow, `03` §3.3) |
-| Identity | `id` | — | return the input unchanged; the action for a step whose value **is** its own input (a seed URL), replacing the `["py","str",""]` workaround | new (the story layer) |
 | Collections | `len` | — | length | `04` |
 | Collections | `first` / `last` | — | take the first/last element | `dsl-design` §3.4 |
 | Collections | `flatten` | — | flatten one level | `dsl-design` §3.4 |
@@ -375,18 +385,19 @@ The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser'
 | Collections | `uniq` | — | deduplicate while preserving order | new (deduplicating a list page) |
 | URL | `urljoin` | `base` (`ref_or_literal`) | relative → absolute | `04` |
 | URL | `urlsplit` | `"netloc"\|"path"\|"query"` | take a URL apart (to obtain the site identity) | new |
-| Fallback | `default` | the fallback value | empty string/`null`/`Missing` → the fallback value | `essence` §B6 |
+| Fallback | `default` | the fallback value | empty string / `null` → the fallback value (a failed stage is not caught) | `essence` §B6 |
 | Encoding | `b64_encode` / `b64_decode` | — | Base64 | `essence` §3.4 |
 | Encoding | `sha256` | — | hexadecimal digest (idempotency key/fingerprint) | new |
 | Time | `parse_time` | `{"lang"?, "format"?, "date_order"?, "now"?}` | a time string → the canonical format `%Y-%m-%d %H:%M:%S`, in the order **explicit `format`** → **built-in table** (`dateparser` is never loaded) → **natural-language detection** → `UP2-E2007`; the table reads zone-less calendar shapes, **the two canonical feed timestamps** (RFC 822 `pubDate`, zone-bearing ISO 8601 `updated`) and the CJK patterns, so the machine path still has **no required dependency**; the engine is optional and its absence at that point reports `UP2-E2008`; `lang` restricts the detection instead of enabling it, `date_order` (`MDY`/`DMY`/`YMD`, default **`DMY`**) decides the ambiguous slash writings in the table **and** in the engine, and `now` (`ref_or_literal`, e.g. `"$globals.now"`) pins the base clock of a relative expression (without it the wall clock is used) | the former `time` operator (D-02-14) |
 | Time | `strftime` | `layout` | the canonical time string → another layout (`%Y/%m/%d`); the allowlist is locale-free and platform-stable (`%a`/`%A`/`%b`/`%B`/`%p`/`%c`/`%x`/`%X` are locale-decided, `%z`/`%Z` are empty on a zone-less value, `%e`/`%k`/`%l`/`%G`/`%V` are platform-dependent and `%s` would have to assume a zone, so each is `UP2-E1005` at compile time) | new (the output side of time handling) |
 | Conversion | `str` / `int` / `float` / `bool` | — | type conversion (cannot convert ⇒ `UP2-E2005`) | the former `cast` operator (D-02-14) |
 | Conversion | `list` | — | JSON array text → `list`; if it is already a `list`, unchanged | the former `cast` operator |
+| Conversion | `items` | — | a `dict` → `[[key, value], …]` in the mapping's own order (a pair is a two-element **list**, never a tuple); index a half with the literal `0` / `1`, because `getitem` does not coerce | new (`ctx-dict-list-and-py-table`); the zero-dependency way to iterate an object |
 | Conversion | `from_json` | — | JSON text → JSON tree | the former `cast json` (**it cannot be called `json`**: that would share a name with the `json` operator while meaning something different) |
 | Predicate | `==` / `!=` | `to` (`ref_or_literal`) | equality / inequality with the parameter; **no type coercion** (`200` is not `"200"`), containers compare deeply | new (the chain layer's predicates) |
 | Predicate | `<` / `<=` / `>` / `>=` | `to` (`ref_or_literal`) | ordering; a **comparable pair only** (two numbers or two strings), any other pair is `UP2-E2002` naming both types — a Python `TypeError` never escapes as `UP2-E2099` | new |
 | Predicate | `in` | `container` (`ref_or_literal`) | Python's `in`: the **parameter is the container** (a `str` substring, a `list` member, a `dict` key); to ask whether the value contains something, write the element in front (`[["const","/public/"],["py","in","$locals.url"]]`) | new |
-| Predicate | `or` / `and` | `operands` (`ref_or_literal`, an **array**) | Python's `or`/`and` over operands that were **already computed** (typically `_` locals): `or` answers with the first truthy operand, else the last, `and` with the first falsy, else the last; an empty array is `false` / `true`. Truthiness is Python's, so the answer is an operand rather than a boolean | new (the L2 `match` needs these) |
+| Predicate | `or` / `and` | `operands` (`ref_or_literal`, an **array**) | Python's `or`/`and` over operands that were **already computed** (typically `_` locals): `or` answers with the first truthy operand, else the last, `and` with the first falsy, else the last; an empty array is `false` / `true`. Truthiness is Python's, so the answer is an operand rather than a boolean. The operand array is resolved **before** the operator runs, so a reference that cannot be read fails the stage — these actions select among values, they do not rescue a missing one | new (the L2 `match` needs these) |
 
 **Functions removed from the `04` parser-syntax draft and the reasons**:
 
@@ -417,7 +428,7 @@ The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser'
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (40 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 41 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -459,11 +470,11 @@ structure is not copied** (it is treated as immutable and must not be modified i
 - **There is no required dependency**: the built-in format table uses `datetime.strptime` to handle common machine formats (ISO, `YYYY/MM/DD`,
   `"YYYY\u5e74M\u6708D\u65e5"` — the Chinese year–month–day pattern — `YYYYMMDD`, and so on); only when `lang` is given (natural-language dates) is `dateparser`
   needed, and its absence reports `UP2-E2008`.
-- A parse failure ⇒ `Failed` (`UP2-E2007`; the `fix` text offers two routes, "add a `format`" or "add a `lang`"); an empty input ⇒ `Missing`.
+- A parse failure ⇒ `Failed` (`UP2-E2007`; the `fix` text offers two routes, "add a `format`" or "add a `lang`"); an empty input ⇒ `""`.
 - `format` is validated at **compile time** (an illegal strptime directive ⇒ `UP2-E1005`).
 - **The `tz` parameter is not implemented** (YAGNI): the value domain is `str`, and time-zone conversion needs `datetime` semantics, so it is left until there
   is a real need.
-- **Why it was an operator in the first place**: the `04` parser-syntax draft lists it as one of the 7 parsers. But its only behaviour is "parse" — in essence
+- **Why it was an operator in the first place**: the `04` parser-syntax draft lists it as one of the 7 parsers. But its only behaviour is "body" — in essence
   it is a function, and by the principle that "an operator with only one behaviour writes only its parameter" it belongs in the `py` table.
 
 ### 6.8 `ctx` — scope reads and writes
@@ -471,9 +482,10 @@ structure is not copied** (it is treated as immutable and must not be modified i
 | Action | Value kind | Semantics |
 |---|---|---|
 | `get` | `literal` (bare path text) | read a scope path |
-| `set` | `literal`, **the path must start with `locals.`/`fields.`** | write the upstream value into the locals |
-| `del` | `literal`, **the path must start with `locals.`/`fields.`** | delete a local |
-| `map` | `literal`: an array of bare paths, or a "name → bare path" object | batch read → assemble a `list` / `dict` |
+| `set` | `literal`, **the path must start with `locals.` or `public.`** | write the upstream value into the locals or the run's public scope |
+| `del` | `literal`, **the path must start with `locals.` or `public.`** | delete a local or a public value |
+| `dict` | `literal`: a "name → bare path" object | batch read → an object |
+| `list` | `literal`: an array of bare paths | batch read → a list (a `*args` payload) |
 
 > **Paths are always written as bare path literals** (`locals._tmp` / `globals.base_url`), **without a `$` and without a `ctx.` prefix**. This was converged
 > while implementing L1: the `04` draft mixed the two spellings (`["ctx","get","ctx.locals._raw"]` versus `["ctx","map",["locals.a.b"]]`), whereas the target
@@ -483,10 +495,11 @@ structure is not copied** (it is treated as immutable and must not be modified i
 
 > **Ruling (tightening §2.8 of the `04` draft and blocker U of the `02` worked example)**: the `04` draft offers four actions `get/set/del/map`, and Q41 of `01`
 > proposes the three verbs "read / assign / call a function", but the **write-permission boundary and the write-back timing were never defined** (blocker U of
-> the `02` worked-example draft says so explicitly). This design **hard-limits the write surface to `locals.*`**: `ctx.set` writing `globals.*` or a node
+> the `02` worked-example draft says so explicitly). This design **hard-limits the write surface to `locals.*` and `public.*`**: `ctx.set` writing `globals.*` or a node
 > product ⇒ compile-time `UP2-E1015`. Reasons: (a) if `globals` could be changed, the same value would differ depending on when a field is evaluated, and the
 > purity of `N1` would fail; (b) if node products could be changed, a "node product" would no longer be an immutable snapshot and downstream references would
-> read intermediate state. `call` is no longer a `ctx` action — calling a function is the operator itself (`py` / `udf`) and does not need a third entry point.
+> read intermediate state. `public` is the third scope (`03` §8): the **run's** own notes, writable and readable from any node, and **not** chain data — it
+> never enters the fingerprint, so writing it cannot break "same chain, same result". `call` is no longer a `ctx` action — calling a function is the operator itself (`py` / `udf`) and does not need a third entry point.
 >
 > **The relationship between the two spellings**: `["ctx","get","locals._raw"]` (a stage) and the reference `$locals._raw` (a parameter slot) read the same
 > value in the same scope. The former is used to "switch the input source in the middle of a chain", the latter to "pass some value to an operator as an
@@ -565,7 +578,7 @@ is in §6.12).
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (40 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 41 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -596,9 +609,9 @@ string or as a `{"expr": …, "ns": {…}}` object (the object likewise lives in
   deliberate asymmetry**: the `css` side has `css1` (both cardinalities explicit) while the `xpath` side has only the full-cardinality form. The reason is that
   XPath has no measured need for "take the first" yet, and lxml has no `css_first`-style single-selection entry point (the gain would likewise be only in the
   value-extraction phase). If that need ever does appear, adding an `xpath1` reuses the same `first_only` flag and changes no semantics.
-- **Default namespaces are a silent trap**: in `<urlset xmlns="…">` (which is what a sitemap is), `//loc` **returns empty without raising**. When the result is
-  empty this operator calls that out in the `reason` of `Missing` and gives two fixes: `//*[local-name()='loc']` (no configuration needed) or adding a prefix to
-  the `ns` mapping.
+- **Default namespaces are a silent trap**: in `<urlset xmlns="…">` (which is what a sitemap is), `//loc` **returns empty without raising**. The empty
+  result is the shape's empty value (`[]` / `None`), so the fix lives in the chain: `//*[local-name()='loc']` (no configuration needed) or a prefix in the
+  `ns` mapping.
 - **Undefined prefixes**: when `//dc:creator` is given without `ns`, lxml raises `XPathEvalError: Undefined namespace prefix`. Measured, that error appears
   **only at evaluation time** (the construction phase does not raise), so at compile time the engine **tries one run** against an empty document, pulling
   prefix/function-name errors — which do not depend on the document — forward to compile time (`UP2-E1005`, in keeping with "bad chains fail at compile time").
@@ -691,7 +704,7 @@ falsely reject legal constructs that the sandbox does not support anyway. The au
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (40 named functions) | "this chain can do at most these 31 things" — statically checkable, portable across deployments |
+| `py` | in the engine, already audited | **closed** (41 named functions) | "this chain can do at most these 41 things" — statically checkable, portable across deployments |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
 
@@ -710,17 +723,18 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E1003` | the `py` function is not in the allowlist | list the allowlisted function names |
 | `UP2-E1004` | stage length/arity mismatch | give the legal forms of that operator |
 | `UP2-E1005` | parameter Schema validation failure (type/required/unknown parameter) | give the parameter name + the expected type + the actual type |
-| `UP2-E1006` | the reference points at a later step or at an undeclared path | give the available step order and the list of available keys |
+| `UP2-E1006` | the reference names an unknown root, points at a later step, or a step names itself | give the available roots, the step order and the list of available keys |
 | `UP2-E1007` | a literal was written in a `ref` position | hint that the position must be a `$…` reference |
-| `UP2-E1009` | a step name is a reserved root (`globals`/`locals`/`fields`/`in`) or is duplicated | list the reserved roots and the declared step names (`03` §10 L3) |
+| `UP2-E1009` | a step name is a reserved root (`globals`/`locals`/`in`) or is duplicated | list the reserved roots and the declared step names (`03` §10 L3) |
 | `UP2-E1010` | the `udf` is not registered | hint at `register_udf` or the `entry_points` group name |
 | `UP2-E1011` | the type name declared by a step's `type` is not registered (checked at the step boundary, `03` §3.3) | list the registered type names (`03` §3) |
 | `UP2-E1012` | a resource limit is exceeded (`01` §9) | give the constant name that was hit and the limit value |
 | `UP2-E1013` | the regex contains a nested quantifier (ReDoS risk) | hint at rewriting it or switching to non-greedy |
-| `UP2-E1014` | a `_`-prefixed local key was referenced **across steps** | hint that a local value does not leave its step; inside the same step use `$fields.<key>` |
+| `UP2-E1014` | a `_`-prefixed local key was referenced **across steps** | hint that a local value does not leave its step; inside the same step use `$locals.<key>` |
 | `UP2-E1015` | `ctx.set`/`del` wrote a path outside `locals.` | hint that the write surface is limited to `locals` |
-| `UP2-E1016` | a `next` / `exit` target is not a step of the story | list the declared step names (`03` §10 L9) |
+| `UP2-E1016` | an `entry` / `next` / `collect` target is not a step of the story | list the declared step names (`03` §10 L9) |
 | `UP2-E1017` | the story's flow closes a loop of steps (`03` §10 L12) | give the travel path and point at the jump that closes it: name a step that runs after it, or take the looping step out (`03` §12.5) |
+| `UP2-E1018` | a step is unreachable from the story's `entry` (`03` §10 L13) | name the step and hint at pointing a `next` at it, taking it out of the flow, or making it the entry (`03` §12.6) |
 | ~~`UP2-E1101`~~ … ~~`UP2-E1106`~~, ~~`UP2-E1108`~~ | **retired with the v0.1 node model** (`03` §12.1) | they policed a graph that no longer exists (`next`/`routes`/`default_route`, node existence, reachability, cycles, in-degree > 1, `route_field`, the `result` template). The numbers are **retired, not reused**, so older references keep pointing at the same rule |
 | `UP2-E1107` | an operator's optional dependency is missing | give the install command (e.g. `uv add selectolax`) |
 
@@ -754,7 +768,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 |---|---|
 | `UP2-E1008` "a reference was written in a `literal` position" | it conflicts with §3.2: a `$` in a `literal` position **is always a literal** (that is exactly the point of deciding by kind), so this error cannot occur. An extra code is an extra branch |
 | `UP2-E2006` "regex execution timed out" | **there is no real mechanism**: Python's `re` has no `timeout` parameter (measured on 3.13/3.14). Better to delete the code than to keep a false promise |
-| `UP2-E2015` "the tri-state is `Missing` and the effective policy is `raise`" | the settlement policy is **retired** (`01` `D-01-1`): missing means "not there" (`01` §4.2), so there is no configuration left to raise it. The number is not reused |
+| `UP2-E2015` "the effective policy would raise on a missing value" | the settlement policy is **retired** (`01` `D-01-1`), and the third outcome was removed later (`empty-value-semantics`): absence is the shape's empty value (`01` §4.2). The number is not reused |
 
 **The current status of `UP2-E1007`**: L1's operators (`const`/`re`/`py`/`ctx`/`each`) **have no `ref`-only parameter** — `ctx`'s path is literal path text,
 `each`'s field map is a structured parameter and `py`'s parameters are `ref_or_literal`. `ctx`'s `refs` parameter keeps the rule alive at compile time, and L1 covers
@@ -775,7 +789,7 @@ it with a test patched to "temporarily turn `urljoin.base` into `Kind.REF`".
 | D-02-3 | `remove` is a side effect | `remove` returns a pruned copy (a pure function) | preserves `N1`/I5; avoids the cross-talk of a shared mutable DOM during per-item parsing |
 | D-02-4 | `callback` uses a `"ctx.fields.x\|each"` string; the preset-chain container is called `parsers` | **superseded** by the L2 iteration redesign (`each`): the argument is an inline field map, so there is no selector object, no container and no name to resolve | no string surgery, one shape in one slot, and the terminology does not collide |
 | D-02-5 | `ctx` has `get/set/del/map` with an undefined write surface; there is also a `call` verb | the write surface is hard-limited to `locals.*`; `call` is deleted | preserves purity and the immutability of products; calling a function is an operator |
-| D-02-6 | three reference forms are undefined (`$fields.*`, multi-level paths, literals), and an undefined `$get` appears | one rule: a leading `$` ⇒ a reference, `{"$lit":…}` escapes; `$get` is abolished | a rule must fit in one sentence; undefined concepts are deleted |
+| D-02-6 | three reference forms are undefined (`$locals.*`, multi-level paths, literals), and an undefined `$get` appears | one rule: a leading `$` ⇒ a reference, `{"$lit":…}` escapes; `$get` is abolished | a rule must fit in one sentence; undefined concepts are deleted |
 | D-02-7 | the `cast` vocabulary contains `datetime`, which conflicts with exit encoding (blocker N of the `02` worked-example draft) | type conversion only converts inside the JSON value domain, and time goes to `py.parse_time` (which outputs a str) | the value domain is a JSON tree and `N2` requires serialisability |
 | D-02-8 | the `py` table contains `const`/`getattr` (as well as `int`/`float`/`bool`/`str`/`list`) | `const` is a standalone operator; `getattr` **came back** with host objects (`allow-object-values`), where it reads an attribute of the value that flows in and refuses a callable one; the five type functions first went to `cast` and then, with D-02-14, back to `py` | a single entry point, avoiding one name meaning two things |
 | D-02-9 | the `re` capture-group action does not say how pattern and group name are given together | the named object `{"pattern":…, "group":…}` | the parameter position cannot hold two parameters |

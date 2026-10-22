@@ -38,8 +38,8 @@ ops (each lazy-imports)         │  html(css/css1) · xml(xpath) · json · re 
 | I2 | dependencies may only point **downward** (`cli → graph → core`), `ops` is injected in reverse by `core.registry`, and `ops` depends only on `core.values` / `core.errors` / `core.limits` | a cycle is a design error |
 | I3 | **exactly one function** may produce the final product (`core.export.pack`); `N5` is guaranteed in exactly one place | the export type guarantee fails (R5 of the old v3) |
 | I4 | **the compile product and the chain data are separate**: `compile()` returns a standalone object, and never hangs the compile result on a `str` subclass or on the chain dict | the dual payload of the old v3's `CompiledString` (R3) |
-| I5 | operators are **without side effects, without IO, without global state**; the write surface of `ctx` is limited to `locals` | `N1` fails and the chain is not replayable |
-| I6 | control flow **may only appear in the form of fields** (`each` / the policy), and branching **never appears inside a story** — the host picks the story and dispatches on the product's type name (`03` §1); there are no reserved keys in the result namespace | the old v3's protocol-like keys such as `__object__` (R2) |
+| I5 | operators are **without side effects, without IO, without global state**; the write surface of `ctx` is limited to `locals` and `public` | `N1` fails and the chain is not replayable |
+| I6 | control flow **may only appear in the form of fields** (`each` and the `try` directive), and branching **never appears inside a story** — the host picks the story and dispatches on the product's type name (`03` §1); there are no reserved keys in the result namespace | the old v3's protocol-like keys such as `__object__` (R2) |
 | I7 | third-party engines may only be **lazily imported**; at import time only `find_spec` probing is allowed | a missing dependency makes the import fail and the whole package unusable (R7) |
 | I8 | any chain that reaches the runtime has **already passed every lint**; the runtime performs no structural validation | `N3` fails and a bad chain blows up halfway |
 
@@ -49,7 +49,7 @@ ops (each lazy-imports)         │  html(css/css1) · xml(xpath) · json · re 
 src/uniparser2/
   core/
     values.py     value-domain types + Opaque handles + type decisions + canonicalize
-    errors.py     tri-state (Ok/Missing/Failed) + error codes + exception hierarchy
+    errors.py     outcomes (Ok/Failed) + error codes + exception hierarchy
     limits.py     resource limit constants (the single source)
     ast.py        the normalized model of stages / fields / steps / stories (compile-time input)
     registry.py   operator registry (@op decorator + optional dependency probing)
@@ -144,46 +144,44 @@ Value     = JsonValue | Opaque | HostObject
 
 ---
 
-## 4. Tri-state and error handling
+## 4. Outcomes and error handling
 
-### 4.1 Tri-state
+### 4.1 Two outcomes
 
 ```python
 @dataclass(frozen=True, slots=True)
 class Ok:      value: Value
 @dataclass(frozen=True, slots=True)
-class Missing: reason: str          # not matched: the selector did not match, the regex did not match, the key does not exist
-@dataclass(frozen=True, slots=True)
-class Failed:  code: str; reason: str; exc: Exception | None   # evaluation failed: type mismatch, conversion failure, exception inside an operator
+class Failed:  code: str; reason: str; fix: str = ""   # evaluation failed: type mismatch, conversion failure, exception inside an operator
 ```
 
 | Rule | Content |
 |---|---|
-| **Missing ≠ error** | `Missing` is a normal result (the page simply does not have this field); `Failed` is an exception that requires a decision. The two must be separated, otherwise it is impossible to be both "bad data does not interrupt" and "bad rules surface early" |
+| **A query that matches nothing is a value** | "not there" is not a third state: the accessor answers the **empty value of its shape** (`""` / `[]` / `None`, `02` §6) as `Ok`, and the value flows on |
 | **An error is not a value** | never pass an exception object down as a result (this is the direct cause of the old v3 breaking "the export is all str", R5); `Failed` is a control signal, not a value |
-| **Stage semantics** | see `02` §5. In one sentence: `Ok` → keep evaluating; `Missing` → short-circuit this field and stay missing; `Failed` → stop the chain and report the code of the stage that failed |
-| **A missing value is not a value** | the engine does not settle `Missing` into `""` or `null`: in a field map the key is absent from the product, in a batch the item is skipped. A fallback for one field is written where it applies, at the action level (`py.default` / `py.or`) |
+| **Stage semantics** | `02` §5. In one sentence: `Ok` → keep evaluating; `Failed` → stop the chain and report the code of the stage that failed |
 | **A failed stage always fails the run** | bad rules surface early, with the code of the stage that failed; no configuration turns a failure into a value |
+| **A stage may be guarded, one stage at a time** | the `try` directive (`02` §5) covers **the next stage only**: `skip` keeps the value the chain carried and carries on, `break` ends the chain with it, `raise` is the default. It is a **control** decision, not a degradation: no policy turns an exception into a value |
 
-### 4.2 Missing and failed have fixed outcomes
+### 4.2 Three ways a field produces no usable value
 
-The tri-state settles in exactly two ways, and there is nothing to configure:
+The three answers are **different on purpose**, and nothing settles one into another:
 
-| State | Outcome |
-|---|---|
-| `Missing` | **not there**: in a field map the key is **absent** from the product; in a batch the item is **skipped**; at a step boundary the step is **skipped** (no product, and nothing in the exit list) — never `""`, never `null` |
-| `Failed` | **always fails the run**, carrying the code of the stage that failed (its JSON Pointer in the trace); nothing degrades it |
+| Situation | Outcome | Where |
+|---|---|---|
+| the page simply has no such field | the shape's empty value (`""` / `[]` / `None`), `Ok` | the accessor (`css` / `xpath` / `json` / `re`) |
+| the stage cannot do its work | `Failed`, carrying the code of the stage | the operator (and its JSON Pointer in the trace) |
+| the product is not the declared shape | the **host-registered type constructor** refuses it (`UP2-E2019`) | the step boundary (`03` §3) |
 
-A field that must exist is enforced by the **host-registered type constructor** at the step boundary
-(`03` §3): it reports the missing key at the step that produced it (`UP2-E2019`, the constructor's own
-exception text in `reason`), which is where the author can see it. A value that may be absent is made
-present by the action that knows how — `py.default` and `py.or` catch a missing value
-(`accepts_missing`, `02` §5) instead of reconfiguring the whole run.
+A value that may be absent is the author's decision, taken where it applies: `py.default` replaces
+`None` or `""` in one field. A field that must exist is enforced by the type constructor at the step
+boundary, which reports it at the step that produced it.
 
 > **The settlement policy is retired** (change `retire-settlement-policy`): the `Policy` type, the four
 > `on_missing` / `on_error` strategies, the `policy=` parameter of `eval_field`, the `policy` block of a
 > story (`03` §2) and the CLI's `--on-missing` / `--on-error` are all gone, and `UP2-E2015` is retired
-> without reusing its number. The deviation record is `D-01-1` in §11.
+> without reusing its number. The deviation record is `D-01-1` in §11. The third outcome was removed
+> later, by `empty-value-semantics`: absence is the empty value now, and `accepts_missing` is gone.
 
 ### 4.3 Error codes
 
@@ -215,7 +213,7 @@ def compile(chain: Chain) -> CompiledGraph: ...
 Key points:
 
 1. **`compile()` is idempotent**: passing an existing `CompiledGraph` returns it unchanged (the old v3 did this by checking `CompiledString`; this design does it by type check).
-2. **`loads()` is tri-state idempotent**: it accepts "an instance / a JSON string / a dict", and `loads(loads(x))` is an identity (absorbing A2 of the old v3, so the caller need not decide the input form).
+2. **`loads()` accepts three forms**: it accepts "an instance / a JSON string / a dict", and `loads(loads(x))` is an identity (absorbing A2 of the old v3, so the caller need not decide the input form).
 3. Pre-compiled products live in `CompiledGraph.steps[i].compiled` and do not pollute the chain data.
 
 ---
@@ -231,8 +229,8 @@ Two stages, in a fixed order:
 1. **Reject `Opaque`**: hitting a DOM handle yields `UP2-E2003` and points out which field it is (with the hint "serialize it through `text`/`html`/`@attr` first").
 2. **Schema validation** (if declared): type, optionality, list elements, nested objects; a failure yields `Failed` with a JSON Pointer path.
 
-There is **no empty-value settlement step**: a `Missing` field is not a value at all, so it never reaches
-packing — its key is simply absent from the product (§4.2).
+There is **no empty-value settlement step**: a query that matched nothing already carries its shape's
+empty value, so packing sees an ordinary JSON value (§4.2).
 
 ### 6.1 Own Schema description (JSON Schema is not adopted)
 
@@ -274,7 +272,7 @@ class CssOp: ...
 | **Optional-dependency probing** | at import time only `importlib.util.find_spec(name)`, which **does not trigger an import**. When a dependency is missing, the **declaration is kept** but marked unavailable — that is how a reference to it can give `UP2-E1107` plus the install command (more diagnostic value than letting it disappear from the registry). `up2 ops` lists the unavailable entries |
 | **Dependency granularity** | dependencies can be declared per **action** (`ActionSpec.requires`), not only per operator: a missing `html-to-markdown` for `py.html_to_markdown` does not affect `py.strip`. There is also `any_requires`, meaning "installing any one of them is enough" (selectolax / beautifulsoup4 for `css`) |
 | **Lazy import** | the actual use of third-party code happens inside the operator through `importlib.import_module` (optional dependencies are always imported dynamically, so that four type checkers do not each report "module does not exist"); a failure turns into `UP2-E2004` and hints at the install name |
-| **Capability self-description** | `up2 ops --json` outputs, per operator: name, aliases, arity (`arity`), slot roles (`action_slot` / `slots`), the action enumeration (`actions`, each with `name` / `summary` / `available` / `accepts_missing`), the argument Schema (`params`: `name` / `kind` / `required` / `default`), **the writing slot 3 takes (`param_form`: `none` / `value` / `named`, see `02` §4)**, dependencies (`requires` / `missing`) and the install command of a missing dependency — an LLM drafting a chain reads this first (`04` §7-S0, §8) |
+| **Capability self-description** | `up2 ops --json` outputs, per operator: name, aliases, arity (`arity`), slot roles (`action_slot` / `slots`), the action enumeration (`actions`, each with `name` / `summary` / `available`), the argument Schema (`params`: `name` / `kind` / `required` / `default`), **the writing slot 3 takes (`param_form`: `none` / `value` / `named`, see `02` §4)**, dependencies (`requires` / `missing`) and the install command of a missing dependency — an LLM drafting a chain reads this first (`04` §7-S0, §8) |
 | **Aliases** | `py` ↔ `python`, `json` ↔ `jmespath`; aliases resolve to the same operator inside the registry, and **the chain data keeps the original spelling** (stable fingerprints) |
 | **The evaluation signature of an operator** | `evaluate(call) -> Outcome`, where `call` is a `Call` context object (`value` / `action` / `params` / `payload` / `scope`). A context object instead of a long argument list: adding a field does not break every operator's signature |
 
@@ -328,12 +326,12 @@ Absorbing the old v3's "library logging conventions": in `__init__.py`, `logger 
 | Event | Level | Payload |
 |---|---|---|
 | compile ok | `DEBUG` | `chain_id` / `tpl_key` / fingerprint / step count / elapsed time |
-| stage evaluation | `DEBUG` | step key / field name / stage index / action / elapsed time / tri-state (**off by default**; the trial bench's trace does not depend on logs) |
-| a tri-state of `Failed` | `WARNING` | error code + one-sentence reason + step/field location |
+| stage evaluation | `DEBUG` | step key / field name / stage index / action / elapsed time / outcome state (**off by default**; the trial bench's trace does not depend on logs) |
+| a `Failed` stage | `WARNING` | error code + one-sentence reason + step/field location |
 | export packing failure | `WARNING` | error code + JSON Pointer + expected type vs actual type |
 | missing operator dependency | `INFO` (on the first `up2 ops`) | operator name + missing dependency + install command |
 
-**Deviation record from the upstream material**: the old v3 achieved "does not blow up" with "an error is a value + a `SYSTEM_ERRORS` allowlist re-raise" (the internal source material, not shipped in this repository, `uniparser-essence.md` §B5). This design replaces that with the tri-state, but **keeps the allowlist idea**: `KeyboardInterrupt` / `SystemExit` / `MemoryError` / `OSError` are **never swallowed** and propagate directly upward (implementation site: the fallback `except Exception:` in `evaluator`, never a bare `except:`).
+**Deviation record from the upstream material**: the old v3 achieved "does not blow up" with "an error is a value + a `SYSTEM_ERRORS` allowlist re-raise" (the internal source material, not shipped in this repository, `uniparser-essence.md` §B5). This design replaces that with the two-outcome model (`Ok` / `Failed`), but **keeps the allowlist idea**: `KeyboardInterrupt` / `SystemExit` / `MemoryError` / `OSError` are **never swallowed** and propagate directly upward (implementation site: the fallback `except Exception:` in `evaluator`, never a bare `except:`).
 
 ---
 
@@ -353,10 +351,13 @@ deletes it:
 | the `policy` block | the story JSON (`03` §2) |
 
 `on_missing="empty"` — the old default — is the reason for the retirement: it wrote `""` into a record
-whenever a selector never matched, which is a lie in the data. Missing now means "not there" and a failed
-stage always fails the run (§4.2), so "tolerate one absence" is expressed at the action level
-(`py.default` / `py.or`) and "this field must exist" by the host-registered type constructor.
+whenever a selector never matched, which is a lie in the data. A failed stage always fails the run
+(§4.2), so "tolerate one absence" is expressed at the action level (`py.default`) and "this field must
+exist" by the host-registered type constructor.
 
-The tri-state itself, `accepts_missing` and the actions that catch a missing value are **unchanged**: only
-the configurable settlement went. `UP2-E2015` ("value is missing and the effective policy is raise") is
-**retired, not reused** (`02` §7.1), so an older reference still points at the same meaning.
+`UP2-E2015` ("value is missing and the effective policy is raise") is **retired, not reused**
+(`02` §7.1), so an older reference still points at the same meaning.
+
+> **Follow-up** (change `empty-value-semantics`): the third outcome is gone as well. A query that
+> matches nothing answers the shape's empty value, `accepts_missing` and the `MISSING` sentinel were
+> deleted, and `py.default` now replaces `None` / `""` only. The two-outcome model is §4.1.

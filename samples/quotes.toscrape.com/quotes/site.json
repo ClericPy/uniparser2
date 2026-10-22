@@ -2,18 +2,19 @@
   "globals": {
     "base_url": "https://quotes.toscrape.com"
   },
+  "entry": "start",
   "steps": [
     {
       "name": "start",
-      "parse": {
-        "url": [["py", "id", ""]]
+      "body": {
+        "url": "$in"
       },
       "type": "Request",
       "next": "links"
     },
     {
       "name": "links",
-      "parse": {
+      "body": {
         "items": [
           ["py", "getattr", "text"],
           ["css", "@href", "div.quote a[href^='/author/']"],
@@ -21,7 +22,7 @@
           [
             "each",
             {
-              "url": [["py", "id", ""], ["py", "urljoin", "$globals.base_url"]]
+              "url": [["py", "urljoin", "$globals.base_url"]]
             }
           ]
         ]
@@ -31,7 +32,7 @@
     },
     {
       "name": "author",
-      "parse": {
+      "body": {
         "url": [["py", "getattr", "url"]],
         "name": [
           ["py", "getattr", "text"],
@@ -57,5 +58,5 @@
       "type": "Author"
     }
   ],
-  "exit": "author"
+  "collect": "author"
 }

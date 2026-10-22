@@ -1,8 +1,9 @@
 {
+  "entry": "record",
   "steps": [
     {
       "name": "record",
-      "parse": {
+      "body": {
         "headings": [
           ["css", "text", "h2"],
           ["py", "uniq", ""]
@@ -11,5 +12,5 @@
       "type": "dict"
     }
   ],
-  "exit": "record"
+  "collect": "record"
 }

@@ -139,7 +139,6 @@ class XPath(Op):
         context = _context_node(etree, call)
         if isinstance(context, Failed):
             return context
-        expr = str(call.params["expr"])
         try:
             results = list(call.payload(context))
         except etree.XPathError as exc:
@@ -270,25 +269,3 @@ def _as_node(item: Any) -> Outcome:
             fix="use text for attribute/text values (e.g. //enclosure/@url)",
         )
     return Ok(XPathNode(item))
-
-
-def _empty_reason(context: Any, expr: str) -> str:
-    """Diagnostic for an empty result: point out the default-namespace trap (sitemaps hit it)."""
-    reason = f"XPath {expr!r} matched nothing"
-    default_ns = _default_namespace(context)
-    if default_ns is None or ":" in expr:
-        return reason
-    return (
-        f"{reason}. Note: the document root carries the default namespace xmlns={default_ns!r}, "
-        "so unprefixed names cannot match it — use //*[local-name()='name'], or add a prefix to "
-        "the ns mapping"
-    )
-
-
-def _default_namespace(context: Any) -> str | None:
-    try:
-        nsmap = context.getroottree().getroot().nsmap
-    except Exception:  # failing to get nsmap only costs one hint, not a failure
-        return None
-    default = nsmap.get(None)
-    return default if isinstance(default, str) else None

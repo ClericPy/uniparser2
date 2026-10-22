@@ -7,8 +7,7 @@ written ``{"$lit": ...}``; everything else is a literal.**
 
 Scope (L1):
 - ``globals``: the chain-level read-only environment.
-- ``locals`` / ``fields``: the scope of the current field (writable). L1 has no nodes, so both
-  name the same namespace; L2 merges node products into ``fields``.
+- ``locals``: the scope of the current field (writable).
 - ``<node key>``: the product of an earlier node, injected by the caller as ``products``
   (read-only).
 

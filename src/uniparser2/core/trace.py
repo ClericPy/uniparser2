@@ -294,17 +294,7 @@ def _param_json(node: Any) -> JsonValue:
         value: JsonValue = node.value if is_json_value(node.value) else text_of(node.value)
         return {"kind": "lit", "value": value}
     if isinstance(node, CompiledField):
-        return {
-            "kind": "chain",
-            "stages": [
-                {
-                    "op": stage.op_name,
-                    "action": stage.action,
-                    "params": compiled_params(stage.params),
-                }
-                for stage in node.stages
-            ],
-        }
+        return _chain_json(node)
     if isinstance(node, Mapping):
         if any(isinstance(item, CompiledField) for item in node.values()):
             fields = {str(key): _param_json(item) for key, item in node.items()}

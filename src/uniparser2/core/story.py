@@ -5,11 +5,11 @@ control flow, and both live here rather than in an operator:
 
 - a step whose ``type`` is ``Request`` / ``RequestBatch`` **suspends** the run, because the kernel
   performs no IO: the host sends the request(s) and sends the answer(s) back;
-- ``next`` resolves which step receives those answers, and ``exit`` names the step whose products
+- ``next`` resolves which step receives those answers, and ``collect`` names the step whose products
   are the run's output.
 
-The run loop is a **generator**: ``start`` compiles and drives to the first effect, ``run.next()``
-reads it and ``run.send(answer)`` resumes. A generator keeps the interruptions out of the kernel's
+The run loop is a **generator**: ``start`` compiles and drives to the first effect, ``run.go()``
+reads it and ``run.feed(answer)`` resumes. A generator keeps the interruptions out of the kernel's
 data (no threads, no callbacks, still synchronous) while letting a fan-out whose receiving step is
 itself a request nest correctly, since the nested suspension travels out through ``yield from``.
 
@@ -86,9 +86,9 @@ class StoryStep:
     name: str
     index: int
     type: str | None
-    parse: CompiledField | Mapping[str, CompiledField] | None
+    body: CompiledField | Mapping[str, CompiledField] | None
     call: str | None
-    with_: Mapping[str, Param]
+    args: Mapping[str, Param]
     next: str | None
     pointer: str
 
@@ -99,11 +99,12 @@ class StoryStep:
 
 @dataclass(frozen=True, slots=True)
 class CompiledStory:
-    """A compiled bundle: the constants, the steps and the named exit."""
+    """A compiled bundle: the constants, the steps, the named entry and the collected step."""
 
     globals: Mapping[str, Any]
     steps: tuple[StoryStep, ...]
-    exit: str
+    entry: str
+    collect: str
     index: Mapping[str, int]
     source: Any
 
@@ -118,8 +119,8 @@ def compile_story(bundle: Any, /, *, pointer: str = "") -> CompiledStory:
             f"unknown bundle keys: {', '.join(unknown)}",
             pointer=pointer,
             fix=(
-                "a bundle carries `globals`, `steps` and `exit` — a parse rule is a step, so there "
-                "is no `chains` table"
+                "a bundle carries `entry`, `globals`, `steps` and `collect` — a parse rule is a "
+                "step, so there is no `chains` table"
             ),
             allowed=tuple(sorted(_BUNDLE_KEYS)),
         )
@@ -129,7 +130,7 @@ def compile_story(bundle: Any, /, *, pointer: str = "") -> CompiledStory:
         raise _bad(
             f"`steps` must be a non-empty array, got {type_name(raw_steps)}",
             pointer=f"{pointer}/steps",
-            fix='declare at least one step: {"name": "records", "parse": {...}, "type": "Record"}',
+            fix='declare at least one step: {"name": "records", "body": {...}, "type": "Record"}',
         )
     if len(raw_steps) > MAX_STORY_STEPS:
         raise Up2Error(
@@ -152,13 +153,18 @@ def compile_story(bundle: Any, /, *, pointer: str = "") -> CompiledStory:
         )
         for position, (raw, name) in enumerate(zip(raw_steps, names, strict=True))
     )
-    exit_name = _exit_name(bundle.get("exit"), names, pointer=f"{pointer}/exit")
-    _lint_flow(steps)
-    logger.debug("compiled story: steps=%d exit=%s", len(steps), exit_name)
+    collect_name = _collect_name(bundle.get("collect"), names, pointer=f"{pointer}/collect")
+    entry_name = _entry_name(bundle.get("entry"), names, pointer=f"{pointer}/entry")
+    entry = names.index(entry_name)
+    _lint_flow(steps, entry=entry)
+    logger.debug(
+        "compiled story: steps=%d entry=%s collect=%s", len(steps), entry_name, collect_name
+    )
     return CompiledStory(
         globals=globals_map,
         steps=steps,
-        exit=exit_name,
+        entry=entry_name,
+        collect=collect_name,
         index={name: position for position, name in enumerate(names)},
         source=bundle,
     )
@@ -183,10 +189,10 @@ class _RunState:
 
 
 class StoryRun:
-    """One run of one story: ``next()`` reads the current effect, ``send()`` resumes it.
+    """One run of one story: ``go()`` reads the current effect, ``feed()`` resumes it.
 
     The answer to a suspension resumes **this same run** — there is no hand-off, so a story is one
-    flow from its first request to its exit product.
+    flow from its first request to its collected product.
 
     One scope spans the whole run, so the run's materialization cache (`03` §6) lives exactly as
     long as the run does.
@@ -226,14 +232,14 @@ class StoryRun:
         """The trace this run records into, or ``None`` when the caller asked for none."""
         return self._state.trace
 
-    def next(self) -> Effect:
+    def go(self) -> Effect:
         """The current effect: the suspension the host must answer, or ``("done", product)``.
 
         Idempotent by design: the documented host loop reads the effect and then answers it.
         """
         return self._effect
 
-    def send(self, answer: Any) -> Effect:
+    def feed(self, answer: Any) -> Effect:
         """Resume the run with ``answer`` and return the next effect (or ``done``)."""
         if self._done:
             raise ValueError("the run is already done; there is no suspension to answer")
@@ -250,14 +256,14 @@ class StoryRun:
 
 
 def _drive(state: _RunState, value: Any) -> Generator[Effect, Any, None]:
-    """The run loop: step through the bundle until it passes the last step.
+    """The run loop: step from the step `entry` names until the counter passes the last one.
 
     ``state.scope`` is the run's own scope, re-pointed at each step's input; it carries the run's
     materialization cache, so the cache lives exactly as long as the run (`03` §6).
     """
-    pc = 0
+    pc = state.story.index[state.story.entry]
     while pc < len(state.story.steps):
-        pc, value, _ = yield from _step_product(state, pc, value)
+        pc, value = yield from _step_product(state, pc, value)
     yield ("done", state.output)
 
 
@@ -266,13 +272,8 @@ def _step_product(
     pc: int,
     value: Any,
     item: int | None = None,
-) -> Generator[Effect, Any, tuple[int, Any, bool]]:
+) -> Generator[Effect, Any, tuple[int, Any]]:
     """Run the step at ``pc``, resolving every suspension it causes.
-
-    Returns the program counter to continue at, the value that continuation takes as its input, and
-    whether the step produced a product at all (``False`` when its chain product was missing, `03`
-    §9). A receiving step that itself produces a request is handled here, which is what makes a
-    nested fan-out resume inside the same run.
 
     ``item`` is the fan-out result this evaluation belongs to (`06` §5.1): the position of a batch
     answer for a receiving step, and ``None`` for a step the linear flow reaches.
@@ -322,12 +323,8 @@ def _request_effect(
     value: Any,
     product: Any,
     item: int | None,
-) -> Generator[Effect, Any, tuple[int, Any, bool]]:
-    """Hand one request over, then let the step `next` names continue the run (`03` §4.1).
-
-    The receiving step may itself produce nothing: `next` names the step after it, so the run
-    continues there instead of at a value that does not exist.
-    """
+) -> Generator[Effect, Any, tuple[int, Any]]:
+    """Hand one request over, then let the step `next` names continue the run (`03` §4.1)."""
     started_at = stamp(state.trace)
     request = _single_request(step, product)
     receiver = _receiver(state.story, step, product, position=0)
@@ -345,7 +342,7 @@ def _request_effect(
 
 def _batch_effect(
     state: _RunState, step: StoryStep, value: Any, product: Any
-) -> Generator[Effect, Any, tuple[int, Any, bool]]:
+) -> Generator[Effect, Any, tuple[int, Any]]:
     """Hand one batch of tasks over, then run the receiving step once per answer (`03` §4.1.1).
 
     The run continues past **everything** the fan-out ran: with a per-task `next` the receiving
@@ -366,12 +363,12 @@ def _batch_effect(
     received_products: list[Any] = []
     continuations: list[int] = []
     for position, (task_answer, receiver) in enumerate(zip(answers, receivers, strict=True)):
-        next_pc, received, _ = yield from _step_product(
+        next_pc, received = yield from _step_product(
             state, state.story.index[receiver], task_answer, position
         )
         received_products.append(received)
         continuations.append(next_pc)
-    return max(continuations), received_products, True
+    return max(continuations), received_products
 
 
 def _record_effect(
@@ -527,7 +524,7 @@ def _batch_answers(step: StoryStep, tasks: Sequence[Mapping[str, Any]], answer: 
     answers = list(answer) if _is_sequence(answer) else [answer]
     if len(answers) != len(tasks):
         raise ValueError(
-            f"the batch of step {step.name!r} has {len(tasks)} tasks, so send() needs {len(tasks)} "
+            f"the batch of step {step.name!r} has {len(tasks)} tasks, so feed() needs {len(tasks)} "
             f"answers in order, got {len(answers)}"
         )
     return answers
@@ -583,8 +580,8 @@ def _field_map_product(
 
 
 def _call_arguments(step: StoryStep, value: Any, scope: Scope) -> dict[str, Any]:
-    """Resolve a `call` step's `with` arguments (the same leaves as an operator's parameter)."""
-    resolved = resolve_params(step.with_, scope)
+    """Resolve a `call` step's `args` (the same leaves as an operator's parameter)."""
+    resolved = resolve_params(step.args, scope)
     if isinstance(resolved, Mapping):
         return dict(resolved)
     if isinstance(resolved, Failed):
@@ -610,7 +607,7 @@ def _compile_step(
         raise _bad(
             f"unknown step keys: {', '.join(unknown)}",
             pointer=pointer,
-            fix="a step carries name / type / parse / call / next / with",
+            fix="a step carries name / type / body / call / next / args",
             allowed=tuple(sorted(_STEP_KEYS)),
         )
     declared_type = raw.get("type")
@@ -619,33 +616,33 @@ def _compile_step(
             f"`type` must be a non-empty string, got {declared_type!r}",
             pointer=f"{pointer}/type",
         )
-    parse = raw.get("parse")
+    body = raw.get(BODY_KEY)
     call = raw.get("call")
-    if (parse is None) == (call is None):
+    if (body is None) == (call is None):
         raise _bad(
-            "a step declares exactly one of `parse` and `call`",
+            f"a step declares exactly one of `{BODY_KEY}` and `call`",
             pointer=pointer,
-            fix='write "parse": {...} for extraction, or "call": "host.fn" for a host function',
+            fix='write "body": {...} for extraction, or "call": "host.fn" for a host function',
         )
-    if "with" in raw and call is None:
-        raise _bad("`with` only belongs to a `call` step", pointer=f"{pointer}/with")
+    if ARGS_KEY in raw and call is None:
+        raise _bad(f"`{ARGS_KEY}` only belongs to a `call` step", pointer=f"{pointer}/{ARGS_KEY}")
     if call is not None and (not isinstance(call, str) or not call):
         raise _bad(f"`call` must name a host function, got {call!r}", pointer=f"{pointer}/call")
     others = tuple(item for item in names if item != name)
-    compiled_parse: CompiledField | Mapping[str, CompiledField] | None = None
-    if parse is not None:
-        compiled_parse = (
-            compile_field_map("parse", parse, products=others, pointer=f"{pointer}/parse")
-            if isinstance(parse, Mapping)
-            else compile_field(parse, products=others, pointer=f"{pointer}/parse")
+    compiled_body: CompiledField | Mapping[str, CompiledField] | None = None
+    if body is not None:
+        compiled_body = (
+            compile_field_map(BODY_KEY, body, products=others, pointer=f"{pointer}/{BODY_KEY}")
+            if isinstance(body, Mapping)
+            else compile_field(body, products=others, pointer=f"{pointer}/{BODY_KEY}")
         )
     return StoryStep(
         name=name,
         index=index,
         type=declared_type,
-        parse=compiled_parse,
+        body=compiled_body,
         call=call,
-        with_=_with_of(raw, pointer=pointer),
+        args=_args_of(raw, pointer=pointer),
         next=_next_of(raw, declared_type, names, pointer=pointer),
         pointer=pointer,
     )
@@ -685,18 +682,18 @@ def _next_of(
     return declared
 
 
-def _with_of(raw: Mapping[str, Any], *, pointer: str) -> Mapping[str, Param]:
+def _args_of(raw: Mapping[str, Any], *, pointer: str) -> Mapping[str, Param]:
     """A `call`'s arguments: a mapping of name to a `ref_or_literal` leaf (`03` §13 O2)."""
-    declared = raw.get("with")
+    declared = raw.get(ARGS_KEY)
     if declared is None:
         return {}
     if not isinstance(declared, Mapping):
         raise _bad(
-            f"`with` must be an object of arguments, got {type_name(declared)}",
-            pointer=f"{pointer}/with",
+            f"`{ARGS_KEY}` must be an object of arguments, got {type_name(declared)}",
+            pointer=f"{pointer}/{ARGS_KEY}",
         )
     return {
-        str(key): parse_ref(item, pointer=f"{pointer}/with/{key}")
+        str(key): parse_ref(item, pointer=f"{pointer}/{ARGS_KEY}/{key}")
         if is_ref_text(item)
         else Lit(item)
         for key, item in declared.items()
@@ -740,19 +737,20 @@ def _step_names(raw_steps: list[Any], *, pointer: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _exit_name(raw: Any, names: tuple[str, ...], *, pointer: str) -> str:
+def _entry_name(raw: Any, names: tuple[str, ...], *, pointer: str) -> str:
+    """`entry` names the step the run starts at: required, and a step of this bundle (`03` §2)."""
     if not isinstance(raw, str) or not raw:
         raise _bad(
-            f"`exit` must name the step whose products are the run's output, got {raw!r}",
+            f"`entry` must name the step the run starts at, got {raw!r}",
             pointer=pointer,
-            fix="name a step of this story; with jumps the last step is not unique",
+            fix="name a step of this story; the start is declared, never derived from array order",
             allowed=names,
         )
     if raw not in names:
         raise Up2Error(
             diag(
                 "UP2-E1016",
-                f"`exit` names {raw!r}, which is not a step of this story",
+                f"`entry` names {raw!r}, which is not a step of this story",
                 fix="name a declared step",
                 pointer=pointer,
                 allowed=names,
@@ -761,21 +759,66 @@ def _exit_name(raw: Any, names: tuple[str, ...], *, pointer: str) -> str:
     return raw
 
 
-def _lint_flow(steps: tuple[StoryStep, ...]) -> None:
+def _collect_name(raw: Any, names: tuple[str, ...], *, pointer: str) -> str:
+    if not isinstance(raw, str) or not raw:
+        raise _bad(
+            f"`{COLLECT_KEY}` must name the step whose products are the run's output, got {raw!r}",
+            pointer=pointer,
+            fix="name a step of this story; with jumps the last step is not unique",
+            allowed=names,
+        )
+    if raw not in names:
+        raise Up2Error(
+            diag(
+                "UP2-E1016",
+                f"`{COLLECT_KEY}` names {raw!r}, which is not a step of this story",
+                fix="name a declared step",
+                pointer=pointer,
+                allowed=names,
+            )
+        )
+    return raw
+
+
+def _lint_flow(steps: tuple[StoryStep, ...], *, entry: int) -> None:
     """Reject a story whose steps can lead the run back into a step it is already executing (`L12`).
 
     The run's only way forward is the program counter: the step after this one, or the step a
-    request's `next` names. Both are drawn in one graph, over the steps and from the first one, and
-    a node the walk enters twice is a loop the run can take -- a story the host would have to
-    interrupt rather than finish. Every backward `next` the samples use (a fan-out whose answers
-    are parsed by a step written earlier, the task-override pattern) is accepted: its target cannot
-    reach the jumping step again, so no node is entered twice.
+    request's `next` names. Both are drawn in one graph, and a node the walk enters twice is a loop
+    the run can take -- a story the host would have to interrupt rather than finish. Every backward
+    `next` the samples use (a fan-out whose answers are parsed by a step written earlier, the
+    task-override pattern) is accepted: its target cannot reach the jumping step again, so no node
+    is entered twice.
+
+    The walk then answers the second question the same graph settles: what the run can **not** reach
+    (`L13`). The entry step is where it starts, so a step nothing jumps to and that the fall-through
+    never passes is dead, and it is reported rather than silently kept.
     """
     walk = _LoopWalk(steps)
+    unreachable = walk.reachable(entry)
+    if unreachable:
+        _raise_unreachable(steps, unreachable)
     for position in range(len(steps)):
         closed = walk.enter(position)
         if closed is not None:
             raise _cycle(steps, closed)
+
+
+def _raise_unreachable(steps: tuple[StoryStep, ...], unreachable: list[int]) -> None:
+    """The diagnostic for the first step the flow from the entry cannot arrive at (`L13`)."""
+    step = steps[unreachable[0]]
+    raise Up2Error(
+        diag(
+            "UP2-E1018",
+            f"the step {step.name!r} is unreachable from the entry: no step falls through to it "
+            "and no `next` names it",
+            fix=(
+                f"point a `next` at {step.name!r}, take it out of the flow, or make it the entry "
+                "if the run should start there"
+            ),
+            pointer=f"{step.pointer}/name",
+        )
+    )
 
 
 class _LoopWalk:
@@ -786,9 +829,10 @@ class _LoopWalk:
     successor it has left cannot.
     """
 
-    __slots__ = ("_colour", "_flow", "_index", "_path")
+    __slots__ = ("_colour", "_flow", "_index", "_path", "_steps")
 
     def __init__(self, steps: tuple[StoryStep, ...]) -> None:
+        self._steps = steps
         self._flow = [
             [step.next]
             if step.next is not None
@@ -804,6 +848,18 @@ class _LoopWalk:
         if self._colour[node] != _UNVISITED:
             return None
         return self._walk(node)
+
+    def reachable(self, node: int) -> list[int]:
+        """Walk the flow from ``node``; answer every position it never arrived at, in array order.
+
+        A loop inside that subtree is reported exactly as a walk from any other position reports it,
+        so "no loop" and "nothing unreachable" share one traversal instead of one walking the entry
+        and the other the array.
+        """
+        closed = self.enter(node)
+        if closed is not None:
+            raise _cycle(self._steps, closed)
+        return [position for position, colour in enumerate(self._colour) if colour == _UNVISITED]
 
     def _walk(self, node: int) -> list[int] | None:
         self._colour[node] = _ON_PATH

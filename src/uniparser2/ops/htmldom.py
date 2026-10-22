@@ -6,7 +6,7 @@ cardinality:
 
 | accessor | ``css`` (all matches) | ``css1`` (the first only) |
 |---|---|---|
-| ``text`` / ``html`` / ``outer`` / ``@<attribute>`` | ``list[str]`` | scalar, else missing |
+| ``text`` / ``html`` / ``outer`` / ``@<attr>`` | ``list[str]`` | scalar, else empty |
 | ``nodes`` | ``list[Opaque]`` (all) | ``list[Opaque]`` (0 or 1) |
 | ``self`` | ``Opaque`` (the first; use ``nodes`` for all) | ``Opaque`` |
 | ``remove`` | a **copy** with every match pruned | a copy with the **first** match pruned |

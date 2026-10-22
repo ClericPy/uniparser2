@@ -2,18 +2,19 @@
   "globals": {
     "base_url": "https://books.toscrape.com/"
   },
+  "entry": "start",
   "steps": [
     {
       "name": "start",
-      "parse": {
-        "url": [["py", "id", ""]]
+      "body": {
+        "url": "$in"
       },
       "type": "Request",
       "next": "channels"
     },
     {
       "name": "channels",
-      "parse": {
+      "body": {
         "items": [
           ["py", "getattr", "text"],
           ["css", "@href", "div.side_categories ul li ul li a"],
@@ -21,8 +22,8 @@
           [
             "each",
             {
-              "url": [["py", "id", ""], ["py", "urljoin", "$globals.base_url"]],
-              "next": [["const", "shelf_page"]]
+              "url": [["py", "urljoin", "$globals.base_url"]],
+              "next": "shelf_page"
             }
           ]
         ]
@@ -32,13 +33,13 @@
     },
     {
       "name": "shelf_page",
-      "parse": [
+      "body": [
         ["py", "getattr", "text"],
         ["css", "@href", "article.product_pod h3 a"],
         [
           "each",
           {
-            "url": [["py", "id", ""], ["py", "urljoin", "$in.url"]]
+            "url": [["py", "urljoin", "$in.url"]]
           }
         ]
       ],
@@ -46,7 +47,7 @@
     },
     {
       "name": "shelf",
-      "parse": {
+      "body": {
         "items": [["py", "flatten", ""], ["py", "slice", ":3"]]
       },
       "type": "RequestBatch",
@@ -54,7 +55,7 @@
     },
     {
       "name": "book",
-      "parse": {
+      "body": {
         "url": [["py", "getattr", "url"]],
         "title": [
           ["py", "getattr", "text"],
@@ -82,12 +83,12 @@
     {
       "name": "store",
       "call": "host.store_books",
-      "with": {
+      "args": {
         "table": "books",
         "records": "$in"
       },
       "type": "dict"
     }
   ],
-  "exit": "store"
+  "collect": "store"
 }

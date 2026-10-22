@@ -82,7 +82,7 @@ def request_of(task: Any) -> Mapping[str, Any]:
 
 
 def call_arguments(arguments: Any) -> Mapping[str, Any]:
-    """A `call` step's arguments: the kernel hands over the step's ``with`` object (`03` §4.2)."""
+    """A `call` step's arguments: the kernel hands over the step's ``args`` object (`03` §4.2)."""
     if not isinstance(arguments, Mapping):
         raise TypeError(
             f"a call must carry its arguments as an object, got {type(arguments).__name__}"

@@ -296,16 +296,6 @@ def _py_getattr(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     return Ok(found)
 
 
-def _py_id(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
-    """Return the input unchanged: the identity action (a step whose value *is* its input).
-
-    ``["py","str",""]`` was the workaround (it is the identity on a string, and it *converts*
-    anything else); this one takes no argument and copies nothing.
-    """
-    del params, scope
-    return Ok(value)
-
-
 def _py_len(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     if isinstance(value, (str, list, dict)):
         return Ok(len(value))
@@ -476,6 +466,16 @@ def _py_html_to_markdown(value: Any, params: Mapping[str, Any], scope: Scope) ->
 # ---------------------------------------------------------------- type conversion (former cast)
 
 
+_CONVERSION_EXPECTS: Final[Mapping[str, str]] = {
+    "str": "any JSON scalar",
+    "int": "an integer, a float, a bool, or a string of digits",
+    "float": "a number or a numeric string",
+    "bool": "a boolean, a number, a string, None, a list or a dict",
+    "list": "a list, or a string holding a JSON array",
+    "from_json": "a JSON value, or a string holding one",
+}
+
+
 def _convert(value: Any, who: str, converter: Callable[[Any], Any]) -> Outcome:
     try:
         return Ok(converter(value))
@@ -483,7 +483,10 @@ def _convert(value: Any, who: str, converter: Callable[[Any], Any]) -> Outcome:
         return Failed(
             code="UP2-E2005",
             reason=f"py.{who} conversion failed: {exc}",
-            fix="check the shape of the source value first (py.default can serve as a fallback)",
+            fix=(
+                f"py.{who} expects {_CONVERSION_EXPECTS.get(who, 'its declared input')}; "
+                "check the upstream stage that produced this value"
+            ),
         )
 
 
@@ -1165,7 +1168,6 @@ _TABLE: Final[tuple[_Entry, ...]] = (
         _py_getattr,
         (ParamSpec("ref_or_literal", Kind.REF_OR_LITERAL),),
     ),
-    _Entry("id", "return the input unchanged (a step whose value is its own input)", _py_id),
     _Entry("len", "length", _py_len),
     _Entry("first", "take the first element", _py_first),
     _Entry("last", "take the last element", _py_last),
@@ -1194,11 +1196,9 @@ _TABLE: Final[tuple[_Entry, ...]] = (
     ),
     _Entry(
         "default",
-        "fall back when empty/None/missing",
+        "fall back when the value is None or an empty string",
         _py_default,
         (ParamSpec("value", Kind.REF_OR_LITERAL),),
-        (),
-        True,
     ),
     _Entry("b64_encode", "Base64 encode", _py_b64_encode),
     _Entry("b64_decode", "Base64 decode", _py_b64_decode),

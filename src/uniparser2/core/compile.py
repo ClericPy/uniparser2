@@ -35,6 +35,13 @@ logger = logging.getLogger("uniparser2")
 
 _DIRECTIVE_PREFIX = "$"
 _NO_PARAM_PLACEHOLDERS = (None, "")
+INDEX_FIELD: Final = "next"
+"""The field-map key whose value is a **routing target** rather than an extraction (`03` §4.1.1).
+
+A task item's `next` names the step that receives that answer, exactly like the step-level `next`,
+so a plain string there is that step's name. Every other field-map value keeps the ordinary chain
+rule.
+"""
 
 
 def compile_field(
@@ -62,6 +69,10 @@ def compile_field(
                 pointer=pointer,
             )
         )
+    if is_ref_text(source):
+        return _compile_ref_field(source, products=products, pointer=pointer, name=name)
+    if index_key and isinstance(source, str):
+        return _compile_literal_field(source, products=products, pointer=pointer, name=name)
     source_stages = _as_stages(source, pointer=pointer)
     if len(source_stages) > MAX_STEPS_PER_FIELD:
         raise Up2Error(
@@ -571,6 +582,7 @@ def compile_field_map(
             depth=depth + 1,
             pointer=f"{pointer}/{field}",
             name=str(field),
+            index_key=str(field) == INDEX_FIELD,
         )
         for field, item in raw.items()
     }
@@ -677,9 +689,9 @@ def _check_refs(params: Mapping[str, Param], *, products: tuple[str, ...], point
                 raise Up2Error(
                     diag(
                         "UP2-E1014",
-                        f"{ref.raw} references the local key {ref.path[0]!r} across nodes",
-                        fix="a `_` prefix marks a local value of this node; drop the underscore, "
-                        "or use $fields.*",
+                        f"{ref.raw} references the local key {ref.path[0]!r} across steps",
+                        fix="a `_` prefix marks a local value of this step; drop the underscore, "
+                        "or read $locals.* in the step that wrote it",
                         pointer=pointer,
                     )
                 )
@@ -688,7 +700,7 @@ def _check_refs(params: Mapping[str, Param], *, products: tuple[str, ...], point
             diag(
                 "UP2-E1006",
                 f"unknown reference root {ref.root!r}",
-                fix="use a reserved root, or declare the earlier node product with --product",
+                fix="use a reserved root, or declare the earlier step product with --product",
                 pointer=pointer,
                 allowed=(*RESERVED_ROOTS, *products),
             )

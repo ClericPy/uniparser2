@@ -1,14 +1,19 @@
 """``ctx`` operator: scope reads and writes (design docs 02 §6.8, 03 §8).
 
-**The write surface is hard-limited to ``locals``/``fields``**: writing ``globals`` or a node's
-output raises ``UP2-E1015``. Rationale: if ``globals`` could be modified, the same value would
-evaluate differently in different fields and purity (``N1``) would break; if a node's output could
-be modified, downstream references would read intermediate states.
+**The write surface is hard-limited to ``locals``**: writing ``globals`` or a step's product raises
+``UP2-E1015``. Rationale: if ``globals`` could be modified, the same value would evaluate
+differently in different fields and purity (``N1``) would break; if a step's product could be
+modified, downstream references would read intermediate states.
 
 Paths are written as **bare path literals** (``locals._tmp`` / ``globals.base_url``), with no ``$``
 and no ``ctx.`` prefix — because the target that ``set``/``del`` operates on does not exist yet and
 cannot be handed to the reference evaluator for reading. This unifies the two spellings mixed in
 the `04` draft (``ctx.locals._raw`` / ``"locals.a.b"``).
+
+**The collection actions name their shape** (`ctx-dict-list-and-py-table`): ``dict`` takes an object
+of name → path and yields an object, ``list`` takes an array of paths and yields an array. One
+polymorphic ``map`` used to answer two different types depending on its parameter's shape; the
+action name now says what comes out.
 """
 
 from __future__ import annotations
@@ -77,7 +82,8 @@ class Ctx(Op):
             path = _literal_text(params, "path")
             _check_readable(path, action=action, pointer=f"{pointer}/path")
             return path
-        paths = _collect_paths(_unwrap(params["refs"]), pointer=f"{pointer}/refs")
+        raw = _unwrap(params["refs"])
+        paths = _collect_paths(raw, action=action, pointer=f"{pointer}/refs")
         # In the object form the paths live in the values, and iterating a dict yields keys, so
         # the two forms must be handled separately.
         for path in paths.values() if isinstance(paths, dict) else paths:
@@ -93,14 +99,11 @@ class Ctx(Op):
         if call.action == _DEL:
             call.scope.delete_text(call.payload)
             return Ok(call.value)
-        return _build_map(call)
+        return _build(call)
 
 
-def _build_map(call: Call) -> Outcome:
-    """``map``: collect the values of several paths into a list or a dict.
-
-    The array form yields a list and the object form a dict.
-    """
+def _build(call: Call) -> Outcome:
+    """``dict`` / ``list``: collect the values of several paths into the payload's shape."""
     spec = call.payload
     if isinstance(spec, list):
         values: list[Any] = []

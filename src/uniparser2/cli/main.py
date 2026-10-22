@@ -343,9 +343,18 @@ def _lint_story(source: Any, args: argparse.Namespace) -> int:
         _print_diagnostic(exc.diagnostic, as_json=args.json)
         return EXIT_FAILED
     if args.json:
-        print(json.dumps({"ok": True, "steps": len(story.steps), "exit": story.exit}))
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "steps": len(story.steps),
+                    "entry": story.entry,
+                    "collect": story.collect,
+                }
+            )
+        )
     else:
-        print(f"OK: {len(story.steps)} steps, exit {story.exit}")
+        print(f"OK: {len(story.steps)} steps, entry {story.entry}, collect {story.collect}")
     return EXIT_OK
 
 
@@ -395,7 +404,7 @@ def _trial_story(source: Any, args: argparse.Namespace, trace: Trace | None) -> 
         return EXIT_USAGE
     value = inputs.get(MAIN_INPUT_KEY, inputs)
     try:
-        effect = start(source, value, trace=trace).next()
+        effect = start(source, value, trace=trace).go()
     except Up2Error as exc:
         if trace is None:
             _print_diagnostic(exc.diagnostic, as_json=args.json)
@@ -410,7 +419,7 @@ def _trial_story(source: Any, args: argparse.Namespace, trace: Trace | None) -> 
         "state": "suspended",
         "effect": effect[0],
         "detail": list(effect[1:]),
-        "note": "a suspension is not an error; a host answers it with run.send(answer)",
+        "note": "a suspension is not an error; a host answers it with run.feed(answer)",
     }
     _emit_state(payload, as_json=args.json, trace=trace)
     return EXIT_OK
@@ -639,7 +648,7 @@ def _run_cases(
         if error is not None:
             failures.append(RegressionFailure(case=item.name, error=error))
             continue
-        result = run_graph(graph, value)
+        result = run_graph(graph, value, cache=cache)
         if not result.ok:
             failures.append(RegressionFailure(case=item.name, error=result.error))
             continue

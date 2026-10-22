@@ -70,30 +70,49 @@ class Answer:
         self.url = url
 
 
+def _bundle(steps: list[dict[str, Any]], *, entry: str | None = None, **overrides: Any) -> Any:
+    """A bundle whose entry is the first step's name, and whose exit is the last step's name.
+
+    `entry` and `exit` are both declared keys (`03` §2), so a case that is about something else
+    names them the shortest legal way and only the case under test spells them differently.
+    """
+    bundle: dict[str, Any] = {
+        "entry": entry if entry is not None else steps[0]["name"],
+        "steps": steps,
+        "collect": steps[-1]["name"],
+    }
+    bundle.update(overrides)
+    return bundle
+
+
 def _parse_story(**overrides: Any) -> dict[str, Any]:
-    story: dict[str, Any] = {
-        "steps": [
+    story: dict[str, Any] = _bundle(
+        [
             {
                 "name": "records",
-                "parse": {"url": [["py", "id", ""]], "size": [["py", "len", ""]]},
+                "body": {"url": "$in", "size": [["py", "len", ""]]},
                 "type": "Record",
             }
-        ],
-        "exit": "records",
-    }
+        ]
+    )
     story.update(overrides)
     return story
 
 
 def _compile_error(story: Any) -> str:
+    code: str = _compile_diagnostic(story).code
+    return code
+
+
+def _compile_diagnostic(story: Any) -> Any:
     with pytest.raises(Up2Error) as info:
         compile_story(story)
-    return info.value.diagnostic.code
+    return info.value.diagnostic
 
 
 def _run_error(story: Any, value: Any = None) -> str:
     with pytest.raises(Up2Error) as info:
-        start(story, value).next()
+        start(story, value).go()
     return info.value.diagnostic.code
 
 
@@ -119,78 +138,82 @@ def test_an_unknown_bundle_key_is_rejected() -> None:
 
 
 def test_steps_must_be_a_non_empty_array() -> None:
-    assert _compile_error({"steps": [], "exit": "records"}) == "UP2-E1005"
-    assert _compile_error({"exit": "records"}) == "UP2-E1005"
+    assert _compile_error({"entry": "records", "steps": [], "collect": "records"}) == "UP2-E1005"
+    assert _compile_error({"entry": "records", "collect": "records"}) == "UP2-E1005"
 
 
-def test_exit_is_required_and_must_resolve() -> None:
-    assert _compile_error({"steps": _parse_story()["steps"]}) == "UP2-E1005"
-    assert _compile_error(_parse_story(exit="nope")) == "UP2-E1016"
+def test_entry_is_required_and_must_resolve() -> None:
+    """The start is declared, never derived from the array order (`03` §2)."""
+    assert _compile_error({"steps": _parse_story()["steps"], "collect": "records"}) == "UP2-E1005"
+    assert _compile_error(_parse_story(entry="nope")) == "UP2-E1016"
+    assert _compile_error(_parse_story(entry=7)) == "UP2-E1005"
+
+
+def test_the_run_starts_at_the_entry_not_at_the_first_step() -> None:
+    """The entry is a declared name, and it must still be reachable through the flow."""
+    story = _bundle(
+        [
+            {"name": "a", "body": {"u": [["py", "upper", ""]]}, "type": "dict"},
+            {"name": "b", "body": {"u": [["py", "lower", ""]]}, "type": "dict"},
+        ],
+        entry="b",
+    )
+    assert _compile_error(story) == "UP2-E1018"
+    # Making the entry the step the flow starts from runs the same array, in the same order.
+    assert start(_bundle([story["steps"][0]]), "ab").go() == ("done", [{"u": "AB"}])
+
+
+def test_collect_is_required_and_must_resolve() -> None:
+    assert _compile_error({"entry": "records", "steps": _parse_story()["steps"]}) == "UP2-E1005"
+    assert _compile_error(_parse_story(entry="records", collect="nope")) == "UP2-E1016"
 
 
 def test_step_names_are_unique() -> None:
-    story = _parse_story(
-        steps=[
-            {"name": "a", "parse": {"u": [["py", "id", ""]]}},
-            {"name": "a", "parse": {"u": [["py", "id", ""]]}},
-        ],
-        exit="a",
+    story = _bundle(
+        [
+            {"name": "a", "body": {"u": "$in"}},
+            {"name": "a", "body": {"u": "$in"}},
+        ]
     )
     assert _compile_error(story) == "UP2-E1009"
 
 
 def test_a_step_name_may_not_be_a_reserved_root() -> None:
     for reserved in RESERVED_ROOTS:
-        story = _parse_story(steps=[{"name": reserved, "parse": {"u": [["py", "id", ""]]}}])
-        story["exit"] = reserved
+        story = _bundle([{"name": reserved, "body": {"u": "$in"}}])
         assert _compile_error(story) == "UP2-E1009"
 
 
 def test_a_step_declares_exactly_one_of_parse_and_call() -> None:
-    both = _parse_story(
-        steps=[{"name": "a", "parse": {"u": [["py", "id", ""]]}, "call": "host.fn"}], exit="a"
-    )
+    both = _bundle([{"name": "a", "body": {"u": "$in"}, "call": "host.fn"}])
     assert _compile_error(both) == "UP2-E1005"
-    neither = _parse_story(steps=[{"name": "a", "type": "dict"}], exit="a")
+    neither = _bundle([{"name": "a", "type": "dict"}])
     assert _compile_error(neither) == "UP2-E1005"
 
 
 def test_with_belongs_to_a_call_step() -> None:
-    story = _parse_story(
-        steps=[{"name": "a", "parse": {"u": [["py", "id", ""]]}, "with": {"t": 1}}], exit="a"
-    )
+    story = _bundle([{"name": "a", "body": {"u": "$in"}, "args": {"t": 1}}])
     assert _compile_error(story) == "UP2-E1005"
 
 
 def test_an_unknown_step_key_is_rejected() -> None:
     """The old `key` / `out` spellings are gone: `name` and `type` are the keys (03 §2.1)."""
-    story = _parse_story(
-        steps=[{"name": "a", "parse": {"u": [["py", "id", ""]]}, "out": "dict"}], exit="a"
-    )
+    story = _bundle([{"name": "a", "body": {"u": "$in"}, "out": "dict"}])
     assert _compile_error(story) == "UP2-E1005"
 
 
 def test_next_is_required_on_a_request_step() -> None:
-    story = _parse_story(
-        steps=[{"name": "a", "parse": {"url": [["py", "id", ""]]}, "type": "Request"}], exit="a"
-    )
+    story = _bundle([{"name": "a", "body": {"url": "$in"}, "type": "Request"}])
     assert _compile_error(story) == "UP2-E1005"
 
 
 def test_next_is_refused_on_a_step_that_produces_no_request() -> None:
-    story = _parse_story(
-        steps=[{"name": "a", "parse": {"u": [["py", "id", ""]]}, "next": "a"}], exit="a"
-    )
+    story = _bundle([{"name": "a", "body": {"u": "$in"}, "next": "a"}])
     assert _compile_error(story) == "UP2-E1005"
 
 
 def test_next_must_resolve_to_a_step() -> None:
-    story = _parse_story(
-        steps=[
-            {"name": "a", "parse": {"url": [["py", "id", ""]]}, "type": "Request", "next": "gone"}
-        ],
-        exit="a",
-    )
+    story = _bundle([{"name": "a", "body": {"url": "$in"}, "type": "Request", "next": "gone"}])
     assert _compile_error(story) == "UP2-E1016"
 
 
@@ -267,63 +290,117 @@ def test_a_backward_next_into_a_region_that_cannot_reach_it_compiles() -> None:
                 "type": "RequestBatch",
                 "next": "left",
             },
-            {"name": "left", "parse": {"side": [["const", "left"]]}, "type": "dict"},
-            {"name": "right", "parse": {"side": [["const", "right"]]}, "type": "dict"},
-            {"name": "joined", "parse": {"n": [["py", "len", ""]]}, "type": "dict"},
-        ],
-        "exit": "joined",
-    }
+            {"name": "left", "body": {"side": [["const", "left"]]}, "type": "dict"},
+            {"name": "right", "body": {"side": [["const", "right"]]}, "type": "dict"},
+            {"name": "joined", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+        ]
+    )
     run = start(story, "seed")
-    assert run.next() == ("request", {"url": "seed"}, "fan")
-    effect = run.send(Answer("home"))
+    assert run.go() == ("request", {"url": "seed"}, "fan")
+    effect = run.feed(Answer("home"))
     assert effect[0] == "batch"
-    assert run.send([Answer("x"), Answer("y")]) == ("done", [{"n": 2}])
+    assert run.feed([Answer("x"), Answer("y")]) == ("done", [{"n": 2}])
 
 
 def test_a_backward_next_followed_by_a_forward_jump_compiles() -> None:
     """The books-sample shape: the region a jump enters ends forward, so the flow never loops."""
-    story = {
-        "steps": [
+    story = _bundle(
+        [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "shelf_page",
             },
             {
                 "name": "shelf_page",
-                "parse": {"page": [["py", "getattr", "text"]]},
+                "body": {"page": [["py", "getattr", "text"]]},
                 "type": "Page",
             },
             {
                 "name": "shelf",
-                "parse": {
+                "body": {
                     "items": [
                         ["const", ["u"]],
-                        ["each", {"url": [["py", "id", ""]]}],
+                        ["each", {"url": [["py", "urljoin", "https://x/"]]}],
                     ]
                 },
                 "type": "RequestBatch",
                 "next": "record",
             },
-            {"name": "record", "parse": {"body": [["py", "getattr", "text"]]}, "type": "Record"},
-        ],
-        "exit": "record",
-    }
+            {"name": "record", "body": {"body": [["py", "getattr", "text"]]}, "type": "Record"},
+        ]
+    )
     run = start(story, "seed")
-    assert run.next() == ("request", {"url": "seed"}, "shelf_page")
-    effect: Any = run.send(Answer("list"))
+    assert run.go() == ("request", {"url": "seed"}, "shelf_page")
+    effect: Any = run.feed(Answer("list"))
     assert effect[0] == "batch"
-    assert run.send([Answer("body")]) == ("done", [{"body": "body"}])
+    assert run.feed([Answer("body")]) == ("done", [{"body": "body"}])
 
 
 def test_the_step_limit_is_enforced() -> None:
-    steps = [{"name": f"s{index}", "parse": {"u": [["py", "id", ""]]}} for index in range(65)]
-    assert _compile_error({"steps": steps, "exit": "s0"}) == "UP2-E1012"
+    steps = [{"name": f"s{index}", "body": {"u": "$in"}} for index in range(65)]
+    assert _compile_error(_bundle(steps)) == "UP2-E1012"
+
+
+def test_a_step_nothing_reaches_is_rejected() -> None:
+    """A dead step is an authoring error, not a silently kept one (`L13`)."""
+    diagnostic = _compile_diagnostic(
+        _bundle(
+            [
+                {"name": "start", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+                {"name": "orphan", "body": {"u": "$in"}, "type": "dict"},
+            ],
+            entry="orphan",
+        )
+    )
+    assert diagnostic.code == "UP2-E1018"
+    assert "start" in diagnostic.message
+    assert diagnostic.pointer == "/steps/0/name"
+
+
+def test_a_step_nothing_jumps_to_after_a_jump_is_rejected() -> None:
+    """A `next` that skips a step leaves it dead, and the lint names it."""
+    diagnostic = _compile_diagnostic(
+        _bundle(
+            [
+                {"name": "seed", "body": {"url": "$in"}, "type": "Request", "next": "last"},
+                {"name": "orphan", "body": {"u": "$in"}, "type": "dict"},
+                {"name": "last", "body": {"u": "$in"}, "type": "dict"},
+            ]
+        )
+    )
+    assert diagnostic.code == "UP2-E1018"
+    assert "orphan" in diagnostic.message
+    assert diagnostic.pointer == "/steps/1/name"
+
+
+def test_an_entry_that_is_not_the_first_step_leaves_the_earlier_one_unreachable() -> None:
+    story = _bundle(
+        [
+            {"name": "dead", "body": {"u": "$in"}, "type": "dict"},
+            {"name": "live", "body": {"u": "$in"}, "type": "dict"},
+        ],
+        entry="live",
+    )
+    diagnostic = _compile_diagnostic(story)
+    assert diagnostic.code == "UP2-E1018"
+    assert "dead" in diagnostic.message
+
+
+def test_every_step_of_a_linear_story_is_reachable() -> None:
+    story = _bundle(
+        [
+            {"name": "a", "body": {"u": "$in"}, "type": "dict"},
+            {"name": "b", "body": {"u": "$in"}, "type": "dict"},
+            {"name": "c", "body": {"u": "$in"}, "type": "dict"},
+        ]
+    )
+    assert [step.name for step in compile_story(story).steps] == ["a", "b", "c"]
 
 
 def test_an_empty_field_map_is_rejected() -> None:
-    story = _parse_story(steps=[{"name": "a", "parse": {}, "type": "dict"}], exit="a")
+    story = _bundle([{"name": "a", "body": {}, "type": "dict"}])
     assert _compile_error(story) == "UP2-E1005"
 
 
@@ -332,125 +409,121 @@ def test_an_empty_field_map_is_rejected() -> None:
 
 def test_a_story_without_requests_finishes_at_once() -> None:
     run = start(_parse_story(), "u")
-    assert run.next() == ("done", [{"url": "u", "size": 1}])
+    assert run.go() == ("done", [{"url": "u", "size": 1}])
 
 
 def test_done_is_idempotent_and_send_is_refused() -> None:
     run = start(_parse_story(), "u")
-    assert run.next()[0] == "done"
-    assert run.next() == run.next()
+    assert run.go()[0] == "done"
+    assert run.go() == run.go()
     with pytest.raises(ValueError, match="already done"):
-        run.send("anything")
+        run.feed("anything")
 
 
 def test_a_request_suspends_the_run() -> None:
-    story = {
-        "steps": [
+    story = _bundle(
+        [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "records",
             },
-            {"name": "records", "parse": {"body": [["py", "getattr", "text"]]}, "type": "Record"},
-        ],
-        "exit": "records",
-    }
+            {"name": "records", "body": {"body": [["py", "getattr", "text"]]}, "type": "Record"},
+        ]
+    )
     run = start(story, "https://x/list.html")
-    assert run.next() == ("request", {"url": "https://x/list.html"}, "records")
+    assert run.go() == ("request", {"url": "https://x/list.html"}, "records")
     answer = Answer(_DOC)
-    assert run.send(answer) == ("done", [{"body": _DOC}])
-    assert run.next() == ("done", [{"body": _DOC}])
+    assert run.feed(answer) == ("done", [{"body": _DOC}])
+    assert run.go() == ("done", [{"body": _DOC}])
 
 
 def test_the_answer_is_never_copied_or_converted() -> None:
     """The receiving step reads the host's own object: `$in` and `getattr` see the same instance."""
-    story = {
-        "steps": [
+    story = _bundle(
+        [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "read",
             },
             {
                 "name": "read",
-                "parse": {
+                "body": {
                     "final": [["py", "getattr", "url"]],
                     "resolved": [["const", "https://x/final"], ["py", "==", "$in.url"]],
                 },
                 "type": "Answer",
             },
-        ],
-        "exit": "read",
-    }
+        ]
+    )
     answer = Answer(_DOC, url="https://x/final")
     run = start(story, "https://x/list.html")
-    run.next()
+    run.go()
     # `$in.url` resolved against the host's own object: the receiving step's input is that object.
-    assert run.send(answer) == ("done", [{"final": "https://x/final", "resolved": True}])
+    assert run.feed(answer) == ("done", [{"final": "https://x/final", "resolved": True}])
 
 
 def test_a_step_product_that_is_not_json_stops_the_run() -> None:
     """A value may flow, but a step product must be JSON (03 §3.3, UP2-E2003)."""
-    story = {
-        "steps": [
+    story = _bundle(
+        [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "keep",
             },
-            {"name": "keep", "parse": [["py", "id", ""]], "type": "Answer"},
-        ],
-        "exit": "keep",
-    }
+            {"name": "keep", "body": "$in", "type": "Answer"},
+        ]
+    )
     run = start(story, "seed")
-    run.next()
+    run.go()
     with pytest.raises(Up2Error) as info:
-        run.send(Answer(_DOC))
+        run.feed(Answer(_DOC))
     assert info.value.diagnostic.code == "UP2-E2003"
 
 
 def test_a_batch_runs_the_receiving_step_once_per_answer_and_rejoins() -> None:
-    story = {
-        "steps": [
+    story = _bundle(
+        [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "fan",
             },
             {
                 "name": "fan",
-                "parse": {"items": [["const", [{"url": "a"}, {"url": "b"}]]]},
+                "body": {"items": [["const", [{"url": "a"}, {"url": "b"}]]]},
                 "type": "RequestBatch",
                 "next": "page",
             },
-            {"name": "page", "parse": [["py", "getattr", "text"]], "type": "Page"},
-            {"name": "count", "parse": {"n": [["py", "len", ""]]}, "type": "dict"},
-        ],
-        "exit": "count",
-    }
+            {"name": "page", "body": [["py", "getattr", "text"]], "type": "Page"},
+            {"name": "count", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+        ]
+    )
     run = start(story, "seed")
-    assert run.next() == ("request", {"url": "seed"}, "fan")
-    effect = run.send(Answer("seed page"))
+    assert run.go() == ("request", {"url": "seed"}, "fan")
+    effect = run.feed(Answer("seed page"))
     assert effect == ("batch", [{"url": "a"}, {"url": "b"}], "page")
-    assert run.send([Answer("a page"), Answer("b page")]) == ("done", [{"n": 2}])
+    assert run.feed([Answer("a page"), Answer("b page")]) == ("done", [{"n": 2}])
 
 
 def test_a_task_may_override_next() -> None:
-    story = {
-        "steps": [
+    story = _bundle(
+        [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "fan",
             },
             {
                 "name": "fan",
-                "parse": {
+                "body": {
                     "items": [
                         ["const", [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}]]
                     ]
@@ -473,282 +546,447 @@ def test_a_task_may_override_next() -> None:
     batch: Any = effect[1]
     assert all("next" not in task for task in batch)
     # The first task routes left, the second right; both products join and continue after `left`.
-    assert run.send([Answer("x"), Answer("y")]) == ("done", [{"n": 2}])
+    assert run.feed([Answer("x"), Answer("y")]) == ("done", [{"n": 2}])
 
 
-def test_a_receiving_step_may_itself_produce_a_request() -> None:
-    story = {
-        "steps": [
+def test_a_task_next_may_be_a_plain_string() -> None:
+    """A task's `next` is a step name, so the plain string is the value itself (`03` §4.1.1).
+
+    It is the same writing the step-level `next` uses; the chain form stays available for a target
+    a fan-out computes from the item's own data.
+    """
+    story = _bundle(
+        [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
-                "type": "Request",
-                "next": "gather",
-            },
-            {
-                "name": "gather",
-                "parse": {"items": [["const", [{"url": "a"}]]]},
-                "type": "RequestBatch",
-                "next": "page",
-            },
-            {
-                "name": "page",
-                "parse": {"url": [["py", "getattr", "url"]]},
-                "type": "Request",
-                "next": "record",
-            },
-            {"name": "record", "parse": {"body": [["py", "getattr", "text"]]}, "type": "Record"},
-        ],
-        "exit": "record",
-    }
-    run = start(story, "seed")
-    run.next()
-    assert run.send(Answer("home"))[0] == "batch"
-    # The receiving step is itself a request: the run suspends again, inside the same fan-out.
-    assert run.send([Answer("page 1")]) == (
-        "request",
-        {"url": "https://x/p/"},
-        "record",
-    )
-    assert run.send(Answer("record body")) == ("done", [{"body": "record body"}])
-
-
-def test_a_call_suspends_and_resumes_with_the_receipt() -> None:
-    story = {
-        "steps": [
-            {"name": "records", "parse": {"url": [["py", "id", ""]]}, "type": "Record"},
-            {
-                "name": "store",
-                "call": "host.store_records",
-                "with": {"table": "records", "from": "$records.url"},
-                "type": "dict",
-            },
-        ],
-        "exit": "store",
-    }
-    run = start(story, "u")
-    assert run.next() == ("call", "host.store_records", {"table": "records", "from": "u"})
-    assert run.send({"stored": 1}) == ("done", [{"stored": 1}])
-
-
-def test_an_exit_step_that_is_jumped_over_yields_an_empty_output() -> None:
-    story = {
-        "steps": [
-            {
-                "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
-                "type": "Request",
-                "next": "last",
-            },
-            {"name": "skipped", "parse": {"u": [["py", "id", ""]]}, "type": "dict"},
-            {"name": "last", "parse": {"u": [["py", "getattr", "text"]]}, "type": "dict"},
-        ],
-        "exit": "skipped",
-    }
-    run = start(story, "seed")
-    assert run.next() == ("request", {"url": "seed"}, "last")
-    assert run.send(Answer("home")) == ("done", [])
-
-
-def test_a_failing_step_stops_the_run_with_its_code() -> None:
-    story = _parse_story(
-        steps=[
-            {"name": "bad", "parse": [["py", "int", ""]], "type": "int"},
-        ],
-        exit="bad",
-    )
-    assert _run_error(story, "not-a-number") == "UP2-E2005"
-    with pytest.raises(Up2Error) as info:
-        start(story, "not-a-number").next()
-    assert info.value.diagnostic.pointer == "/steps/0"
-
-
-def test_a_missing_chain_product_is_skipped() -> None:
-    """A selector that matched nothing is not an error and not a product: the step is skipped
-    (03 §9), so it contributes nothing to the exit — exactly as a missing field is absent from a
-    field-map product, and never a null."""
-    story = _parse_story(steps=[{"name": "a", "parse": [["css1", "text", "div.nope"]]}], exit="a")
-    assert start(story, _DOC).next() == ("done", [])
-
-
-def test_a_missing_product_is_not_recorded() -> None:
-    """Nothing was produced, so a later step cannot reference the skipped step (`UP2-E2001`)."""
-    story = _parse_story(
-        steps=[
-            {"name": "gone", "parse": [["css1", "text", "div.nope"]]},
-            {"name": "later", "parse": {"u": [["ctx", "get", "locals.nope"], ["py", "id", ""]]}},
-        ],
-        exit="later",
-    )
-    assert start(story, _DOC).next() == ("done", [{}])
-
-
-def test_a_missing_product_skips_a_receiving_step() -> None:
-    """A receiving step whose own product is missing is skipped: the run continues after it."""
-    story = {
-        "steps": [
-            {
-                "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
-                "type": "Request",
-                "next": "read",
-            },
-            # `css1` matches nothing in the answer text, so this step produces no product at all.
-            {"name": "read", "parse": [["css1", "text", "div.nope"]], "type": "Record"},
-            {"name": "after", "parse": {"seen": [["const", "after"]]}, "type": "dict"},
-        ],
-        "exit": "after",
-    }
-    run = start(story, "https://x/list.html")
-    assert run.next() == ("request", {"url": "https://x/list.html"}, "read")
-    # `read` produced nothing, so the run goes on at the step after it — not at a null product.
-    assert run.send(_DOC) == ("done", [{"seen": "after"}])
-
-
-def test_a_batch_answer_of_the_wrong_size_is_a_host_error() -> None:
-    story = {
-        "steps": [
-            {
-                "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "fan",
             },
             {
                 "name": "fan",
-                "parse": {"items": [["const", [{"url": "a"}, {"url": "b"}]]]},
+                "body": {
+                    "items": [
+                        ["const", [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}]]
+                    ]
+                },
                 "type": "RequestBatch",
-                "next": "page",
+                "next": "left",
             },
-            {"name": "page", "parse": [["py", "getattr", "text"]], "type": "Page"},
-        ],
-        "exit": "page",
-    }
+            {"name": "left", "body": {"side": [["const", "left"]]}, "type": "dict"},
+            {"name": "right", "body": {"side": [["const", "right"]]}, "type": "dict"},
+            {"name": "joined", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+        ]
+    )
     run = start(story, "seed")
-    run.next()
-    run.send(Answer("home"))
-    with pytest.raises(ValueError, match="2 answers"):
-        run.send([Answer("only one")])
+    run.go()
+    effect = run.feed(Answer("home"))
+    # The task's own string overrides the step's default, exactly as the chain form did.
+    assert effect == ("batch", [{"url": "a"}, {"url": "b"}], "left")
+    assert run.feed([Answer("x"), Answer("y")]) == ("done", [{"n": 2}])
 
 
-def test_a_batch_product_without_items_is_a_story_error() -> None:
-    story = _parse_story(
-        steps=[
+def test_a_task_string_next_that_names_nothing_is_e1016() -> None:
+    story = _bundle(
+        [
             {
-                "name": "bad",
-                "parse": {"nope": [["py", "id", ""]]},
+                "name": "seed",
+                "body": {"url": "$in"},
+                "type": "Request",
+                "next": "fan",
+            },
+            {
+                "name": "fan",
+                "body": {"items": [["const", [{"url": "a", "next": "gone"}]]]},
                 "type": "RequestBatch",
                 "next": "sink",
             },
-            {"name": "sink", "parse": {"seen": [["py", "id", ""]]}, "type": "dict"},
+            {"name": "sink", "body": {"seen": "$in"}, "type": "dict"},
+        ]
+    )
+    run = start(story, "seed")
+    run.go()
+    with pytest.raises(Up2Error) as info:
+        run.feed(Answer("home"))
+    assert info.value.diagnostic.code == "UP2-E1016"
+
+
+def test_a_receiving_step_may_itself_produce_a_request() -> None:
+    story = _bundle(
+        [
+            {
+                "name": "seed",
+                "body": {"url": "$in"},
+                "type": "Request",
+                "next": "gather",
+            },
+            {
+                "name": "gather",
+                "body": {"items": [["const", [{"url": "a"}]]]},
+                "type": "RequestBatch",
+                "next": "page",
+            },
+            {
+                "name": "page",
+                "body": {"url": [["py", "getattr", "url"]]},
+                "type": "Request",
+                "next": "record",
+            },
+            {"name": "record", "body": {"body": [["py", "getattr", "text"]]}, "type": "Record"},
+        ]
+    )
+    run = start(story, "seed")
+    run.go()
+    assert run.feed(Answer("home"))[0] == "batch"
+    # The receiving step is itself a request: the run suspends again, inside the same fan-out.
+    assert run.feed([Answer("page 1")]) == (
+        "request",
+        {"url": "https://x/p/"},
+        "record",
+    )
+    assert run.feed(Answer("record body")) == ("done", [{"body": "record body"}])
+
+
+def test_a_call_suspends_and_resumes_with_the_receipt() -> None:
+    story = _bundle(
+        [
+            {"name": "records", "body": {"url": "$in"}, "type": "Record"},
+            {
+                "name": "store",
+                "call": "host.store_records",
+                "args": {"table": "records", "from": "$records.url"},
+                "type": "dict",
+            },
+        ]
+    )
+    run = start(story, "u")
+    assert run.go() == ("call", "host.store_records", {"table": "records", "from": "u"})
+    assert run.feed({"stored": 1}) == ("done", [{"stored": 1}])
+
+
+def test_a_collect_step_that_matched_nothing_still_contributes() -> None:
+    """A no-match is a value: the exit step contributes its product, never a skipped step."""
+    story = _bundle(
+        [
+            {
+                "name": "seed",
+                "body": {"url": "$in"},
+                "type": "Request",
+                "next": "record",
+            },
+            {"name": "record", "body": [["py", "getattr", "text"], ["css1", "text", "div.nope"]]},
+            {"name": "backup", "body": {"seen": [["const", "backup"]]}, "type": "dict"},
         ],
-        exit="bad",
+        entry="seed",
+        collect="record",
+    )
+    run = start(story, "seed")
+    assert run.go() == ("request", {"url": "seed"}, "record")
+    assert run.feed(Answer("home")) == ("done", [""])
+
+
+def test_a_failing_step_stops_the_run_with_its_code() -> None:
+    story = _bundle([{"name": "bad", "body": [["py", "int", ""]], "type": "int"}])
+    assert _run_error(story, "not-a-number") == "UP2-E2005"
+    with pytest.raises(Up2Error) as info:
+        start(story, "not-a-number").go()
+    assert info.value.diagnostic.pointer == "/steps/0"
+
+
+def test_a_chain_that_matched_nothing_produces_the_empty_value() -> None:
+    """A selector that matched nothing yields `""`, and the step still contributes a product."""
+    story = _bundle([{"name": "a", "body": [["css1", "text", "div.nope"]]}])
+    assert start(story, _DOC).go() == ("done", [""])
+
+
+def test_an_unreadable_reference_stops_the_run() -> None:
+    """A path that does not exist is a failure (`UP2-E2001`), so a later step cannot rely on it."""
+    story = _bundle(
+        [
+            {"name": "gone", "body": [["css1", "text", "div.nope"]]},
+            {"name": "later", "body": {"u": [["ctx", "get", "locals.nope"], ["py", "strip", ""]]}},
+        ]
+    )
+    assert _run_error(story, _DOC) == "UP2-E2001"
+
+
+def test_a_receiving_step_produces_the_empty_value_and_the_run_continues() -> None:
+    """A receiving step whose chain matched nothing produces `""`; the run continues after it."""
+    story = _bundle(
+        [
+            {
+                "name": "seed",
+                "body": {"url": "$in"},
+                "type": "Request",
+                "next": "read",
+            },
+            # `css1` matches nothing in the answer text, so this step produces no product at all.
+            {"name": "read", "body": [["css1", "text", "div.nope"]], "type": "Record"},
+            {"name": "after", "body": {"seen": [["const", "after"]]}, "type": "dict"},
+        ]
+    )
+    run = start(story, "https://x/list.html")
+    assert run.go() == ("request", {"url": "https://x/list.html"}, "read")
+    # `read` produced nothing, so the run goes on at the step after it — not at a null product.
+    assert run.feed(_DOC) == ("done", [{"seen": "after"}])
+
+
+def test_a_batch_answer_of_the_wrong_size_is_a_host_error() -> None:
+    story = _bundle(
+        [
+            {
+                "name": "seed",
+                "body": {"url": "$in"},
+                "type": "Request",
+                "next": "fan",
+            },
+            {
+                "name": "fan",
+                "body": {"items": [["const", [{"url": "a"}, {"url": "b"}]]]},
+                "type": "RequestBatch",
+                "next": "page",
+            },
+            {"name": "page", "body": [["py", "getattr", "text"]], "type": "Page"},
+        ]
+    )
+    run = start(story, "seed")
+    run.go()
+    run.feed(Answer("home"))
+    with pytest.raises(ValueError, match="2 answers"):
+        run.feed([Answer("only one")])
+
+
+def test_a_batch_product_without_items_is_a_story_error() -> None:
+    story = _bundle(
+        [
+            {
+                "name": "bad",
+                "body": {"nope": [["py", "len", ""]]},
+                "type": "RequestBatch",
+                "next": "sink",
+            },
+            {"name": "sink", "body": {"seen": "$in"}, "type": "dict"},
+        ],
+        collect="bad",
     )
     assert _run_error(story, {"a": 1}) == "UP2-E2005"
 
 
 def test_a_task_routing_to_an_unknown_step_fails() -> None:
     """A task's own `next` is data, so its target is checked when the batch is handed over."""
-    story = _parse_story(
-        steps=[
+    story = _bundle(
+        [
             {
                 "name": "seed",
-                "parse": {"url": [["py", "id", ""]]},
+                "body": {"url": "$in"},
                 "type": "Request",
                 "next": "fan",
             },
             {
                 "name": "fan",
-                "parse": {"items": [["const", [{"url": "a", "next": "gone"}]]]},
+                "body": {"items": [["const", [{"url": "a", "next": "gone"}]]]},
                 "type": "RequestBatch",
                 "next": "sink",
             },
-            {"name": "sink", "parse": {"seen": [["py", "id", ""]]}, "type": "dict"},
+            {"name": "sink", "body": {"seen": "$in"}, "type": "dict"},
         ],
-        exit="fan",
+        collect="fan",
     )
     run = start(story, "seed")
-    run.next()
+    run.go()
     with pytest.raises(Up2Error) as info:
-        run.send(Answer("home"))
+        run.feed(Answer("home"))
     assert info.value.diagnostic.code == "UP2-E1016"
 
 
 def test_a_request_product_that_is_not_an_object_is_a_story_error() -> None:
-    story = _parse_story(
-        steps=[
-            {"name": "bad", "parse": [["const", 7]], "type": "Request", "next": "sink"},
-            {"name": "sink", "parse": {"seen": [["py", "id", ""]]}, "type": "dict"},
+    story = _bundle(
+        [
+            {"name": "bad", "body": [["const", 7]], "type": "Request", "next": "sink"},
+            {"name": "sink", "body": {"seen": "$in"}, "type": "dict"},
         ],
-        exit="bad",
+        collect="bad",
     )
     assert _run_error(story, "ignored") == "UP2-E2005"
 
 
 def test_a_batch_task_that_is_not_an_object_is_a_story_error() -> None:
-    story = _parse_story(
-        steps=[
+    story = _bundle(
+        [
             {
                 "name": "bad",
-                "parse": {"items": [["const", [7]]]},
+                "body": {"items": [["const", [7]]]},
                 "type": "RequestBatch",
                 "next": "sink",
             },
-            {"name": "sink", "parse": {"seen": [["py", "id", ""]]}, "type": "dict"},
+            {"name": "sink", "body": {"seen": "$in"}, "type": "dict"},
         ],
-        exit="bad",
+        collect="bad",
     )
     assert _run_error(story, "ignored") == "UP2-E2005"
 
 
 def test_the_run_exposes_its_story_and_input_and_can_be_closed() -> None:
     run = start(_parse_story(), "u")
-    assert run.story.exit == "records"
+    assert run.story.entry == "records"
+    assert run.story.collect == "records"
     assert run.value == "u"
     run.close()
 
 
 def test_a_step_must_be_an_object() -> None:
-    assert _compile_error({"steps": [7], "exit": "records"}) == "UP2-E1005"
+    assert _compile_error({"entry": "records", "steps": [7], "collect": "records"}) == "UP2-E1005"
 
 
 def test_a_step_with_a_non_string_call_is_rejected() -> None:
-    assert _compile_error(_parse_story(steps=[{"name": "a", "call": 7}], exit="a")) == "UP2-E1005"
+    assert _compile_error(_bundle([{"name": "a", "call": 7}])) == "UP2-E1005"
 
 
 def test_a_globals_table_must_be_an_object() -> None:
     assert _compile_error(_parse_story(globals=[1])) == "UP2-E1005"
 
 
-def test_a_field_map_holds_locals_and_drops_missing_fields() -> None:
+def test_a_field_map_holds_locals_and_keeps_empty_fields() -> None:
     """A `_`-prefixed field is a local of that step: it never appears in the product."""
-    story = _parse_story(
-        steps=[
+    story = _bundle(
+        [
             {
                 "name": "a",
-                "parse": {
+                "body": {
                     "_tmp": [["py", "upper", ""]],
                     "up": [["ctx", "get", "locals._tmp"]],
                     "gone": [["css1", "text", "div.nope"]],
                 },
                 "type": "dict",
             }
-        ],
-        exit="a",
+        ]
     )
-    assert start(story, "ab").next() == ("done", [{"up": "AB"}])
+    assert start(story, "ab").go() == ("done", [{"up": "AB", "gone": ""}])
 
 
 def test_a_call_argument_reference_is_resolved() -> None:
     """A `with` reference is resolved through the step's scope."""
-    story = {
-        "steps": [
-            {"name": "a", "parse": {"u": [["py", "id", ""]]}, "type": "dict"},
-            {"name": "b", "call": "host.fn", "with": {"seen": "$a.u"}, "type": "dict"},
-        ],
-        "exit": "b",
-    }
-    assert start(story, "ignored").next() == ("call", "host.fn", {"seen": "ignored"})
+    story = _bundle(
+        [
+            {"name": "a", "body": {"u": "$in"}, "type": "dict"},
+            {"name": "b", "call": "host.fn", "args": {"seen": "$a.u"}, "type": "dict"},
+        ]
+    )
+    assert start(story, "ignored").go() == ("call", "host.fn", {"seen": "ignored"})
+
+
+# ---------------------------------------------------------------- a whole-chain reference
+
+
+def test_a_chain_may_be_a_whole_chain_reference() -> None:
+    """`$` in chain position is the value the reference names, unchanged (`03` §2)."""
+    story = _bundle(
+        [
+            {"name": "a", "body": {"out": "$in"}, "type": "dict"},
+        ]
+    )
+    assert start(story, "  not stripped  ").go() == ("done", [{"out": "  not stripped  "}])
+
+
+def test_a_step_parse_may_be_a_whole_chain_reference() -> None:
+    story = _bundle([{"name": "a", "body": "$in", "type": "dict"}])
+    assert start(story, {"k": 1}).go() == ("done", [{"k": 1}])
+
+
+def test_a_chain_reference_leaves_its_value_unconverted() -> None:
+    """The reference is not a conversion: a host object stays the object it named."""
+    answer = Answer(_DOC, url="https://x/final")
+    story = _bundle(
+        [
+            {"name": "seed", "body": {"url": "$in"}, "type": "Request", "next": "read"},
+            {"name": "read", "body": {"url": ["$in", ["py", "getattr", "url"]]}, "type": "dict"},
+        ]
+    )
+    run = start(story, "seed")
+    run.go()
+    # `$in` handed the answer object on as it is, so `getattr` reads its own attribute.
+    assert run.feed(answer) == ("done", [{"url": "https://x/final"}])
+
+
+def test_a_chain_reference_is_not_converted_by_the_next_stage() -> None:
+    """`$in` inside an `each` field map names the **step's** input, not the element (`02` §5).
+
+    The element is the chain's *input value*, which is what the stage above consumes -- so a field
+    that wants the element writes the stage, exactly as it does anywhere else in a field map.
+    """
+    story = _bundle(
+        [
+            {
+                "name": "a",
+                "body": {
+                    "items": [
+                        ["const", ["x", "y"]],
+                        ["each", {"elem": [["py", "upper", ""]], "whole": "$in"}],
+                    ],
+                },
+                "type": "dict",
+            }
+        ]
+    )
+    outcome = start(story, {"seed": "s"}).go()
+    assert outcome[0] == "done"
+    assert outcome[1] == [
+        {
+            "items": [
+                {"elem": "X", "whole": {"seed": "s"}},
+                {"elem": "Y", "whole": {"seed": "s"}},
+            ]
+        }
+    ]
+
+
+def test_a_chain_reference_reads_a_step_product() -> None:
+    story = _bundle(
+        [
+            {"name": "a", "body": {"u": [["py", "upper", ""]]}, "type": "dict"},
+            {"name": "b", "body": {"seen": "$a.u"}, "type": "dict"},
+        ]
+    )
+    assert start(story, "ab").go() == ("done", [{"seen": "AB"}])
+
+
+def test_a_chain_that_opens_with_a_reference_reads_a_key_of_the_step_input() -> None:
+    story = _bundle(
+        [
+            {
+                "name": "a",
+                "body": {"u": ["$in", ["py", "getitem", "url"]]},
+                "type": "dict",
+            }
+        ]
+    )
+    assert start(story, {"url": "https://x/"}).go() == ("done", [{"u": "https://x/"}])
+
+
+def test_a_chain_reference_to_an_unknown_root_is_rejected() -> None:
+    story = _bundle([{"name": "a", "body": {"u": "$nope"}}])
+    assert _compile_error(story) == "UP2-E1006"
+
+
+def test_the_retired_fields_root_is_rejected() -> None:
+    """`$fields` was a second name for `$locals` and is gone: it is an unknown root."""
+    story = _bundle([{"name": "a", "body": {"u": "$fields.title"}}])
+    assert _compile_error(story) == "UP2-E1006"
+
+
+def test_a_chain_reference_to_its_own_step_is_rejected() -> None:
+    story = _bundle([{"name": "rows", "body": {"url": "$rows.url"}}])
+    assert _compile_error(story) == "UP2-E1006"
+
+
+def test_a_chain_reference_to_a_local_of_another_step_is_rejected() -> None:
+    story = _bundle(
+        [
+            {"name": "a", "body": {"_tmp": [["py", "strip", ""]]}},
+            {"name": "b", "body": {"u": "$a._tmp"}},
+        ]
+    )
+    assert _compile_error(story) == "UP2-E1014"
 
 
 # ---------------------------------------------------------------- $in

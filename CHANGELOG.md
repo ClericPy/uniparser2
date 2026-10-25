@@ -43,6 +43,16 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Fixed
 
+- **The report's input is whole, matched and scoped** (change `report-case-context`): an input was
+  elided at 180 characters exactly like an output, which cut a selector's own target out of the css
+  sample (the text stopped inside `<h1 cl…`), and the "sample above" link landed on a collapsed
+  block. A card now shows what its selector **matched** (`1 node · h1.article-title`; `1 node ·
+  script` says plainly that no `<style>` exists in the sample), the **scope** a `ctx` / `code` /
+  `udf` case reads — its real input, never rendered before — and, for `const` and the reading `ctx`
+  actions, that the input is **not used**, instead of presenting a document as one. The Markdown
+  catalogue no longer labels the first case's value "Shared input for this section" for sections
+  whose inputs differ (`py` advertised `'  text  '` to 42 actions), and the section sample is open
+  by default.
 - **The request cache no longer answers one page with another page's answer**: the cache key is now a
   digest of the **normalized** request — the query parameters folded into the URL, the body decoded to
   its bytes, the whole thing written as JSON with sorted keys — so `?page=1` and `?page=2` are two

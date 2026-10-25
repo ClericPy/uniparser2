@@ -13,8 +13,8 @@ is enforced, not in the workflow. The HTML build carries a timestamp and shows t
 state of every optional engine, so it stays local.
 
 Structure: the operator is the top-level group (ordered by its own commonness); each
-operator gets one section holding its action cards **sorted by commonness** (input → chain →
-output repr), the multi-stage compositions starting with that operator and that operator's
+operator gets one section holding its action cards **sorted by commonness** (input → matched →
+chain → output), the multi-stage compositions starting with that operator and that operator's
 compile-time bad chains; mechanisms shared across operators live in the appendix.
 
 Coverage is decided by the **registry enumeration**: every `(operator, action)` pair of
@@ -35,6 +35,7 @@ import json
 import platform
 import re
 import sys
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -48,7 +49,8 @@ OUT_PATH: Final = Path(".cache/report/up2-report.html")
 MD_PATH: Final = Path("docs/report/up2-report.md")
 """The Markdown catalogue is committed (GitHub renders Markdown, not HTML); the HTML is local."""
 
-_LIMIT: Final = 180
+_OUTPUT_LIMIT: Final = 180
+"""An outcome is elided at this many characters: it can be a whole page."""
 _DYNAMIC: Final = registry.DYNAMIC_ACTION_MARK
 _BACKTICK_RUN: Final = re.compile(r"`+")
 
@@ -148,6 +150,10 @@ class Case:
     scope_globals: dict[str, Any] = field(default_factory=dict)
     scope_locals: dict[str, Any] = field(default_factory=dict)
     note: str = ""
+    ignores_input: bool = False
+    """The chain derives nothing from the upstream, so the card must not present one as input."""
+    input_note: str = ""
+    """Why the upstream is not used, for the cases that set ``ignores_input``."""
 
 
 def _register_demo_udf() -> None:
@@ -208,10 +214,12 @@ def coverage_cases() -> list[Case]:
             "const",
             "const",
             [["const", "article"]],
-            HTML_DOC,
+            None,
             "Core",
             1,
             note="2 positions: literal",
+            ignores_input=True,
+            input_note="the value comes from the chain, never from the upstream",
         ),
         Case(
             "each",
@@ -274,6 +282,8 @@ def coverage_cases() -> list[Case]:
             "Common",
             1,
             scope_locals={"k": "local value"},
+            ignores_input=True,
+            input_note="the value is read from the scope path",
         ),
         Case(
             "ctx",
@@ -293,6 +303,8 @@ def coverage_cases() -> list[Case]:
             1,
             scope_locals={"x": 1, "y": 2},
             note="name → path object → dict",
+            ignores_input=True,
+            input_note="the values are read from the scope paths",
         ),
         Case(
             "ctx",
@@ -303,6 +315,8 @@ def coverage_cases() -> list[Case]:
             2,
             scope_locals={"x": 1, "y": 2},
             note="array of paths → list (feeds a positional call)",
+            ignores_input=True,
+            input_note="the values are read from the scope paths",
         ),
         Case(
             "ctx",
@@ -796,9 +810,22 @@ def _stable_text(text: str) -> str:
     return _LIMIT_MEASURE.sub("feed time limit exceeded: <measured>", text)
 
 
-def _render_value(value: Any) -> str:
+def _render_output(value: Any) -> str:
+    """An outcome: elided at ``_OUTPUT_LIMIT`` characters, because it can be a whole page."""
     text = _stable_text(repr(value))
-    return text if len(text) <= _LIMIT else text[:_LIMIT] + "…"
+    return text if len(text) <= _OUTPUT_LIMIT else text[:_OUTPUT_LIMIT] + "…"
+
+
+def _render_input(value: Any) -> str:
+    """A case's input: shown whole.
+
+    An input is a small hand-written fixture, and it is the evidence the case is read against.
+    Eliding it at the output limit once cut a selector's own target out of the sample (in the css
+    section, ``article-title`` fell past the mark), so text is shown as itself and anything else as
+    its repr, with no cut at all. Only the blank first/last line of a fixture is dropped — it is
+    layout, not evidence.
+    """
+    return value.strip("\n") if isinstance(value, str) else repr(value)
 
 
 def _run(case: Case) -> Ran:
@@ -825,7 +852,7 @@ def _run(case: Case) -> Ran:
     except up2.Up2Error as exc:
         return Ran(case, "compile error", "", [], exc.diagnostic)
     steps = _steps_of(case, compiled, trace)
-    return Ran(case, type(outcome).__name__, _render_value(outcome), steps)
+    return Ran(case, type(outcome).__name__, _render_output(outcome), steps)
 
 
 def _steps_of(case: Case, compiled: Any, trace: Any) -> list[tuple[str, str]]:
@@ -854,7 +881,7 @@ def _event_text(event: Any) -> str:
         code = detail.get("code", "UP2-E????")
         reason = detail.get("reason", "")
         return f"Failed({code}: {reason})"
-    return f"Ok(value={_render_value(_event_value(event))})"
+    return f"Ok(value={_render_output(_event_value(event))})"
 
 
 def _event_value(event: Any) -> Any:
@@ -945,6 +972,117 @@ def _tier_badge(tier: str) -> str:
     return f'<span class="tier" title="{_escape(tier)}">{_escape(mark)}</span>'
 
 
+_OPEN_TAG: Final = re.compile(r"<([a-zA-Z][\w:-]*)((?:\s[^>]*)?)>")
+_CLASS_ATTR: Final = re.compile(r'\bclass\s*=\s*"([^"]*)"')
+_ID_ATTR: Final = re.compile(r'\bid\s*=\s*"([^"]*)"')
+
+_TAG_FALLBACK: Final = 40
+"""How much of an unparsable outer HTML to keep before giving up on a structure summary."""
+
+
+def _tag_summary(outer: str) -> str:
+    """``tag#id.class`` for one matched node, read from its opening tag."""
+    match = _OPEN_TAG.match(outer)
+    if match is None:
+        return outer.split("\n", 1)[0][:_TAG_FALLBACK]
+    tag, attrs = match.group(1), match.group(2)
+    summary = tag
+    if ident := _ID_ATTR.search(attrs):
+        summary += f"#{ident.group(1)}"
+    if classes := _CLASS_ATTR.search(attrs):
+        summary += "".join(f".{name}" for name in classes.group(1).split())
+    return summary
+
+
+def _node_summary(summaries: list[str], *, first_only: bool) -> str:
+    """``2 nodes · a (×2)``: identical structures are grouped, so a miss stays visible.
+
+    ``script,style`` rendering as ``1 node · script`` is the point of the row — it says that no
+    ``<style>`` element exists in the sample.
+    """
+    counts = Counter(summaries)
+    parts = [f"{name} (×{count})" if count > 1 else name for name, count in counts.items()]
+    total = len(summaries)
+    text = f"{total} node{'s' if total != 1 else ''}"
+    if parts:
+        text += " · " + ", ".join(parts)
+    if first_only and total > 1:
+        text += " — only the first match is used"
+    return text
+
+
+def _probe(case: Case, chain: list[Any]) -> Any:
+    """Run a display probe against the case's own input; any failure yields ``None``."""
+    scope = up2.Scope(globals=dict(case.scope_globals), locals=dict(case.scope_locals))
+    try:
+        outcome = up2.eval_field(up2.compile_field(chain), case.value, scope=scope)
+    except up2.Up2Error:
+        return None
+    return outcome.value if isinstance(outcome, up2.Ok) else None
+
+
+def _xpath_tag(node: Any) -> str:
+    """The element name of an ``XPathNode``; xpath has no ``outer`` accessor to ask instead."""
+    raw = getattr(node, "raw", None)
+    tag = getattr(raw, "tag", None)
+    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else repr(node)
+
+
+def _matched_text(ran: Ran) -> str:
+    """What the chain's selector matched in the sample — its structure, not hand-written prose.
+
+    The probe runs the same operator on the same input and asks the structure-yielding accessor, so
+    the row cannot drift from the fixture. Only a single-stage chain is probed: a composition's
+    stage-by-stage view already says what each stage did.
+    """
+    chain = ran.case.chain
+    if len(chain) != 1 or not isinstance(chain[0], list) or len(chain[0]) != 3:
+        return ""
+    op, _, param = chain[0]
+    if op in ("css", "css1"):
+        matched = _probe(ran.case, [["css", "outer", param]])
+        if not isinstance(matched, list):
+            return ""
+        return _node_summary(
+            [_tag_summary(item) for item in matched if isinstance(item, str)],
+            first_only=op == "css1",
+        )
+    if op == "xpath":
+        matched = _probe(ran.case, [["xpath", "nodes", param]])
+        if not isinstance(matched, list):
+            return ""
+        return _node_summary([_xpath_tag(node) for node in matched], first_only=False)
+    return ""
+
+
+def _scope_text(case: Case) -> str:
+    """The scope a case declares: for ``ctx`` / ``code`` / ``udf`` this is the real input."""
+    parts = []
+    if case.scope_globals:
+        parts.append(f"globals {case.scope_globals!r}")
+    if case.scope_locals:
+        parts.append(f"locals {case.scope_locals!r}")
+    return " · ".join(parts)
+
+
+_SAMPLE_THRESHOLD: Final = 120
+"""A shared input shorter than this is printed on each card; a block is not worth its frame."""
+
+
+def _shared_input(cases: list[Ran]) -> str:
+    """The one input every case in a section runs on, or ``""`` when there is no such input.
+
+    A case that ignores its upstream disqualifies the section: a document ``const`` never reads is
+    not "the input" of anything, and presenting it as one is what made that section unreadable.
+    """
+    if not cases or any(ran.case.ignores_input for ran in cases):
+        return ""
+    if len({repr(ran.case.value) for ran in cases}) != 1:
+        return ""
+    shared = _render_input(cases[0].case.value)
+    return shared if len(shared) >= _SAMPLE_THRESHOLD else ""
+
+
 def _chain_html(ran: Ran) -> str:
     if len(ran.steps) > 1:
         body = "".join(
@@ -988,15 +1126,29 @@ def _case_card(
         f"{title}{note}{deps}</div>"
     )
     rows = [head]
+    matched = _matched_text(ran)
+    if matched:
+        rows.append(_io("Matched", f'<span class="match">{_escape(matched)}</span>'))
     if action is not None:
         rows.append(_io("Parameters", _pre(_escape(_schema_text(action)))))
-    own = _render_value(ran.case.value)
-    if own != shared_input or not shared_input:
-        rows.append(_io("Input", _pre(_escape(own))))
+    scope = _scope_text(ran.case)
+    if scope:
+        rows.append(_io("Scope", _pre(_escape(scope))))
+    if ran.case.ignores_input:
+        reason = f" — {ran.case.input_note}" if ran.case.input_note else ""
+        rows.append(_io("Input", f'<span class="ref">not used{_escape(reason)}</span>'))
     else:
-        rows.append(
-            _io("Input", f'<span class="ref">same as <a href="#{anchor}">sample above</a></span>')
-        )
+        own = _render_input(ran.case.value)
+        if shared_input and own == shared_input:
+            rows.append(
+                _io(
+                    "Input",
+                    f'<span class="ref">the same sample as the rest of this section — '
+                    f'<a href="#{anchor}">shown in full above</a></span>',
+                )
+            )
+        else:
+            rows.append(_io("Input", _pre(_escape(own))))
     rows.append(_chain_html(ran))
     rows.append(_io("Output", _pre(_escape(ran.outcome_repr), css="result")))
     if ran.error is not None:
@@ -1027,8 +1179,7 @@ def _operator_section(
     bad: list[tuple[list[Any], str, str, str, str]],
 ) -> str:
     anchor = f"input-{item.name}"
-    values = {_render_value(ran.case.value) for ran in cases}
-    shared_input = values.pop() if len(values) == 1 else ""
+    shared_input = _shared_input(cases)
     counts: dict[str, int] = {}
     for ran in cases:
         counts[ran.case.tier] = counts.get(ran.case.tier, 0) + 1
@@ -1039,8 +1190,9 @@ def _operator_section(
     sample = ""
     if shared_input:
         sample = (
-            f'<details class="doc" id="{anchor}">'
-            "<summary>Input sample for this section (shared by all entries)</summary>"
+            f'<details class="doc" id="{anchor}" open>'
+            "<summary>Input sample for this section — the same input for every card below, "
+            "shown in full</summary>"
             f"{_pre(_escape(shared_input))}</details>"
         )
     ordered = sorted(cases, key=lambda ran: (_TIER_ORDER.get(ran.case.tier, 9), ran.case.rank))
@@ -1055,7 +1207,9 @@ def _operator_section(
         for ran in ordered
     )
     chain_cards = "".join(
-        _case_card(r, index.get((item.name, r.case.action)), shared_input="", anchor=anchor)
+        _case_card(
+            r, index.get((item.name, r.case.action)), shared_input=shared_input, anchor=anchor
+        )
         for r in chains
     )
     chain_block = f"<h3>Compositions (multi-stage chains)</h3>{chain_cards}" if chains else ""
@@ -1224,8 +1378,8 @@ def build_html() -> str:
     orphan_bad = runs.orphan_bad()
     stamp = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
     meta = (
-        "Input → triple chain → output repr (all of it produced by a real run of "
-        "<code>uv run python tools/demo_report.py</code>)<br>"
+        "What each case ran on, what its selector matched, and what came out (all of it produced "
+        "by a real run of <code>uv run python tools/demo_report.py</code>)<br>"
         f"Generated {_escape(stamp)} · Python {_escape(platform.python_version())} · "
         f"uniparser2 {_escape(up2.__version__)} · Platform {_escape(platform.system())} "
         f"{_escape(platform.release())}"
@@ -1344,6 +1498,20 @@ def _md_parameters(action: registry.ActionReport | None) -> str:
     return f"parameter slot: {form} · {declared}"
 
 
+def _md_input_lines(ran: Ran, *, shared_input: str) -> list[str]:
+    """The input line: the value itself, or the reason there is none to show."""
+    if ran.case.ignores_input:
+        reason = f" — {ran.case.input_note}" if ran.case.input_note else ""
+        return [f"- input: not used{reason}"]
+    own = _render_input(ran.case.value)
+    if shared_input and own == shared_input:
+        return ["- input: the section sample above (shown in full)"]
+    if "\n" in own:
+        body = _md_fence(own, "text").replace("\n", "\n  ")
+        return ["- input:", "", f"  {body}"]
+    return [f"- input: {_md_inline(own)}"]
+
+
 def _md_case(ran: Ran, action: registry.ActionReport | None, *, shared_input: str) -> str:
     out = [f"#### `{ran.case.action}` — {action.summary if action else ran.case.op}"]
     bits = [f"tier {TIERS.get(ran.case.tier, '')} {ran.case.tier}"]
@@ -1352,16 +1520,18 @@ def _md_case(ran: Ran, action: registry.ActionReport | None, *, shared_input: st
     out.append("- " + " · ".join(bits))
     if ran.case.note:
         out.append(f"- note: {ran.case.note}")
+    matched = _matched_text(ran)
+    if matched:
+        out.append(f"- matched: {_md_inline(matched)}")
+    scope = _scope_text(ran.case)
+    if scope:
+        out.append(f"- scope: {_md_inline(scope)}")
     if len(ran.steps) > 1:
         out.append("- chain:")
         out.extend(f"  - {_md_inline(step)} → {_md_inline(result)}" for step, result in ran.steps)
     else:
         out.append(f"- chain: {_md_inline(json.dumps(ran.case.chain, ensure_ascii=False))}")
-    own = _render_value(ran.case.value)
-    if own != shared_input or not shared_input:
-        out.append(f"- input: {_md_inline(own)}")
-    else:
-        out.append("- input: the shared sample above")
+    out.extend(_md_input_lines(ran, shared_input=shared_input))
     out.append(f"- output: {_md_inline(ran.outcome_repr)} ({ran.state})")
     if ran.error is not None:
         out.append(f"- diagnostics: {_md_inline(ran.error)}")
@@ -1393,8 +1563,14 @@ def _md_section(
         f"({', '.join(tiers)})",
         "",
     ]
-    shared = _render_value(cases[0].case.value)
-    out += ["Shared input for this section:", "", _md_fence(str(shared), "text"), ""]
+    shared = _shared_input(cases)
+    if shared:
+        out += [
+            "Shared input for this section — the same input for every card below:",
+            "",
+            _md_fence(shared, "text"),
+            "",
+        ]
     out.append("### Actions (sorted by commonness)")
     out.append("")
     ordered = sorted(cases, key=lambda ran: (_TIER_ORDER.get(ran.case.tier, 9), ran.case.rank))
@@ -1403,7 +1579,7 @@ def _md_section(
     if chains:
         out += ["### Compositions (multi-stage chains)", ""]
         for ran in chains:
-            out.append(_md_case(ran, index.get((item.name, ran.case.action)), shared_input=""))
+            out.append(_md_case(ran, index.get((item.name, ran.case.action)), shared_input=shared))
     if bad:
         out += ["### Invalid forms", "", _md_bad_table(bad)]
     return "\n".join(out) + "\n"
@@ -1463,8 +1639,9 @@ def build_md() -> str:
     parts = [
         "# uniparser2 parsing-chain report",
         "",
-        "Input → triple chain → output repr: every entry below is the result of a **real run** "
-        "(`uv run python tools/demo_report.py --md`). This file is generated — regenerate it "
+        "What each case ran on, what its selector matched, and what came out: every entry below is "
+        "the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is "
+        "generated — regenerate it "
         "after changing an operator; `--md --check` fails when it is stale. The local HTML build "
         "(`.cache/report/up2-report.html`) shows installed/missing dependency state and is not "
         "committed.",
@@ -1559,6 +1736,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .pair { font-weight: 600; }
 code.summary { color: #888; font-weight: 400; }
 .note, .ref { color: #888; font-size: 12px; }
+.match { font-size: 12.5px; font-family: ui-monospace, Consolas, "Courier New", monospace; }
 .warn { color: #c62828; font-size: 12px; }
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; color: #fff; }
 .badge.ok { background: #2e7d32; } .badge.miss { background: #b8860b; }

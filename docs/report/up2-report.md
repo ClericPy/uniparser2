@@ -1,6 +1,6 @@
 # uniparser2 parsing-chain report
 
-Input → triple chain → output repr: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `--md --check` fails when it is stale. The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
+What each case ran on, what its selector matched, and what came out: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `--md --check` fails when it is stale. The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
 
 Generated from `uniparser2` 0.5.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
 
@@ -41,10 +41,28 @@ Commonness is a **design judgement**, not telemetry: the tiers follow the "stand
 
 arity 3 · slot 2=accessor / slot 3=selector · dependencies: `selectolax` · 8 actions (Core, Common, Advanced)
 
-Shared input for this section:
+Shared input for this section — the same input for every card below:
 
 ```text
-'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…
+<html>
+  <head>
+    <meta name="PubDate" content="2026-09-24 15:30:00">
+    <title>Notice on Issuing the Government Service Item List</title>
+  </head>
+  <body>
+    <h1 class="article-title">  Notice on Issuing the Government Service Item List  </h1>
+    <div class="content">
+      <script>console.log('this script must not reach the body');</script>
+      <p>To all municipal governments:</p>
+      <p>The Government Service Item List is hereby issued to you; please comply.</p>
+      <a class="download" href="/files/list.pdf">Download the list</a>
+    </div>
+    <ul class="rel">
+      <li><a href="/p/1.html">Related one</a></li>
+      <li><a href="/p/2.html">Related two</a></li>
+    </ul>
+  </body>
+</html>
 ```
 
 ### Actions (sorted by commonness)
@@ -52,57 +70,65 @@ Shared input for this section:
 #### `text` — plain text
 - tier ★★★ Core · parameter slot: the value itself · `selector: literal`
 - note: plain text (no script/style/noscript)
+- matched: `1 node · h1.article-title`
 - chain: `[["css", "text", "h1.article-title"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=['  Notice on Issuing the Government Service Item List  '])` (Ok)
 
 #### `@<attribute>` — attribute value
 - tier ★★★ Core · parameter slot: the value itself · `attr: literal`, `selector: literal`
 - note: attribute value; absent ⇒ ""
+- matched: `1 node · a.download`
 - chain: `[["css", "@href", "a.download"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=['/files/list.pdf'])` (Ok)
 
 #### `html` — inner HTML
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
 - note: inner HTML
+- matched: `1 node · div.content`
 - chain: `[["css", "html", "div.content"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=['\n      <script>console.log(\'this script must not reach the body\');</script>\n      <p>To all municipal governments:</p>\n      <p>The Government Service Item List is …` (Ok)
 
 #### `remove` — a copy with the matching nodes pruned
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
 - note: pure function: pruned copy
+- matched: `1 node · script`
 - chain: `[["css", "remove", "script,style"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=<DomNode HTMLParser>)` (Ok)
 
 #### `nodes` — the set of matching nodes
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
 - note: node set for L2 fan-out (not a value)
+- matched: `2 nodes · a (×2)`
 - chain: `[["css", "nodes", "ul.rel a"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=[<DomNode Node>, <DomNode Node>])` (Ok)
 
 #### `exists` — whether the selector matches at least one node
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
 - note: boolean: does the selector match
+- matched: `2 nodes · a (×2)`
 - chain: `[["css", "exists", "ul.rel a"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=True)` (Ok)
 
 #### `outer` — outer HTML
 - tier ★ Advanced · parameter slot: the value itself · `selector: literal`
 - note: outer HTML (with its own tag)
+- matched: `1 node · h1.article-title`
 - chain: `[["css", "outer", "h1.article-title"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=['<h1 class="article-title">  Notice on Issuing the Government Service Item List  </h1>'])` (Ok)
 
 #### `self` — the node handle itself
 - tier ★ Advanced · parameter slot: the value itself · `selector: literal`
 - note: handle of the first match
+- matched: `1 node · div.content`
 - chain: `[["css", "self", "div.content"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=<DomNode Node>)` (Ok)
 
 ### Compositions (multi-stage chains)
@@ -114,14 +140,15 @@ Shared input for this section:
   - `["css", "remove", "script,style"]` → `Ok(value='<opaque DomNode>')`
   - `["css1", "html", "div.content"]` → `Ok(value='"\\n      \\n      <p>To all municipal governments:</p>\\n      <p>The Government Service Item List is hereby issued to you; please comply.</p>\\n      <a class=\\"download\\" hre…)`
   - `["py", "html_to_markdown", ""]` → `Ok(value='To all municipal governments:\n\nThe Government Service Item List is hereby issued to you; please comply.\n\n[Download the list](/files/list.pdf)\n')`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input: the section sample above (shown in full)
 - output: `Ok(value='To all municipal governments:\n\nThe Government Service Item List is hereby issued to you; please comply.\n\n[Download the list](/files/list.pdf)\n')` (Ok)
 
 #### `composition` — css
 - tier ★★★ Core
 - note: css yields a list: every href at once
+- matched: `2 nodes · a (×2)`
 - chain: `[["css", "@href", "ul.rel a"]]`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input: the section sample above (shown in full)
 - output: `Ok(value=['/p/1.html', '/p/2.html'])` (Ok)
 
 #### `composition` — css
@@ -130,7 +157,7 @@ Shared input for this section:
 - chain:
   - `["css", "nodes", "ul.rel a"]` → `Ok(value=['<DomNode Node>', '<DomNode Node>'])`
   - `["py", "len", ""]` → `Ok(value=2)`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input: the section sample above (shown in full)
 - output: `Ok(value=2)` (Ok)
 
 #### `composition` — css
@@ -139,7 +166,7 @@ Shared input for this section:
 - chain:
   - `["css", "nodes", "ul.rel li"]` → `Ok(value='/p/2.html')`
   - `["each", {"title": [["css1", "text", "a"]], "href": [["css1", "@href", "a"]]}]` → `Ok(value=[{'title': 'Related one', 'href': '/p/1.html'}, {'title': 'Related two', 'href': '/p/2.html'}])`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input: the section sample above (shown in full)
 - output: `Ok(value=[{'title': 'Related one', 'href': '/p/1.html'}, {'title': 'Related two', 'href': '/p/2.html'}])` (Ok)
 
 ### Invalid forms
@@ -156,10 +183,28 @@ Shared input for this section:
 
 arity 3 · slot 2=accessor / slot 3=selector · dependencies: `selectolax` · 8 actions (Core, Common, Advanced)
 
-Shared input for this section:
+Shared input for this section — the same input for every card below:
 
 ```text
-'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…
+<html>
+  <head>
+    <meta name="PubDate" content="2026-09-24 15:30:00">
+    <title>Notice on Issuing the Government Service Item List</title>
+  </head>
+  <body>
+    <h1 class="article-title">  Notice on Issuing the Government Service Item List  </h1>
+    <div class="content">
+      <script>console.log('this script must not reach the body');</script>
+      <p>To all municipal governments:</p>
+      <p>The Government Service Item List is hereby issued to you; please comply.</p>
+      <a class="download" href="/files/list.pdf">Download the list</a>
+    </div>
+    <ul class="rel">
+      <li><a href="/p/1.html">Related one</a></li>
+      <li><a href="/p/2.html">Related two</a></li>
+    </ul>
+  </body>
+</html>
 ```
 
 ### Actions (sorted by commonness)
@@ -167,57 +212,65 @@ Shared input for this section:
 #### `text` — plain text
 - tier ★★★ Core · parameter slot: the value itself · `selector: literal`
 - note: plain text (no script/style/noscript)
+- matched: `1 node · h1.article-title`
 - chain: `[["css1", "text", "h1.article-title"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value='  Notice on Issuing the Government Service Item List  ')` (Ok)
 
 #### `@<attribute>` — attribute value
 - tier ★★★ Core · parameter slot: the value itself · `attr: literal`, `selector: literal`
 - note: attribute value; absent ⇒ ""
+- matched: `1 node · a.download`
 - chain: `[["css1", "@href", "a.download"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value='/files/list.pdf')` (Ok)
 
 #### `html` — inner HTML
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
 - note: inner HTML
+- matched: `1 node · div.content`
 - chain: `[["css1", "html", "div.content"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value='\n      <script>console.log(\'this script must not reach the body\');</script>\n      <p>To all municipal governments:</p>\n      <p>The Government Service Item List is h…` (Ok)
 
 #### `remove` — a copy with the matching nodes pruned
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
 - note: pure function: pruned copy
+- matched: `1 node · script`
 - chain: `[["css1", "remove", "script,style"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=<DomNode HTMLParser>)` (Ok)
 
 #### `nodes` — the set of matching nodes
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
 - note: node set for L2 fan-out (not a value)
+- matched: `2 nodes · a (×2) — only the first match is used`
 - chain: `[["css1", "nodes", "ul.rel a"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=[<DomNode Node>])` (Ok)
 
 #### `exists` — whether the selector matches at least one node
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
 - note: boolean: does the selector match
+- matched: `2 nodes · a (×2) — only the first match is used`
 - chain: `[["css1", "exists", "ul.rel a"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=True)` (Ok)
 
 #### `outer` — outer HTML
 - tier ★ Advanced · parameter slot: the value itself · `selector: literal`
 - note: outer HTML (with its own tag)
+- matched: `1 node · h1.article-title`
 - chain: `[["css1", "outer", "h1.article-title"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value='<h1 class="article-title">  Notice on Issuing the Government Service Item List  </h1>')` (Ok)
 
 #### `self` — the node handle itself
 - tier ★ Advanced · parameter slot: the value itself · `selector: literal`
 - note: handle of the first match
+- matched: `1 node · div.content`
 - chain: `[["css1", "self", "div.content"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=<DomNode Node>)` (Ok)
 
 ### Compositions (multi-stage chains)
@@ -228,7 +281,7 @@ Shared input for this section:
 - chain:
   - `["css1", "text", "h1.article-title"]` → `Ok(value='  Notice on Issuing the Government Service Item List  ')`
   - `["py", "normalize_space", ""]` → `Ok(value='Notice on Issuing the Government Service Item List')`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input: the section sample above (shown in full)
 - output: `Ok(value='Notice on Issuing the Government Service Item List')` (Ok)
 
 #### `composition` — css1
@@ -237,7 +290,7 @@ Shared input for this section:
 - chain:
   - `["css1", "@href", "a.download"]` → `Ok(value='/files/list.pdf')`
   - `["py", "urljoin", "https://x/p/"]` → `Ok(value='https://x/files/list.pdf')`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input: the section sample above (shown in full)
 - output: `Ok(value='https://x/files/list.pdf')` (Ok)
 
 #### `composition` — css
@@ -246,7 +299,7 @@ Shared input for this section:
 - chain:
   - `["css1", "text", "h1.article-title"]` → `Ok(value='  Notice on Issuing the Government Service Item List  ')`
   - `["code", {"src": "normalize_space(obj)"}]` → `Ok(value='Notice on Issuing the Government Service Item List')`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input: the section sample above (shown in full)
 - output: `Ok(value='Notice on Issuing the Government Service Item List')` (Ok)
 
 
@@ -254,33 +307,32 @@ Shared input for this section:
 
 arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (Core, Common, Advanced, Rare)
 
-Shared input for this section:
-
-```text
-'  text  '
-```
-
 ### Actions (sorted by commonness)
 
 #### `strip` — strip leading and trailing whitespace
 - tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
 - note: strip leading/trailing whitespace
 - chain: `[["py", "strip", ""]]`
-- input: the shared sample above
+- input: `  text  `
 - output: `Ok(value='text')` (Ok)
 
 #### `normalize_space` — collapse runs of whitespace into a single space
 - tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
 - note: collapse consecutive whitespace
 - chain: `[["py", "normalize_space", ""]]`
-- input: `'a   b\n c'`
+- input:
+
+  ```text
+  a   b
+   c
+  ```
 - output: `Ok(value='a b c')` (Ok)
 
 #### `urljoin` — resolve relative to absolute
 - tier ★★★ Core · parameter slot: the value itself · `base: ref_or_literal`
 - note: relative to absolute (pass base)
 - chain: `[["py", "urljoin", "https://x/p/"]]`
-- input: `'a.html'`
+- input: `a.html`
 - output: `Ok(value='https://x/p/a.html')` (Ok)
 
 #### `first` — take the first element
@@ -315,14 +367,14 @@ Shared input for this section:
 - tier ★★★ Core · parameter slot: the value itself · `spec: literal`
 - note: slice: ":3" / "1:5" / "::-1"
 - chain: `[["py", "slice", ":3"]]`
-- input: `'abcdef'`
+- input: `abcdef`
 - output: `Ok(value='abc')` (Ok)
 
 #### `default` — fall back when the value is None or an empty string
 - tier ★★★ Core · parameter slot: the value itself · `value: ref_or_literal`
 - note: fallback for None / "" only (a missing upstream is a failure, not a value)
 - chain: `[["py", "default", "fallback value"]]`
-- input: `''`
+- input: ``
 - output: `Ok(value='fallback value')` (Ok)
 
 #### `getitem` — take a subscript: a sequence index, a mapping key or a str character
@@ -343,14 +395,14 @@ Shared input for this section:
 - tier ★★ Common · parameter slot: a named object (a positional array also works) · `old: literal`, `new: literal`
 - note: replace all (positional array)
 - chain: `[["py", "replace", ["old", "new"]]]`
-- input: `'old document'`
+- input: `old document`
 - output: `Ok(value='new document')` (Ok)
 
 #### `split` — split on a separator
 - tier ★★ Common · parameter slot: a named object (a positional array also works) · `sep: literal`, `maxsplit: literal?, default None`
 - note: split on a separator
 - chain: `[["py", "split", ","]]`
-- input: `'a,b,c'`
+- input: `a,b,c`
 - output: `Ok(value=['a', 'b', 'c'])` (Ok)
 
 #### `join` — join a list
@@ -364,35 +416,35 @@ Shared input for this section:
 - tier ★★ Common · parameter slot: no parameter (write two positions, or "")
 - note: strip HTML tags
 - chain: `[["py", "strip_tags", ""]]`
-- input: `'<b>text</b>'`
+- input: `<b>text</b>`
 - output: `Ok(value='text')` (Ok)
 
 #### `parse_time` — parse a time string into the canonical format %Y-%m-%d %H:%M:%S (explicit format, the built-in table, then natural-language detection)
 - tier ★★ Common · parameter slot: a named object (a positional array also works) · `lang: literal?, default None`, `format: literal?, default None`, `date_order: literal?, default None`, `now: ref_or_literal?, default None`
 - note: time normalization (0 required dependencies)
 - chain: `[["py", "parse_time", ""]]`
-- input: `'2026-09-24 15:30:00'`
+- input: `2026-09-24 15:30:00`
 - output: `Ok(value='2026-09-24 15:30:00')` (Ok)
 
 #### `strftime` — render the canonical time string in another layout (%Y-%m-%d %H:%M:%S → %Y/%m/%d)
 - tier ★★ Common · parameter slot: the value itself · `layout: literal`
 - note: render the canonical time in another layout (output side)
 - chain: `[["py", "strftime", "%Y/%m/%d"]]`
-- input: `'2026-09-24 15:30:00'`
+- input: `2026-09-24 15:30:00`
 - output: `Ok(value='2026/09/24')` (Ok)
 
 #### `html_to_markdown` — HTML → Markdown (no parameters; complete relative links with py.urljoin)
 - tier ★★ Common · parameter slot: no parameter (write two positions, or "")
 - note: optional dependency [md]
 - chain: `[["py", "html_to_markdown", ""]]`
-- input: `'<h1>Heading</h1><p>a <b>b</b></p>'`
+- input: `<h1>Heading</h1><p>a <b>b</b></p>`
 - output: `Ok(value='# Heading\n\na **b**\n')` (Ok)
 
 #### `int` — convert to an integer (former cast int)
 - tier ★★ Common · parameter slot: no parameter (write two positions, or "")
 - note: type conversion (formerly cast int)
 - chain: `[["py", "int", ""]]`
-- input: `'42'`
+- input: `42`
 - output: `Ok(value=42)` (Ok)
 
 #### `str` — convert to a string (former cast str)
@@ -413,7 +465,7 @@ Shared input for this section:
 - tier ★★ Common · parameter slot: the value itself · `to: ref_or_literal`
 - note: inequality (also negates a boolean: ['!=', true])
 - chain: `[["py", "!=", 200]]`
-- input: `'200'`
+- input: `200`
 - output: `Ok(value=True)` (Ok)
 
 #### `in` — is the value in the parameter (Python's in: the parameter is the container)
@@ -427,28 +479,28 @@ Shared input for this section:
 - tier ★★ Common · parameter slot: the value itself · `operands: ref_or_literal`
 - note: Python's or: first truthy, else the last
 - chain: `[["py", "or", ["", "fallback"]]]`
-- input: `'in'`
+- input: `in`
 - output: `Ok(value='fallback')` (Ok)
 
 #### `and` — the first falsy operand, else the last (Python's and)
 - tier ★★ Common · parameter slot: the value itself · `operands: ref_or_literal`
 - note: Python's and: first falsy, else the last
 - chain: `[["py", "and", [{"a": 1}, ""]]]`
-- input: `'in'`
+- input: `in`
 - output: `Ok(value='')` (Ok)
 
 #### `upper` — convert to uppercase
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: uppercase
 - chain: `[["py", "upper", ""]]`
-- input: `'abc'`
+- input: `abc`
 - output: `Ok(value='ABC')` (Ok)
 
 #### `lower` — convert to lowercase
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: lowercase
 - chain: `[["py", "lower", ""]]`
-- input: `'ABC'`
+- input: `ABC`
 - output: `Ok(value='abc')` (Ok)
 
 #### `flatten` — flatten one level
@@ -476,49 +528,49 @@ Shared input for this section:
 - tier ★ Advanced · parameter slot: the value itself · `part: literal`
 - note: URL parts (take the site identity)
 - chain: `[["py", "urlsplit", "netloc"]]`
-- input: `'https://x/a?q=1'`
+- input: `https://x/a?q=1`
 - output: `Ok(value='x')` (Ok)
 
 #### `b64_decode` — Base64 decode
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: Base64 decode
 - chain: `[["py", "b64_decode", ""]]`
-- input: `'YWJj'`
+- input: `YWJj`
 - output: `Ok(value='abc')` (Ok)
 
 #### `sha256` — hexadecimal digest
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: hex digest (idempotency key)
 - chain: `[["py", "sha256", ""]]`
-- input: `'abc'`
+- input: `abc`
 - output: `Ok(value='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')` (Ok)
 
 #### `from_json` — JSON text → JSON tree (former cast json)
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: JSON text → JSON tree (formerly cast json)
 - chain: `[["py", "from_json", ""]]`
-- input: `'{"a": 1}'`
+- input: `{"a": 1}`
 - output: `Ok(value={'a': 1})` (Ok)
 
 #### `float` — convert to a float (former cast float)
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: type conversion
 - chain: `[["py", "float", ""]]`
-- input: `'1.5'`
+- input: `1.5`
 - output: `Ok(value=1.5)` (Ok)
 
 #### `bool` — convert to a boolean (former cast bool)
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: type conversion (falsey word list)
 - chain: `[["py", "bool", ""]]`
-- input: `'no'`
+- input: `no`
 - output: `Ok(value=False)` (Ok)
 
 #### `list` — convert to a list (JSON array text or as-is)
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: JSON array text → list
 - chain: `[["py", "list", ""]]`
-- input: `'["a","b"]'`
+- input: `["a","b"]`
 - output: `Ok(value=['a', 'b'])` (Ok)
 
 #### `<` — less than the parameter (two numbers or two strings)
@@ -546,7 +598,7 @@ Shared input for this section:
 - tier ★ Advanced · parameter slot: the value itself · `to: ref_or_literal`
 - note: ordering (inclusive)
 - chain: `[["py", ">=", "b"]]`
-- input: `'c'`
+- input: `c`
 - output: `Ok(value=True)` (Ok)
 
 #### `items` — a dict becomes [[key, value], …] (index a pair with the literal 0 / 1)
@@ -560,7 +612,7 @@ Shared input for this section:
 - tier ○ Rare · parameter slot: no parameter (write two positions, or "")
 - note: Base64 encode
 - chain: `[["py", "b64_encode", ""]]`
-- input: `'abc'`
+- input: `abc`
 - output: `Ok(value='YWJj')` (Ok)
 
 ### Compositions (multi-stage chains)
@@ -571,7 +623,7 @@ Shared input for this section:
 - chain:
   - `["py", "parse_time", ""]` → `Ok(value='2026-09-24 15:30:00')`
   - `["py", "strftime", "%Y/%m/%d"]` → `Ok(value='2026/09/24')`
-- input: `'2026-09-24 15:30:00'`
+- input: `2026-09-24 15:30:00`
 - output: `Ok(value='2026/09/24')` (Ok)
 
 #### `composition` — py
@@ -580,14 +632,15 @@ Shared input for this section:
 - chain:
   - `["py", "from_json", ""]` → `Ok(value={'data': {'html': '<p>Body</p>', 'list': [{'url': 'u1'}, {'url': 'u2'}]}})`
   - `["json", "data.html"]` → `Ok(value='<p>Body</p>')`
-- input: `'{"data": {"html": "<p>Body</p>", "list": [{"url": "u1"}, {"url": "u2"}]}}'`
+- input: `{"data": {"html": "<p>Body</p>", "list": [{"url": "u1"}, {"url": "u2"}]}}`
 - output: `Ok(value='<p>Body</p>')` (Ok)
 
 #### `composition` — py
 - tier ★★★ Core
 - note: a parameter referencing globals
+- scope: `globals {'base': 'https://example.gov.cn/p/'}`
 - chain: `[["py", "urljoin", "$globals.base"]]`
-- input: `'a.html'`
+- input: `a.html`
 - output: `Ok(value='https://example.gov.cn/p/a.html')` (Ok)
 
 #### `composition` — py
@@ -606,7 +659,7 @@ Shared input for this section:
 - chain:
   - `["py", "parse_time", ""]` → `Ok(value='2026-09-24 15:30:00')`
   - `["py", "slice", ":10"]` → `Ok(value='2026-09-24')`
-- input: `'2026/09/24 15:30:00'`
+- input: `2026/09/24 15:30:00`
 - output: `Ok(value='2026-09-24')` (Ok)
 
 ### Invalid forms
@@ -629,30 +682,37 @@ Shared input for this section:
 
 arity 3 · slot 2=accessor / slot 3=XPath · dependencies: `lxml` · 3 actions (Core, Common, Advanced)
 
-Shared input for this section:
+Shared input for this section — the same input for every card below:
 
 ```text
-'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://x/1</loc><lastmod>2026-09-23</lastmod></url>\n  <url><loc…
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://x/1</loc><lastmod>2026-09-23</lastmod></url>
+  <url><loc>https://x/2</loc><lastmod>2026-09-24</lastmod></url>
+</urlset>
 ```
 
 ### Actions (sorted by commonness)
 
 #### `text` — text value (elements: all descendant text; attributes as-is)
 - tier ★★★ Core · parameter slot: a named object (a positional array also works) · `expr: literal`, `ns: literal?, default None`
+- matched: `2 nodes · loc (×2)`
 - chain: `[["xpath", "text", "//*[local-name()='loc']"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=['https://x/1', 'https://x/2'])` (Ok)
 
 #### `nodes` — the set of matching nodes
 - tier ★★ Common · parameter slot: a named object (a positional array also works) · `expr: literal`, `ns: literal?, default None`
+- matched: `2 nodes · url (×2)`
 - chain: `[["xpath", "nodes", "//*[local-name()='url']"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=[<XPathNode {http://www.sitemaps.org/schemas/sitemap/0.9}url>, <XPathNode {http://www.sitemaps.org/schemas/sitemap/0.9}url>])` (Ok)
 
 #### `self` — the first matching node (relative paths can keep selecting)
 - tier ★ Advanced · parameter slot: a named object (a positional array also works) · `expr: literal`, `ns: literal?, default None`
+- matched: `2 nodes · url (×2)`
 - chain: `[["xpath", "self", "//*[local-name()='url']"]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value=<XPathNode {http://www.sitemaps.org/schemas/sitemap/0.9}url>)` (Ok)
 
 ### Compositions (multi-stage chains)
@@ -663,14 +723,22 @@ Shared input for this section:
 - chain:
   - `["xpath", "text", "//*[local-name()='lastmod']"]` → `Ok(value=['2026-09-23', '2026-09-24'])`
   - `["py", "last", ""]` → `Ok(value='2026-09-24')`
-- input: `'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://x/1</loc><lastmod>2026-09-23</lastmod></url>\n  <url><loc…`
+- input: the section sample above (shown in full)
 - output: `Ok(value='2026-09-24')` (Ok)
 
 #### `composition` — xpath
 - tier ★★★ Core
 - note: namespace prefix: slot 3 takes an object form carrying the ns map
+- matched: `1 node · creator`
 - chain: `[["xpath", "text", {"expr": "//dc:creator", "ns": {"dc": "http://purl.org/dc/elements/1.1/"}}]]`
-- input: `'<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">\n  <channel><item><title>Headline</title><dc:creator>Jane Reporter</dc:crea…`
+- input:
+
+  ```text
+  <?xml version="1.0" encoding="UTF-8"?>
+  <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel><item><title>Headline</title><dc:creator>Jane Reporter</dc:creator></item></channel>
+  </rss>
+  ```
 - output: `Ok(value=['Jane Reporter'])` (Ok)
 
 ### Invalid forms
@@ -684,19 +752,13 @@ Shared input for this section:
 
 arity 2 · slot 2=jmespath path · dependencies: `jmespath` · 1 actions (Core)
 
-Shared input for this section:
-
-```text
-'{"data": {"html": "<p>Body</p>", "list": [{"url": "u1"}, {"url": "u2"}]}}'
-```
-
 ### Actions (sorted by commonness)
 
 #### `get` — jmespath query (empty expression = the root)
 - tier ★★★ Core · parameter slot: the value itself · `expr: literal?, default ''`
 - note: 2 positions: action slot omitted
 - chain: `[["json", "data.list[*].url"]]`
-- input: the shared sample above
+- input: `{"data": {"html": "<p>Body</p>", "list": [{"url": "u1"}, {"url": "u2"}]}}`
 - output: `Ok(value=['u1', 'u2'])` (Ok)
 
 ### Compositions (multi-stage chains)
@@ -707,7 +769,7 @@ Shared input for this section:
 - chain:
   - `["json", "data.list[*].url"]` → `Ok(value=['u1', 'u2'])`
   - `["py", "first", ""]` → `Ok(value='u1')`
-- input: `'{"data": {"html": "<p>Body</p>", "list": [{"url": "u1"}, {"url": "u2"}]}}'`
+- input: `{"data": {"html": "<p>Body</p>", "list": [{"url": "u1"}, {"url": "u2"}]}}`
 - output: `Ok(value='u1')` (Ok)
 
 ### Invalid forms
@@ -721,31 +783,25 @@ Shared input for this section:
 
 arity 3 · slot 2=mode / slot 3=pattern · dependencies: none · 3 actions (Core, Common, Advanced)
 
-Shared input for this section:
-
-```text
-'published 2026-09-24 end'
-```
-
 ### Actions (sorted by commonness)
 
 #### `search` — the whole first match group(0)
 - tier ★★★ Core · parameter slot: the value itself · `pattern: literal`
 - chain: `[["re", "search", "\\d{4}-\\d{2}-\\d{2}"]]`
-- input: the shared sample above
+- input: `published 2026-09-24 end`
 - output: `Ok(value='2026-09-24')` (Ok)
 
 #### `group` — take the given capture group
 - tier ★★ Common · parameter slot: a named object (a positional array also works) · `pattern: literal`, `group: literal`
 - note: named object: pattern + group
 - chain: `[["re", "group", {"pattern": "(\\d{4})-(\\d{2})", "group": 2}]]`
-- input: `'2026-09'`
+- input: `2026-09`
 - output: `Ok(value='09')` (Ok)
 
 #### `findall` — findall: every match
 - tier ★ Advanced · parameter slot: the value itself · `pattern: literal`
 - chain: `[["re", "findall", "\\d+"]]`
-- input: `'a1b22c333'`
+- input: `a1b22c333`
 - output: `Ok(value=['1', '22', '333'])` (Ok)
 
 ### Compositions (multi-stage chains)
@@ -756,7 +812,7 @@ Shared input for this section:
 - chain:
   - `["re", "search", "\\d{4}-\\d{2}-\\d{2}"]` → `Ok(value='2026-09-24')`
   - `["re", "search", "\\d{4}"]` → `Ok(value='2026')`
-- input: `'published 2026-09-24 end'`
+- input: `published 2026-09-24 end`
 - output: `Ok(value='2026')` (Ok)
 
 ### Invalid forms
@@ -770,45 +826,43 @@ Shared input for this section:
 
 arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 5 actions (Common, Advanced, Rare)
 
-Shared input for this section:
-
-```text
-None
-```
-
 ### Actions (sorted by commonness)
 
 #### `get` — read a scope path
 - tier ★★ Common · parameter slot: the value itself · `path: literal`
+- scope: `locals {'k': 'local value'}`
 - chain: `[["ctx", "get", "locals.k"]]`
-- input: the shared sample above
+- input: not used — the value is read from the scope path
 - output: `Ok(value='local value')` (Ok)
 
 #### `set` — write the upstream value into locals or public
 - tier ★★ Common · parameter slot: the value itself · `path: literal`
 - note: the write surface is limited to locals
 - chain: `[["ctx", "set", "locals.k"]]`
-- input: `'written value'`
+- input: `written value`
 - output: `Ok(value='written value')` (Ok)
 
 #### `dict` — collect several paths into an object (name → path)
 - tier ★ Advanced · parameter slot: the value itself · `refs: literal`
 - note: name → path object → dict
+- scope: `locals {'x': 1, 'y': 2}`
 - chain: `[["ctx", "dict", {"a": "locals.x", "b": "locals.y"}]]`
-- input: the shared sample above
+- input: not used — the values are read from the scope paths
 - output: `Ok(value={'a': 1, 'b': 2})` (Ok)
 
 #### `list` — collect several paths into a list (an array of paths)
 - tier ★ Advanced · parameter slot: the value itself · `refs: literal`
 - note: array of paths → list (feeds a positional call)
+- scope: `locals {'x': 1, 'y': 2}`
 - chain: `[["ctx", "list", ["locals.x", "locals.y"]]]`
-- input: the shared sample above
+- input: not used — the values are read from the scope paths
 - output: `Ok(value=[1, 2])` (Ok)
 
 #### `del` — delete a path in locals or public
 - tier ○ Rare · parameter slot: the value itself · `path: literal`
+- scope: `locals {'k': 1}`
 - chain: `[["ctx", "del", "locals.k"]]`
-- input: `'upstream value'`
+- input: `upstream value`
 - output: `Ok(value='upstream value')` (Ok)
 
 ### Compositions (multi-stage chains)
@@ -819,7 +873,7 @@ None
 - chain:
   - `["ctx", "set", "locals._tmp"]` → `Ok(value='intermediate value')`
   - `["ctx", "get", "locals._tmp"]` → `Ok(value='intermediate value')`
-- input: `'intermediate value'`
+- input: `intermediate value`
 - output: `Ok(value='intermediate value')` (Ok)
 
 ### Invalid forms
@@ -833,19 +887,13 @@ None
 
 arity 2 · slot 2=value · dependencies: none · 1 actions (Core)
 
-Shared input for this section:
-
-```text
-'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…
-```
-
 ### Actions (sorted by commonness)
 
 #### `const` — Produce the value verbatim
 - tier ★★★ Core · parameter slot: the value itself · `value: literal`
 - note: 2 positions: literal
 - chain: `[["const", "article"]]`
-- input: the shared sample above
+- input: not used — the value comes from the chain, never from the upstream
 - output: `Ok(value='article')` (Ok)
 
 
@@ -853,10 +901,28 @@ Shared input for this section:
 
 arity 2 · slot 2=source & inputs · dependencies: `pydantic_monty` · 1 actions (Advanced)
 
-Shared input for this section:
+Shared input for this section — the same input for every card below:
 
 ```text
-'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…
+<html>
+  <head>
+    <meta name="PubDate" content="2026-09-24 15:30:00">
+    <title>Notice on Issuing the Government Service Item List</title>
+  </head>
+  <body>
+    <h1 class="article-title">  Notice on Issuing the Government Service Item List  </h1>
+    <div class="content">
+      <script>console.log('this script must not reach the body');</script>
+      <p>To all municipal governments:</p>
+      <p>The Government Service Item List is hereby issued to you; please comply.</p>
+      <a class="download" href="/files/list.pdf">Download the list</a>
+    </div>
+    <ul class="rel">
+      <li><a href="/p/1.html">Related one</a></li>
+      <li><a href="/p/2.html">Related two</a></li>
+    </ul>
+  </body>
+</html>
 ```
 
 ### Actions (sorted by commonness)
@@ -864,8 +930,9 @@ Shared input for this section:
 #### `run` — run src once and take the value of the last expression
 - tier ★ Advanced · parameter slot: a named object (a positional array also works) · `src: literal`, `inputs: ref_or_literal?, default None`
 - note: sandboxed; optional dependency [code]; the last expression value is returned
+- scope: `locals {'prefix': 'Title: '}`
 - chain: `[["code", {"src": "ctx.locals.prefix + normalize_space(obj)"}]]`
-- input: the shared sample above
+- input: the section sample above (shown in full)
 - output: `Ok(value='Title: <html> <head> <meta name="PubDate" content="2026-09-24 15:30:00"> <title>Notice on Issuing the Government Service Item List</title> </head> <body> <h1 class="artic…` (Ok)
 
 
@@ -873,19 +940,13 @@ Shared input for this section:
 
 arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 1 actions (Common)
 
-Shared input for this section:
-
-```text
-'hello'
-```
-
 ### Actions (sorted by commonness)
 
 #### `*` — registered: demo_upper
 - tier ★★ Common · parameter slot: the value itself
 - note: dynamic action space: slot 2 carries the host-registered function name
 - chain: `[["udf", "demo_upper", ""]]`
-- input: the shared sample above
+- input: `hello`
 - output: `Ok(value='HELLO')` (Ok)
 
 ### Invalid forms
@@ -899,19 +960,13 @@ Shared input for this section:
 
 arity 2 · slot 2=fields · dependencies: none · 1 actions (Core)
 
-Shared input for this section:
-
-```text
-['  a  ', 'bb']
-```
-
 ### Actions (sorted by commonness)
 
 #### `each` — Run the field map once per element
 - tier ★★★ Core · parameter slot: the value itself · `fields: fields`
 - note: 2 positions: field map; one dictionary per element
 - chain: `[["each", {"title": [["py", "strip", ""]], "size": [["py", "len", ""]]}]]`
-- input: the shared sample above
+- input: `['  a  ', 'bb']`
 - output: `Ok(value=[{'title': 'a', 'size': 5}, {'title': 'bb', 'size': 2}])` (Ok)
 
 
@@ -925,22 +980,91 @@ A query that matches nothing is a **value** — the empty value of its shape (`"
 
 #### `Ok (a hit)` — outcome
 - tier ★★★ Core
+- matched: `1 node · h1.article-title`
 - chain: `[["css1", "text", "h1.article-title"]]`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input:
+
+  ```text
+  <html>
+    <head>
+      <meta name="PubDate" content="2026-09-24 15:30:00">
+      <title>Notice on Issuing the Government Service Item List</title>
+    </head>
+    <body>
+      <h1 class="article-title">  Notice on Issuing the Government Service Item List  </h1>
+      <div class="content">
+        <script>console.log('this script must not reach the body');</script>
+        <p>To all municipal governments:</p>
+        <p>The Government Service Item List is hereby issued to you; please comply.</p>
+        <a class="download" href="/files/list.pdf">Download the list</a>
+      </div>
+      <ul class="rel">
+        <li><a href="/p/1.html">Related one</a></li>
+        <li><a href="/p/2.html">Related two</a></li>
+      </ul>
+    </body>
+  </html>
+  ```
 - output: `Ok(value='  Notice on Issuing the Government Service Item List  ')` (Ok)
 
 #### `Ok (no match: the empty value of the shape)` — outcome
 - tier ★★★ Core
 - note: a no-match is a value, not a state: the text accessor answers ''
+- matched: `0 nodes`
 - chain: `[["css1", "text", "div.nope"]]`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input:
+
+  ```text
+  <html>
+    <head>
+      <meta name="PubDate" content="2026-09-24 15:30:00">
+      <title>Notice on Issuing the Government Service Item List</title>
+    </head>
+    <body>
+      <h1 class="article-title">  Notice on Issuing the Government Service Item List  </h1>
+      <div class="content">
+        <script>console.log('this script must not reach the body');</script>
+        <p>To all municipal governments:</p>
+        <p>The Government Service Item List is hereby issued to you; please comply.</p>
+        <a class="download" href="/files/list.pdf">Download the list</a>
+      </div>
+      <ul class="rel">
+        <li><a href="/p/1.html">Related one</a></li>
+        <li><a href="/p/2.html">Related two</a></li>
+      </ul>
+    </body>
+  </html>
+  ```
 - output: `Ok(value='')` (Ok)
 
 #### `Ok (a list accessor: the empty value of the shape)` — outcome
 - tier ★★★ Core
 - note: a list accessor answers [] when nothing matches
+- matched: `0 nodes`
 - chain: `[["css", "nodes", "li.nope"]]`
-- input: `'\n<html>\n  <head>\n    <meta name="PubDate" content="2026-09-24 15:30:00">\n    <title>Notice on Issuing the Government Service Item List</title>\n  </head>\n  <body>\n    <h1 cl…`
+- input:
+
+  ```text
+  <html>
+    <head>
+      <meta name="PubDate" content="2026-09-24 15:30:00">
+      <title>Notice on Issuing the Government Service Item List</title>
+    </head>
+    <body>
+      <h1 class="article-title">  Notice on Issuing the Government Service Item List  </h1>
+      <div class="content">
+        <script>console.log('this script must not reach the body');</script>
+        <p>To all municipal governments:</p>
+        <p>The Government Service Item List is hereby issued to you; please comply.</p>
+        <a class="download" href="/files/list.pdf">Download the list</a>
+      </div>
+      <ul class="rel">
+        <li><a href="/p/1.html">Related one</a></li>
+        <li><a href="/p/2.html">Related two</a></li>
+      </ul>
+    </body>
+  </html>
+  ```
 - output: `Ok(value=[])` (Ok)
 
 #### `Failed (input type mismatch)` — outcome
@@ -954,7 +1078,7 @@ A query that matches nothing is a **value** — the empty value of its shape (`"
 - tier ★★★ Core
 - note: UP2-E2005
 - chain: `[["py", "int", ""]]`
-- input: `'abc'`
+- input: `abc`
 - output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'abc'", fix='py.int expects an integer, a float, a bool, or a string of digits; c…` (Failed)
 
 #### `Failed (a subscript that is not there)` — outcome
@@ -1006,38 +1130,40 @@ The scalar / positional array / named object / reference / directive forms of th
 #### `scalar parameter` — form
 - tier ★★★ Core
 - chain: `[["py", "urljoin", "https://x/p/"]]`
-- input: `'a.html'`
+- input: `a.html`
 - output: `Ok(value='https://x/p/a.html')` (Ok)
 
 #### `positional array` — form
 - tier ★★★ Core
 - chain: `[["py", "replace", ["old", "new"]]]`
-- input: `'old text'`
+- input: `old text`
 - output: `Ok(value='new text')` (Ok)
 
 #### `named object` — form
 - tier ★★★ Core
 - chain: `[["re", "group", {"pattern": "(\\d+)", "group": 1}]]`
-- input: `'x42'`
+- input: `x42`
 - output: `Ok(value='42')` (Ok)
 
 #### `reference ($globals / $locals)` — form
 - tier ★★★ Core
+- scope: `globals {'base': 'https://x/'}`
 - chain: `[["py", "urljoin", "$globals.base"]]`
-- input: `'a'`
+- input: `a`
 - output: `Ok(value='https://x/a')` (Ok)
 
 #### `directive object {"$lit": …}: a literal starting with $` — form
 - tier ★★★ Core
 - note: without $lit it is a reference (E1006, see the invalid-form sections)
 - chain: `[["py", "default", {"$lit": "$locals.title"}]]`
-- input: `''`
+- input: ``
 - output: `Ok(value='$locals.title')` (Ok)
 
 #### `css empty selector = the current node itself` — form
 - tier ★★★ Core
+- matched: `1 node · html`
 - chain: `[["css1", "text", ""]]`
-- input: `'<p>plain text supplied directly</p>'`
+- input: `<p>plain text supplied directly</p>`
 - output: `Ok(value='plain text supplied directly')` (Ok)
 
 ### C. The scopes and the guard directive
@@ -1047,6 +1173,7 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 #### `globals: the chain's read-only constants` — scope
 - tier ★★★ Core
 - note: read-only: a write outside locals/public is UP2-E1015
+- scope: `globals {'base': 'https://example.com'}`
 - chain: `[["ctx", "get", "globals.base"]]`
 - input: `None`
 - output: `Ok(value='https://example.com')` (Ok)
@@ -1088,7 +1215,7 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
   - `["const", "keep"]` → `Ok(value='keep')`
   - `["try", "skip"]` → `(a directive: it does no work)`
   - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
-- input: `'not-a-number'`
+- input: `not-a-number`
 - output: `Ok(value='keep')` (Ok)
 
 #### `try break: a guarded failure ends the chain with that value` — guard
@@ -1098,7 +1225,7 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
   - `["const", "keep"]` → `Ok(value='keep')`
   - `["try", "break"]` → `(a directive: it does no work)`
   - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
-- input: `'not-a-number'`
+- input: `not-a-number`
 - output: `Ok(value='keep')` (Ok)
 
 #### `try raise: the default behaviour of a failing stage` — guard
@@ -1108,7 +1235,7 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
   - `["const", "keep"]` → `Ok(value='keep')`
   - `["try", "raise"]` → `(a directive: it does no work)`
   - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
-- input: `'not-a-number'`
+- input: `not-a-number`
 - output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'keep'", fix='py.int expects an integer, a float, a bool, or a string of digits; …` (Failed)
 
 #### `a guarded success disarms the guard` — guard
@@ -1119,7 +1246,7 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
   - `["try", "skip"]` → `(a directive: it does no work)`
   - `["py", "strip", ""]` → `Ok(value='')`
   - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: '')`
-- input: `'not-a-number'`
+- input: `not-a-number`
 - output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: ''", fix='py.int expects an integer, a float, a bool, or a string of digits; chec…` (Failed)
 
 ### D. Invalid forms owned by no operator

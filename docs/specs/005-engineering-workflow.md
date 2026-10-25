@@ -327,6 +327,15 @@ After changing `.py` / `.sh` files, run these checks through the project environ
 | Dependencies | `uv run pip-audit` | when the dependency list changes |
 | Catalogue freshness | `uv run pytest tests/report` | when an operator, an action or a case changes — the suite compares `docs/report/up2-report.md` with a fresh render, so a stale catalogue fails like any other test; `UP2_UPDATE_REPORT=1 uv run pytest tests/report` rewrites the file from the same run. The module skips when an optional engine is missing, so the cells that install every extra are the ones that really check it |
 
+**What a catalogue card must show** (change `report-case-context`): the input a case ran on,
+**whole** — an elided input once cut a selector's own target out of the sample; what its selector
+**matched**, derived from a real run (`1 node · h1.article-title`, `1 node · script`); the **scope**
+a `ctx` / `code` / `udf` case reads, which is its real input; and, for the cases whose chain derives
+nothing from the upstream, that the input is **not used**, instead of presenting a document as one.
+A "shared input" block is emitted only when the section's cases really share one input, and it is
+open by default. Outputs stay elided at 180 characters. `tests/report/test_rendering.py` pins these
+rules.
+
 **When a check was not run, or the tool is missing, the gap must be reported truthfully** — never claim "done".
 
 ---

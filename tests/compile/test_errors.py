@@ -158,6 +158,38 @@ def test_e1015_write_globals() -> None:
     assert compile_error([["ctx", "set", "globals.x"]]) == "UP2-E1015"
 
 
+def test_e1005_unsupported_directive_at_depth() -> None:
+    """A `$`-prefixed single-key object is a directive at depth too; `$lit` is the only one."""
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "or", [{"$price": 1}, "x"]]])
+    assert info.value.diagnostic.code == "UP2-E1005"
+    assert "$lit" in info.value.diagnostic.fix
+
+
+def test_e1006_fix_names_the_literal_escape() -> None:
+    """Typing `$100` needs the way out, not only the list of reserved roots."""
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "default", "$100"]])
+    assert info.value.diagnostic.code == "UP2-E1006"
+    assert "$lit" in info.value.diagnostic.fix
+
+
+def test_e1005_a_dollar_prefixed_ctx_path_is_told_to_drop_it() -> None:
+    with pytest.raises(Up2Error) as info:
+        compile_field([["ctx", "get", "$locals.k"]])
+    assert info.value.diagnostic.code == "UP2-E1005"
+    assert "without `$`" in info.value.diagnostic.fix
+    assert "locals.k" in info.value.diagnostic.fix
+
+
+def test_e1015_a_dollar_prefixed_write_path_is_told_to_drop_it() -> None:
+    with pytest.raises(Up2Error) as info:
+        compile_field([["ctx", "set", "$locals.k"]])
+    assert info.value.diagnostic.code == "UP2-E1015"
+    assert "without `$`" in info.value.diagnostic.fix
+    assert "locals.k" in info.value.diagnostic.fix
+
+
 def _fake_missing_deps(instance: Op, action: str) -> tuple[str, ...]:
     del instance, action
     return ("html_to_markdown",)

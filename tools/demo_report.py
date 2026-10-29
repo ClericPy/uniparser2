@@ -13,9 +13,10 @@ is enforced, not in the workflow. The HTML build carries a timestamp and shows t
 state of every optional engine, so it stays local.
 
 Structure: the operator is the top-level group (ordered by its own commonness); each
-operator gets one section holding its action cards **sorted by commonness** (input → matched →
-chain → output), the multi-stage compositions starting with that operator and that operator's
-compile-time bad chains; mechanisms shared across operators live in the appendix.
+operator gets one section holding its action cards **sorted by commonness** (what the selector
+matched, what it ran on, the chain, the output), the multi-stage compositions starting with
+that operator and that operator's compile-time bad chains; mechanisms shared across operators
+live in the appendix.
 
 Coverage is decided by the **registry enumeration**: every `(operator, action)` pair of
 `registry.declared_pairs()` must have a case; a missing one is flagged in red at the top
@@ -63,7 +64,10 @@ TIERS: Final[dict[str, str]] = {
 }
 _TIER_ORDER: Final = {name: index for index, name in enumerate(TIERS)}
 
-# Commonness order of the operators themselves (first section = most common).
+# Commonness order of the operators themselves (first section = most common). Every operator the
+# registry declares must appear here: one that does not is flagged at the top of the report, and it
+# would also sort to the end and lose its table-of-contents entry. `each` sits after `const`
+# because it is the fan-out a node set feeds into, which is where the reference page lists it.
 OPERATOR_ORDER: Final = (
     "css",
     "css1",
@@ -73,6 +77,7 @@ OPERATOR_ORDER: Final = (
     "re",
     "ctx",
     "const",
+    "each",
     "code",
     "udf",
 )
@@ -972,7 +977,10 @@ def _tier_badge(tier: str) -> str:
     return f'<span class="tier" title="{_escape(tier)}">{_escape(mark)}</span>'
 
 
-_OPEN_TAG: Final = re.compile(r"<([a-zA-Z][\w:-]*)((?:\s[^>]*)?)>")
+# A tag's attribute run, quote-aware: a `>` inside a quoted value (title="a > b") is not the end.
+# The capture always participates (empty for an attribute-less tag), so group 2 is never None.
+_ATTR_RUN: Final = r"""((?:\s(?:[^>'"]|"[^"]*"|'[^']*')*)?)"""
+_OPEN_TAG: Final = re.compile(r"<([a-zA-Z][\w:-]*)" + _ATTR_RUN + ">")
 _CLASS_ATTR: Final = re.compile(r'\bclass\s*=\s*"([^"]*)"')
 _ID_ATTR: Final = re.compile(r'\bid\s*=\s*"([^"]*)"')
 
@@ -1386,6 +1394,7 @@ def build_html() -> str:
     )
     toc = (
         '<p class="toc"><a href="#coverage">Coverage check</a>'
+        '<a href="#tiers">Commonness tiers</a>'
         + "".join(f'<a href="#op-{name}">{name}</a>' for name in OPERATOR_ORDER)
         + '<a href="#appendix">Appendix: shared by all operators</a>'
         '<a href="#host">The host side: fetching a page</a></p>'
@@ -1566,7 +1575,7 @@ def _md_section(
     shared = _shared_input(cases)
     if shared:
         out += [
-            "Shared input for this section — the same input for every card below:",
+            "Input sample for this section — the same input for every card below:",
             "",
             _md_fence(shared, "text"),
             "",

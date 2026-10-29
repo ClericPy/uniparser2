@@ -540,11 +540,39 @@ def _resolve_param(
             for item in raw
         ]
     if isinstance(raw, dict):
+        # A `ref` parameter must be a reference, so the escape does not reach it.
+        if spec.kind is registry.Kind.REF_OR_LITERAL:
+            quoted = _quoted_literal(raw, pointer=pointer)
+            if quoted is not None:
+                return quoted
         return {
             key: _resolve_param(spec, item, pointer=pointer, products=products, depth=depth)
             for key, item in raw.items()
         }
     return _resolve_leaf(spec, raw, pointer=pointer)
+
+
+def _quoted_literal(raw: Mapping[str, Any], *, pointer: str) -> Param | None:
+    """``{"$lit": …}`` at any depth: the escape is a directive wherever a value is read (02 §3.3).
+
+    The rule is the slot's own (``02`` §4): an object with exactly one ``$``-prefixed key is a
+    directive, not data. Applying it at every depth is what makes a literal starting with ``$``
+    writable inside an array or an object — without it the same shape either leaked downstream as a
+    dict or had its escaped text resolved as a reference a second time.
+    """
+    directive = _directive_name(raw)
+    if directive is None:
+        return None
+    if directive != LIT_DIRECTIVE:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"unsupported directive object {directive!r}",
+                fix='only {"$lit": value} is supported',
+                pointer=pointer,
+            )
+        )
+    return Lit(raw[directive])
 
 
 def _resolve_field_map(
@@ -687,6 +715,17 @@ def _directive_params(
                 allowed=tuple(param.name for param in active),
             )
         )
+    if active[0].kind is registry.Kind.REF:
+        # A parameter that must be a reference has no literal branch, so the escape cannot fill it.
+        raise Up2Error(
+            diag(
+                "UP2-E1007",
+                f'{{"$lit": ...}} cannot fill {active[0].name!r}: '
+                "that parameter must be a reference",
+                fix='write a reference such as "$globals.name" / "$locals._tmp"',
+                pointer=pointer,
+            )
+        )
     return {**preset, active[0].name: Lit(raw[directive])}
 
 
@@ -715,7 +754,10 @@ def _check_refs(params: Mapping[str, Param], *, products: tuple[str, ...], point
             diag(
                 "UP2-E1006",
                 f"unknown reference root {ref.root!r}",
-                fix="use a reserved root, or declare the earlier step product with --product",
+                fix=(
+                    "use a reserved root, or declare the earlier step product with --product; "
+                    'for text that starts with `$`, write {"$lit": "…"}'
+                ),
                 pointer=pointer,
                 allowed=(*RESERVED_ROOTS, *products),
             )

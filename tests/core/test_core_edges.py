@@ -120,6 +120,33 @@ def test_lit_directive_escapes_dollar_literal() -> None:
     assert compiled.stages[0].params["base"] == Lit("$weird")
 
 
+def test_lit_directive_escapes_inside_a_container() -> None:
+    """The escape is not slot-only: a nested object must become a literal, not leak as data."""
+    from uniparser2.core.ast import Lit
+
+    in_array = compile_field([["py", "or", [{"$lit": "$a"}, "fallback"]]])
+    assert in_array.stages[0].params["operands"] == [Lit("$a"), Lit("fallback")]
+    in_object = compile_field([["py", "default", {"a": {"$lit": "$k"}}]])
+    assert in_object.stages[0].params["value"] == {"a": Lit("$k")}
+    deep = compile_field([["py", "default", {"a": {"b": [{"$lit": "$c"}]}}]])
+    assert deep.stages[0].params["value"] == {"a": {"b": [Lit("$c")]}}
+
+
+def test_an_escaped_container_keeps_its_own_dollars() -> None:
+    """Quoting a literal object must not resolve anything inside it."""
+    from uniparser2.core.ast import Lit
+
+    quoted = compile_field([["py", "default", {"$lit": {"a": "$x"}}]])
+    assert quoted.stages[0].params["value"] == Lit({"a": "$x"})
+
+
+def test_the_escaped_dollar_reaches_the_result() -> None:
+    """The old failure was silent: the dict itself came back where the string was meant."""
+    result = eval_field(compile_field([["py", "or", [{"$lit": "plain"}, "b"]]]), "")
+    assert isinstance(result, Ok)
+    assert result.value == "plain"
+
+
 def test_ref_kind_success_path(monkeypatch: pytest.MonkeyPatch) -> None:
     """L1 has no ref-only parameter; patch one in to cover the REF slot accepting a reference."""
     from uniparser2.core.registry import Kind, ParamSpec
@@ -140,6 +167,25 @@ def test_ref_kind_success_path(monkeypatch: pytest.MonkeyPatch) -> None:
     assert eval_field(compiled, "page", scope=Scope(globals={"base": "https://x/"})) == Ok(
         "https://x/page"
     )
+
+
+def test_lit_cannot_fill_a_ref_only_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `ref` parameter has no literal branch, so the slot-level escape cannot fill it."""
+    from uniparser2.core.registry import Kind, ParamSpec
+
+    py_op = registry.get("py")
+    assert py_op is not None
+    original = py_op.actions["urljoin"]
+    patched = ActionSpec(
+        original.name,
+        original.summary,
+        (ParamSpec("base", Kind.REF),),
+        original.requires,
+    )
+    monkeypatch.setattr(py_op, "actions", {**py_op.actions, "urljoin": patched})
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "urljoin", {"$lit": "x"}]])
+    assert info.value.diagnostic.code == "UP2-E1007"
 
 
 def test_list_valued_reference_param_descends(monkeypatch: pytest.MonkeyPatch) -> None:

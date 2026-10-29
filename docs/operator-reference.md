@@ -1,6 +1,6 @@
 # Operator reference
 
-The registry declares **11 operators and 72 `(operator, action)` pairs**; all of them are listed below.
+The registry declares **11 operators and 74 `(operator, action)` pairs**; all of them are listed below.
 The READMEs carry a one-screen summary of what the engine ships; this page is the reference next to
 it: what each action means, which writing its parameter slot takes, and a set of chains whose outputs
 were produced by running them.
@@ -34,7 +34,9 @@ count):
 A named object is **not** a binding for a single-parameter action: there it is the parameter's value,
 so `["py", "urljoin", {"base": "…"}]` is rejected at compile time with `UP2-E1005` instead of silently
 doing something else. `{"$lit": …}` is the escape for a literal that starts with `$`; a leading `$` in
-a `ref_or_literal` position is a reference (`"$globals.base_url"`).
+a `ref_or_literal` position is a reference (`"$globals.base_url"`). The escape works at any depth, so
+`["py","or",[{"$lit":"$a"},"fallback"]]` quotes the text inside an array as well; a `$`-prefixed
+single-key object anywhere in such a parameter is a directive or an error, never data.
 
 Every stage is validated **before the chain runs**: unknown operator or action, wrong arity, a
 parameter that does not match the declared schema, a dangling reference, a cross-node reference to a
@@ -173,7 +175,9 @@ because the format wins and the language could never take effect.
 | `dict` | collect several paths into an object (`name → path`) |
 | `list` | collect several paths into a list (an array of paths) |
 
-Paths are written bare, without `$` and without a `ctx.` prefix: `["ctx", "set", "locals.year"]`.
+Paths are written bare, without `$` and without a `ctx.` prefix: `["ctx", "set", "locals.year"]` —
+`"$locals.year"` is the reference spelling of another operator's parameter slot, and `ctx` reports it
+with a fix line saying to drop the `$`.
 `globals` is read-only and `locals` is local to the current evaluation; a write outside `locals.*` or
 `public.*` is `UP2-E1015` at compile time. One polymorphic `map` used to answer two different types
 depending on its parameter's shape; the two actions now say which shape they produce

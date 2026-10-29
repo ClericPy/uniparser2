@@ -155,6 +155,14 @@ plain literal) were all guesswork. This design's rule can be stated in one sente
 
 > **A leading `$` ⇒ a reference; a literal starting with `$` uses `{"$lit": …}`; everything else is a literal.**
 
+**The escape applies at every depth**, not only at the parameter slot: an object with exactly one `$`-prefixed key is a
+directive wherever a `ref_or_literal` value is read, so `["py","or",[{"$lit":"$a"},"fallback"]]` and
+`["code",{"src":"…","inputs":{"a":{"$lit":"$k"}}}]` both quote the text. Leaving it slot-only made such a literal
+unwritable inside a container, and one failure mode was silent: a single-key object whose key is a directive the chain
+did not mean came back as **data** — `{"$lit": "plain"}` in an array answered with the object itself. A `$`-prefixed
+single-key object is therefore the escape or an error (`UP2-E1005`), never a value, and a `literal` parameter keeps a
+leading `$` as text as before.
+
 **`$get` is abolished** (it no longer appears anywhere in this design).
 
 ---
@@ -178,6 +186,9 @@ plain literal) were all guesswork. This design's rule can be stated in one sente
 2. Otherwise ⇒ a **named argument object**, each value resolved independently by kind (it may be a literal or a reference). An action whose single parameter is a
    **field map** (`each`) takes the object as that one value instead, and compiles every value in it as a chain (§6.9).
 3. A parameter name **never** starts with `$` (a parameter name is an identifier), so rule 1 and rule 2 can never conflict.
+
+Rule 1 is not limited to this position: the same object shape is read as a directive at every depth of a
+`ref_or_literal` parameter (§3.3), which is what makes a literal starting with `$` writable inside an array or an object.
 
 Elements/values inside arrays and objects are resolved **leaf by leaf, each by its own parameter's kind**: a `ref_or_literal` leaf may hold a reference (`code`'s
 `inputs`, `["code",{"src":"x","inputs":{"x":"$locals.n"}}]`), while a `literal` leaf keeps a leading `$` as text — measured, `["py","replace",["$locals.old","X"]]`

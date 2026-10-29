@@ -71,10 +71,7 @@ class Ctx(Op):
                     diag(
                         "UP2-E1015",
                         f"ctx.{action} cannot write {path!r}",
-                        fix=(
-                            "the write surface is limited to locals.* and public.* "
-                            "(globals and a step's product are read-only)"
-                        ),
+                        fix=_write_fix(path),
                         pointer=f"{pointer}/path",
                         allowed=_WRITABLE_PREFIXES,
                     )
@@ -162,6 +159,23 @@ def _require_text(raw: Any, *, pointer: str) -> str:
     return raw
 
 
+def _read_fix(path: str) -> str:
+    """A leading ``$`` is the mistake worth naming; otherwise the root is the problem."""
+    if path.startswith("$"):
+        return f'ctx takes a bare path, without `$`: write "{path[1:]}"'
+    return f"use {' / '.join(_READABLE_ROOTS)} — written bare, e.g. locals.k"
+
+
+def _write_fix(path: str) -> str:
+    """Same rule on the write side: name a ``$`` before the write surface."""
+    if path.startswith("$"):
+        return f'ctx takes a bare path, without `$`: write "{path[1:]}"'
+    return (
+        "the write surface is limited to locals.* and public.* "
+        "(globals and a step's product are read-only)"
+    )
+
+
 def _check_readable(path: str, *, action: str, pointer: str = "") -> None:
     root = path.split(".", 1)[0]
     if root not in _READABLE_ROOTS:
@@ -169,7 +183,7 @@ def _check_readable(path: str, *, action: str, pointer: str = "") -> None:
             diag(
                 "UP2-E1005",
                 f"the root {root!r} of ctx.{action} is not readable",
-                fix=f"use {' / '.join(_READABLE_ROOTS)}",
+                fix=_read_fix(path),
                 pointer=pointer,
                 allowed=_READABLE_ROOTS,
             )

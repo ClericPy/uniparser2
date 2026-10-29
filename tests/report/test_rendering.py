@@ -97,6 +97,11 @@ def test_a_selector_that_matches_partly_says_so() -> None:
     assert demo_report._matched_text(demo_report._run(case)) == "1 node · script"
 
 
+def test_a_tag_summary_reads_past_a_gt_inside_an_attribute() -> None:
+    """``title="a > b"`` must not end the opening tag before its class is read."""
+    assert demo_report._tag_summary('<a title="a > b" class="download">x</a>') == "a.download"
+
+
 def test_the_scope_a_case_reads_is_visible() -> None:
     """``ctx.get`` reads the scope, so the scope — not ``None`` — is the input the reader sees."""
     md = demo_report.build_md()
@@ -131,4 +136,5 @@ def test_a_shared_sample_is_only_claimed_when_true() -> None:
 def test_the_markdown_no_longer_claims_one_input_for_a_section_of_many() -> None:
     """`py`'s 42 actions have 42 different inputs; the section header must not say otherwise."""
     section = demo_report.build_md().split("## `py`")[1].split("## `xpath`")[0]
+    assert "Input sample for this section" not in section
     assert "Shared input" not in section

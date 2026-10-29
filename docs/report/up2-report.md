@@ -20,9 +20,9 @@ Generated from `uniparser2` 0.5.0 · one case per `(operator, action)` pair decl
 | `re` | 3 | mode / pattern | Regex matching (search / group / findall) | 3 |
 | `ctx` | 3 | action / parameter | Scope reads and writes (get / set / del / dict / list) | 5 |
 | `const` | 2 | value | Literal (never resolved as a reference) | 1 |
+| `each` | 2 | fields | One dictionary per element of a list | 1 |
 | `code` | 2 | source & inputs | In-chain code (sandboxed; optional dependency [code]) | 1 |
 | `udf` | 3 | action / parameter | Host-registered named function (the chain carries no code) | 1 |
-| `each` | 2 | fields | One dictionary per element of a list | 1 |
 
 
 ## Commonness tiers
@@ -41,7 +41,7 @@ Commonness is a **design judgement**, not telemetry: the tiers follow the "stand
 
 arity 3 · slot 2=accessor / slot 3=selector · dependencies: `selectolax` · 8 actions (Core, Common, Advanced)
 
-Shared input for this section — the same input for every card below:
+Input sample for this section — the same input for every card below:
 
 ```text
 <html>
@@ -183,7 +183,7 @@ Shared input for this section — the same input for every card below:
 
 arity 3 · slot 2=accessor / slot 3=selector · dependencies: `selectolax` · 8 actions (Core, Common, Advanced)
 
-Shared input for this section — the same input for every card below:
+Input sample for this section — the same input for every card below:
 
 ```text
 <html>
@@ -670,7 +670,7 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 | `[["py", "strip", "", ""]]` | `UP2-E1004` | `/0` | stage length is 4, only 2 or 3 is allowed | follow the declared arity: 3 slots is ["operator", slot2, slot3]; 2 slots is ["operator", parameter] |
 | `[["py", "no_such_function", ""]]` | `UP2-E1003` | `/0/1` | the py allowlist has no function 'no_such_function' | use one of the functions below (run up2 ops --json for the full table) |
 | `[["py", "parse_time", {"format": "%Q"}]]` | `UP2-E1005` | `/0/2/format` | invalid strptime format: 'Q' is a bad directive in format '%Q' | fix the directives in format |
-| `[["py", "default", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare the earlier step product with --product |
+| `[["py", "default", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare the earlier step product with --product; for text that starts with `$`, write {"$lit": "…"} |
 | `[["py", "urljoin", {"base": "https://example.com/news/"}]]` | `UP2-E1005` | `/0/2/base` | parameter 'base' of py.urljoin must be a string, got dict | write the value directly: ["py", "urljoin", "…"] |
 | `[["py", "slice", {"spec": "0:4"}]]` | `UP2-E1005` | `/0/2/spec` | parameter 'spec' of py.slice must be a string, got dict | write the value directly: ["py", "slice", "…"] |
 | `[["py", "getitem", {"at": {}}]]` | `UP2-E1005` | `/0/2/at` | parameter 'at' of py.getitem must be a scalar, got dict | write the value directly: ["py", "getitem", "…"] |
@@ -682,7 +682,7 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 
 arity 3 · slot 2=accessor / slot 3=XPath · dependencies: `lxml` · 3 actions (Core, Common, Advanced)
 
-Shared input for this section — the same input for every card below:
+Input sample for this section — the same input for every card below:
 
 ```text
 <?xml version="1.0" encoding="UTF-8"?>
@@ -897,11 +897,25 @@ arity 2 · slot 2=value · dependencies: none · 1 actions (Core)
 - output: `Ok(value='article')` (Ok)
 
 
+## `each` — One dictionary per element of a list
+
+arity 2 · slot 2=fields · dependencies: none · 1 actions (Core)
+
+### Actions (sorted by commonness)
+
+#### `each` — Run the field map once per element
+- tier ★★★ Core · parameter slot: the value itself · `fields: fields`
+- note: 2 positions: field map; one dictionary per element
+- chain: `[["each", {"title": [["py", "strip", ""]], "size": [["py", "len", ""]]}]]`
+- input: `['  a  ', 'bb']`
+- output: `Ok(value=[{'title': 'a', 'size': 5}, {'title': 'bb', 'size': 2}])` (Ok)
+
+
 ## `code` — In-chain code (sandboxed; optional dependency [code])
 
 arity 2 · slot 2=source & inputs · dependencies: `pydantic_monty` · 1 actions (Advanced)
 
-Shared input for this section — the same input for every card below:
+Input sample for this section — the same input for every card below:
 
 ```text
 <html>
@@ -954,20 +968,6 @@ arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 1 actions (
 | invalid chain | code | pointer | message | fix |
 |---|---|---|---|---|
 | `[["udf", "not_registered", ""]]` | `UP2-E1010` | `/0/1` | the custom function 'not_registered' is not registered | call register_udf(name, function) in the host, or declare an entry point (group uniparser2.udfs) |
-
-
-## `each` — One dictionary per element of a list
-
-arity 2 · slot 2=fields · dependencies: none · 1 actions (Core)
-
-### Actions (sorted by commonness)
-
-#### `each` — Run the field map once per element
-- tier ★★★ Core · parameter slot: the value itself · `fields: fields`
-- note: 2 positions: field map; one dictionary per element
-- chain: `[["each", {"title": [["py", "strip", ""]], "size": [["py", "len", ""]]}]]`
-- input: `['  a  ', 'bb']`
-- output: `Ok(value=[{'title': 'a', 'size': 5}, {'title': 'bb', 'size': 2}])` (Ok)
 
 
 ## Appendix: mechanisms shared by all operators

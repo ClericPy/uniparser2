@@ -43,6 +43,17 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Fixed
 
+- **`{"$lit": …}` escapes at every depth, and the diagnostics name it** (change
+  `literal-escape-at-depth`): the escape was recognised only at the top of a parameter slot, so a
+  literal starting with `$` had no legal spelling inside an array or an object — and one failure was
+  silent, because `["py","or",[{"$lit":"plain"},"b"]]` answered with the dict `{'$lit': 'plain'}`
+  instead of the string. A `$`-prefixed single-key object is now a directive wherever a
+  `ref_or_literal` value is read (`$lit`, or `UP2-E1005` naming the escape), a `literal` parameter
+  still keeps `$` as text, and three messages say how to write the text instead: an unknown
+  reference root (`UP2-E1006`) names `{"$lit": …}`, and a `$`-prefixed `ctx` path (`UP2-E1005` /
+  `UP2-E1015`) says to drop the `$`. **Behaviour narrowing**: an object whose only key starts with
+  `$` was passed through as data at depth and is now the escape or an error, matching what the slot
+  level already did.
 - **The report's input is whole, matched and scoped** (change `report-case-context`): an input was
   elided at 180 characters exactly like an output, which cut a selector's own target out of the css
   sample (the text stopped inside `<h1 cl…`), and the "sample above" link landed on a collapsed

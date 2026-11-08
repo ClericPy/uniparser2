@@ -13,12 +13,14 @@ registry the same way.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import html
 import importlib.util
 import sys
 from collections.abc import Iterable
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 
 import pytest
 
@@ -65,9 +67,21 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@functools.cache
+def _html_page() -> str:
+    """The HTML build is one run of every case; render it once for the whole module."""
+    return cast("str", demo_report.build_html())
+
+
+@functools.cache
+def _markdown() -> str:
+    """Same for the Markdown catalogue: two cases read it, one render is enough."""
+    return cast("str", demo_report.build_md())
+
+
 def test_the_css_sample_keeps_the_node_the_selectors_target() -> None:
     """The section sample is whole and open: the selector's own target must be inside it."""
-    page = demo_report.build_html()
+    page = _html_page()
     block = html.unescape(page[page.find('id="input-css"') :].split("</details>")[0])
     assert '<details class="doc" id="input-css" open>' in page
     assert 'class="article-title"' in block
@@ -104,7 +118,7 @@ def test_a_tag_summary_reads_past_a_gt_inside_an_attribute() -> None:
 
 def test_the_scope_a_case_reads_is_visible() -> None:
     """``ctx.get`` reads the scope, so the scope — not ``None`` — is the input the reader sees."""
-    md = demo_report.build_md()
+    md = _markdown()
     assert "scope: `locals {'k': 'local value'}`" in md
     assert "input: not used — the value is read from the scope path" in md
 
@@ -135,6 +149,6 @@ def test_a_shared_sample_is_only_claimed_when_true() -> None:
 
 def test_the_markdown_no_longer_claims_one_input_for_a_section_of_many() -> None:
     """`py`'s 42 actions have 42 different inputs; the section header must not say otherwise."""
-    section = demo_report.build_md().split("## `py`")[1].split("## `xpath`")[0]
+    section = _markdown().split("## `py`")[1].split("## `xpath`")[0]
     assert "Input sample for this section" not in section
     assert "Shared input" not in section

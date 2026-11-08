@@ -46,12 +46,20 @@ class _Handler(BaseHTTPRequestHandler):
         """Keep the test output clean."""
 
 
+_POLL_INTERVAL = 0.01
+"""How often the server thread looks for a request.
+
+``serve_forever`` polls every 0.5 seconds by default and ``shutdown`` waits for the poll it
+interrupts, so every case that used this fixture paid half a second of teardown.
+"""
+
+
 @pytest.fixture
 def server() -> Iterator[str]:
     """A local HTTP server; the fixture yields its base URL."""
     _Handler.seen = []
     httpd = HTTPServer(("127.0.0.1", 0), _Handler)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread = threading.Thread(target=httpd.serve_forever, args=(_POLL_INTERVAL,), daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{httpd.server_port}"
@@ -130,8 +138,10 @@ def test_a_non_mapping_header_is_an_error() -> None:
 
 
 def test_an_unreachable_host_raises() -> None:
+    """An unused local port swallows the connection instead of refusing it (no RST), so this case
+    costs exactly its timeout; a small budget keeps the assertion while spending 50 ms, not 1 s."""
     with pytest.raises(OSError):
-        fetch({"url": "http://127.0.0.1:1/", "timeout": 1.0})
+        fetch({"url": "http://127.0.0.1:1/", "timeout": 0.05})
 
 
 # ---------------------------------------------------------------- the cache

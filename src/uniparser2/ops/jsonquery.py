@@ -32,6 +32,8 @@ _GET: Final = "get"
 The registry keeps a name so the parameter table and the conformance audit have something to use.
 """
 _JMESPATH: Final = "jmespath"
+_ROOT_EXPRESSION: Final = "@"
+"""jmespath's current-node token, which is what an empty expression (`02` §6.2) means."""
 
 
 def _import_jmespath() -> Any:
@@ -61,7 +63,11 @@ class JsonQuery(Op):
 
     def precompile(self, action: str, params: Mapping[str, Param], *, pointer: str = "") -> Any:
         del action
-        expr = _literal_text(params, "expr", pointer=f"{pointer}/expr")
+        # `02` §6.2: an empty expression is the root. jmespath spells the root `@` and raises
+        # `EmptyExpressionError` for `""`, so the documented spelling is mapped here -- the fake
+        # engine in the tests answered `""` by itself, which is why this gap survived (`UP2-E1005`
+        # was reachable with the real dependency, not with the stub).
+        expr = _literal_text(params, "expr", pointer=f"{pointer}/expr") or _ROOT_EXPRESSION
         module = _import_jmespath()
         try:
             return module.compile(expr)

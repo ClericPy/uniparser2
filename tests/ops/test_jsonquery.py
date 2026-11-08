@@ -30,14 +30,15 @@ COVERS_PAIRS = (("json", "get"),)
 
 
 class _FakeCompiled:
-    """A minimal stand-in: just enough (empty expression / dotted path / `[*]` projection)."""
+    """A minimal stand-in: just enough (`@` root / dotted path / `[*]` projection)."""
 
     def __init__(self, expr: str) -> None:
         self.expr = expr
 
     def search(self, data: Any) -> Any:
         expr = self.expr
-        if expr == "":
+        if expr in ("", "@"):
+            # The operator maps an empty expression to jmespath's current-node token.
             return data
         if expr == "boom":
             raise RuntimeError("the query blew up")
@@ -97,6 +98,14 @@ def test_query_already_parsed_value(fake_jmespath: None) -> None:
 
 def test_empty_expression_returns_root(fake_jmespath: None) -> None:
     assert run([["json", ""]], {"a": 1}) == Ok({"a": 1})
+
+
+def test_empty_expression_returns_root_with_the_real_engine() -> None:
+    """The stub answers `""` itself; the real library raises `EmptyExpressionError` for it."""
+    pytest.importorskip("jmespath")
+    assert run([["json", ""]], {"a": 1}) == Ok({"a": 1})
+    assert run([["json", None]], {"a": 1}) == Ok({"a": 1})
+    assert run([["json", "@"]], {"a": 1}) == Ok({"a": 1})
 
 
 def test_projection_returns_list(fake_jmespath: None) -> None:

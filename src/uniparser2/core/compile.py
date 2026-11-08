@@ -34,7 +34,6 @@ from .values import type_name
 logger = logging.getLogger("uniparser2")
 
 _DIRECTIVE_PREFIX = "$"
-_NO_PARAM_PLACEHOLDERS = (None, "")
 INDEX_FIELD: Final = "next"
 """The field-map key whose value is a **routing target** rather than an extraction (`03` §4.1.1).
 

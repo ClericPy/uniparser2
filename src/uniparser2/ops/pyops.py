@@ -1051,43 +1051,88 @@ def _py_and(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     return Ok(items[-1])
 
 
-_SCALAR_PARAMS: Final[Mapping[str, Mapping[str, str]]] = {
-    "urljoin": {"base": "a string"},
-    "slice": {"spec": "a string"},
-    "split": {"sep": "a string", "maxsplit": "an integer"},
-    "getitem": {"at": "a scalar"},
-    "getattr": {"ref_or_literal": "a string"},
-    "replace": {"old": "a string", "new": "a string"},
-    "strftime": {"layout": "a string"},
+_SCALAR_PARAMS: Final[Mapping[str, Mapping[str, tuple[str, tuple[type, ...]]]]] = {
+    "urljoin": {"base": ("a string", (str,))},
+    "slice": {"spec": ("a string", (str,))},
+    "split": {
+        "sep": ("a string", (str,)),
+        "maxsplit": ("an integer", (int, float, str, type(None))),
+    },
+    "getitem": {"at": ("a scalar", (str, int))},
+    "getattr": {"ref_or_literal": ("a string", (str,))},
+    "replace": {"old": ("a string", (str,)), "new": ("a string", (str,))},
+    "strftime": {"layout": ("a string", (str,))},
 }
-"""Parameters whose runtime path needs a scalar (design D3 of ``add-parameter-shape-contract``).
+"""Parameters whose runtime path needs a scalar, with the types it really accepts (design D3 of
+``add-parameter-shape-contract``).
 
 A JSON container here is always a mistake: these functions either reject it with ``UP2-E2002`` or
-raise inside ``int()``. Parameters that merely coerce their argument (``join.sep``,
-``parse_time.lang``) and the any-typed ``default.value`` are deliberately absent — there a container
-is a legal value.
+raise inside ``int()``. A **literal of another type** is the same mistake one step later, and so is
+a string the runtime parses and refuses (``slice.spec`` / ``split.maxsplit``), so both fail at
+compile time too — the kernel invariant is "bad chains fail at compile time", not "at the first
+run". The accepted types mirror what evaluation actually takes: ``maxsplit`` keeps its numeric
+strings and ``None``/``""`` (no limit), and ``at`` takes the subscript types a JSON value really
+indexes with.
+
+Parameters that merely coerce their argument (``join.sep``, ``parse_time.lang``) and the any-typed
+``default.value`` are deliberately absent — a coercion is not a rejection, and a container there is
+a legal value.
 """
 
 
+def _scalar_error(
+    action: str, name: str, expected: str, got: str, *, pointer: str = "", fix: str = ""
+) -> Up2Error:
+    """One malformed-scalar diagnostic, at the parameter's own pointer."""
+    return Up2Error(
+        diag(
+            "UP2-E1005",
+            f"parameter {name!r} of py.{action} must be {expected}, got {got}",
+            fix=fix or _scalar_fix(action, name),
+            pointer=f"{pointer}/{name}" if pointer else f"/2/{name}",
+        )
+    )
+
+
+def _scalar_value_problem(action: str, name: str, value: Any) -> tuple[str, str] | None:
+    """``(expected, fix)`` when the runtime parses ``value`` and would refuse it, else ``None``."""
+    if action == "slice" and name == "spec":
+        try:
+            _parse_slice_spec(value)
+        except ValueError:
+            return 'a slice notation such as ":20" or "1:5"', 'write ":20" / "1:5" / "::-1"'
+    elif action == "split" and name == "maxsplit":
+        if value is None or value == "":
+            return None  # the documented "no limit" spellings
+        try:
+            if isinstance(value, bool):
+                raise ValueError("bool is not an integer")
+            int(value)
+        except (TypeError, ValueError):
+            return "an integer", 'write an integer, or "" for no limit'
+    return None
+
+
 def _check_scalar_params(action: str, params: Mapping[str, Param], *, pointer: str = "") -> None:
-    """Reject a container where the function's own runtime path requires a scalar."""
+    """Reject a value the function's own runtime path would reject."""
     wanted = _SCALAR_PARAMS.get(action)
     if not wanted:
         return
-    for name, expected in wanted.items():
+    for name, (expected, accepted) in wanted.items():
         raw = params.get(name)
-        # A ``Lit`` holds the value as written; a container written for a ``ref_or_literal``
-        # parameter is walked into ``Param`` structures instead; a ``Ref`` is only known at runtime.
-        written = raw.value if isinstance(raw, Lit) else raw
-        if isinstance(written, (Mapping, list, tuple)):
-            raise Up2Error(
-                diag(
-                    "UP2-E1005",
-                    f"parameter {name!r} of py.{action} must be {expected}, "
-                    f"got {type_name(written)}",
-                    fix=_scalar_fix(action, name),
-                    pointer=f"{pointer}/{name}" if pointer else f"/2/{name}",
-                )
+        if not isinstance(raw, Lit):
+            # A container written for a `ref_or_literal` parameter arrives walked into `Param`
+            # structures; a `Ref` is only known at runtime, so nothing is claimed about it.
+            if isinstance(raw, (Mapping, list, tuple)):
+                raise _scalar_error(action, name, expected, type_name(raw), pointer=pointer)
+            continue
+        value = raw.value
+        if isinstance(value, (Mapping, list, tuple)) or not isinstance(value, accepted):
+            raise _scalar_error(action, name, expected, type_name(value), pointer=pointer)
+        problem = _scalar_value_problem(action, name, value)
+        if problem is not None:
+            raise _scalar_error(
+                action, name, problem[0], repr(value), pointer=pointer, fix=problem[1]
             )
 
 

@@ -443,6 +443,62 @@ def test_sort_key_enum_is_validated_at_compile_time() -> None:
     assert diagnostic.pointer == "/0/2/key"
 
 
+@pytest.mark.parametrize(
+    ("chain", "pointer"),
+    [
+        ([["py", "urljoin", 42]], "/0/2/base"),
+        ([["py", "slice", 42]], "/0/2/spec"),
+        ([["py", "split", {"sep": 42}]], "/0/2/sep"),
+        ([["py", "replace", [42, "x"]]], "/0/2/old"),
+        ([["py", "getattr", 42]], "/0/2/ref_or_literal"),
+    ],
+)
+def test_a_wrong_typed_literal_fails_at_compile_time(chain: Any, pointer: str) -> None:
+    """The value is a literal, so the compiler knows evaluation would reject it."""
+    with pytest.raises(Up2Error) as info:
+        compile_field(chain)
+    diagnostic = info.value.diagnostic
+    assert diagnostic.code == "UP2-E1005"
+    assert diagnostic.pointer == pointer
+    assert diagnostic.fix
+
+
+@pytest.mark.parametrize(
+    ("chain", "pointer"),
+    [
+        ([["py", "slice", "bogus"]], "/0/2/spec"),
+        ([["py", "split", {"sep": ",", "maxsplit": "x"}]], "/0/2/maxsplit"),
+    ],
+)
+def test_a_string_the_runtime_cannot_parse_fails_at_compile_time(chain: Any, pointer: str) -> None:
+    """Parsed here with the runtime's own parser, so the two cannot drift apart."""
+    with pytest.raises(Up2Error) as info:
+        compile_field(chain)
+    diagnostic = info.value.diagnostic
+    assert diagnostic.code == "UP2-E1005"
+    assert diagnostic.pointer == pointer
+    assert diagnostic.fix
+
+
+def test_the_no_limit_spellings_of_maxsplit_still_compile() -> None:
+    for chain in (
+        [["py", "split", {"sep": ",", "maxsplit": None}]],
+        [["py", "split", {"sep": ",", "maxsplit": ""}]],
+        [["py", "split", {"sep": ",", "maxsplit": 3}]],
+    ):
+        compile_field(chain)
+
+
+def test_a_coerced_parameter_is_not_a_rejection() -> None:
+    """``join.sep`` coerces its value, so a number there is legal."""
+    assert run([["py", "join", 42]], ["a", "b"]) == Ok("a42b")
+
+
+def test_a_reference_for_a_scalar_parameter_is_still_deferred() -> None:
+    """Only a literal is decidable at compile time; `$locals.x` is checked when it is read."""
+    compile_field([["py", "getitem", "$locals.k"]])
+
+
 def test_a_container_fallback_compiles_and_a_failure_is_not_caught() -> None:
     """``py.default.value`` accepts any JSON value; a failed stage is not a fallback case."""
     chain = [["ctx", "get", "locals.nope"], ["py", "default", {"a": 1}]]

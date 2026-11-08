@@ -76,13 +76,14 @@ The character-set constraint on `tpl_key` (lint `UP2-E3002`): `^[\w\u4e00-\u9fff
 
 ```python
 def graph_hash(graph: Mapping[str, Any]) -> str:
-    blob = json.dumps(graph, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    blob = json.dumps(graph, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                      allow_nan=False)
     return hashlib.blake2s(blob.encode("utf-8"), digest_size=16).hexdigest()   # 32 hex
 ```
 
 | Rule | Content |
 |---|---|
-| Canonicalisation | `sort_keys=True` (key order is irrelevant), `separators=(",", ":")` (whitespace is irrelevant), `ensure_ascii=False` (Chinese is kept as is) |
+| Canonicalisation | `sort_keys=True` (key order is irrelevant), `separators=(",", ":")` (whitespace is irrelevant), `ensure_ascii=False` (Chinese is kept as is), `allow_nan=False` (a graph JSON cannot express is refused with `UP2-E1004` **before** anything is written) |
 | Algorithm | `blake2s`, `digest_size=16` |
 | Fingerprint scope | **only `graph` is hashed**; `status` / `source` do not enter the fingerprint (a status change must not produce an audit row saying "the chain changed") |
 | Idempotence | the same `graph` yields the same fingerprint whether it comes in from a JSON file or from a dict |
@@ -144,6 +145,7 @@ $UP2_HOME/                     # default ~/.uniparser2; an environment variable 
 |---|---|
 | Applicability | local development, the trial UI, a single-machine SOP flow |
 | Atomic write | write a temporary file → `os.replace()` (an atomic replacement within the same directory) |
+| Strict JSON | every row and audit line is written with `allow_nan=False` and read with `parse_constant` rejected; a file that is not strict JSON is reported with `UP2-E1004` and its path, never as a decoder traceback (the same rule covers `expected.json` snapshots) |
 | Concurrency | no cross-process lock; the **single-writer assumption** is stated explicitly in the documentation (use SQLite for multiple writers) |
 | Version-control friendly | one file per chain, with canonical key order, so `git diff` is readable |
 

@@ -167,6 +167,7 @@ def pack(value: Any, /, *, pointer: str = "") -> Outcome:
             code="UP2-E2003",
             reason=f"export contains a value that cannot be serialized: {type_name(value)} "
             f"({preview(value, 80)})",
-            fix="only str / int / float / bool / null / list / dict may be exported",
+            fix="only str / int / float / bool / null / list / dict may be exported, "
+            "and a float must be finite (JSON has no Infinity / NaN)",
         )
     return Ok(value)

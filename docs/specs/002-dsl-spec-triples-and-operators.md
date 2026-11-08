@@ -343,14 +343,16 @@ Shape: `["py", "<function name>", <scalar | positional array | named object>]` (
 as `""`).
 
 **Which parameters are validated at compile time** (the same `UP2-E1005` + pointer + fix shape as `css` / `re` / `ctx` / `json`): a parameter that only accepts a
-scalar rejects a JSON container before the chain runs, because the function's own runtime path either type-guards it or raises inside `int()`:
+scalar rejects a JSON container before the chain runs, because the function's own runtime path either type-guards it or raises inside `int()`. A **literal of
+another type** is the same mistake one step later, and so is a string the runtime parses and refuses, so both fail at compile time too — "bad chains fail at
+compile time" is the invariant, not "at the first run". A reference is only known during evaluation, so nothing is claimed about it:
 
 | Function | Parameter | Accepted | Runtime path on a container |
 |---|---|---|---|
 | `urljoin` | `base` | a string | `isinstance(base, str)` guard ⇒ `UP2-E2002` |
-| `slice` | `spec` | a string | `isinstance(spec, str)` guard ⇒ `UP2-E2002` |
+| `slice` | `spec` | a string holding a slice notation (`":20"` / `"1:5"`) | `isinstance(spec, str)` guard, then `_parse_slice_spec` raises `ValueError` ⇒ `UP2-E2005` |
 | `split` | `sep` | a string | `isinstance(sep, str)` guard ⇒ `UP2-E2002` |
-| `split` | `maxsplit` | an integer | `int(container)` raises `TypeError` |
+| `split` | `maxsplit` | an integer, a numeric string, or `null` / `""` (no limit) | `int(container)` raises `TypeError` |
 | `getitem` | `at` | an integer or a string | `value[at]` raises `TypeError` (an unhashable key, a str index on a list) ⇒ `UP2-E2002` |
 | `replace` | `old` / `new` | strings | `isinstance(..., str)` guard ⇒ `UP2-E2002` |
 | `sort` | `key` | `""` / `"str"` / `"int"` / `"float"` | enum check ⇒ `UP2-E2005` |

@@ -125,6 +125,12 @@ HostObject = <anything the host hands over: a response, a udf result>
 Value     = JsonValue | Opaque | HostObject
 ```
 
+A **`float` must be finite**: JSON has no `Infinity` / `NaN`, so `inf` / `-inf` / `nan` is not a
+`JsonValue` and a product carrying one (nested included) is refused at the exit with `UP2-E2003`. A
+chain's **text** obeys the same rule — `loads` rejects the non-JSON constants Python's decoder accepts,
+and `dumps` refuses to write them (`UP2-E1004`). A computation may still answer one mid-chain;
+Python's arithmetic is Python's, and the boundary is where the rule is enforced.
+
 | Decision | Content |
 |---|---|
 | **Adopt the Tree model** (D1-c of the old `dsl-design`) | the HTML/XML/JSON inputs are all trees, and the export is one projection of the tree; "multiple values" are opened up by explicit operators (`nodes` hands out a list, `each` expands it), not by an implicit boolean flag |

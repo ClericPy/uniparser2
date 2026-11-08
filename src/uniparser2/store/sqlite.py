@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import builtins
 import contextlib
-import json
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -21,6 +20,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from uniparser2.core.errors import Diagnostic
+from uniparser2.core.values import loads_json
 
 from .base import audit_without_chain, chain_without_audit, publish_into, select_entries
 from .fingerprint import canonical_graph
@@ -272,7 +272,7 @@ def _template_of(row: Sequence[Any]) -> Template:
         tpl_key=row[2],
         status=row[3],
         source=row[4],
-        graph=json.loads(row[5]),
+        graph=loads_json(row[5], subject="the stored graph"),
         create_time=row[6],
         update_time=row[7],
     )

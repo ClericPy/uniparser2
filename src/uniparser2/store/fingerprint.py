@@ -11,20 +11,25 @@ The fingerprint is the no-op decision of ``publish``: the same graph writes no a
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping, Sequence
+
+from uniparser2.core.values import dumps_json
 
 CANONICAL_SEPARATORS: tuple[str, str] = (",", ":")
 DIGEST_SIZE = 16
 
 
 def canonical_graph(graph: Mapping[str, object] | Sequence[object]) -> str:
-    """The canonical JSON text a fingerprint is taken over (`04` §3)."""
-    return json.dumps(
+    """The canonical JSON text a fingerprint is taken over (`04` §3).
+
+    Strict on purpose: the fingerprint runs before a store writes anything, so a graph that JSON
+    cannot express is refused here -- once, for every store implementation (`04` §5 step 2).
+    """
+    return dumps_json(
         graph,
         sort_keys=True,
         separators=CANONICAL_SEPARATORS,
-        ensure_ascii=False,
+        subject="the graph",
     )
 
 

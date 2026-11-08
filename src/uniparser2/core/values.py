@@ -13,7 +13,10 @@ argument or an answer, and a **step product must still be JSON** (design doc 03 
 from __future__ import annotations
 
 import json
-from typing import Final
+import math
+from typing import Any, Final
+
+from .errors import Up2Error, diag
 
 
 class Opaque:
@@ -66,14 +69,81 @@ def is_opaque(value: object) -> bool:
 
 
 def is_json_value(value: object) -> bool:
-    """Whether this is an exportable JSON value (recursive; ``dict`` keys must be ``str``)."""
-    if value is None or isinstance(value, (str, bool, int, float)):
+    """Whether this is an exportable JSON value (recursive; ``dict`` keys must be ``str``).
+
+    A float must be **finite**: JSON has no ``Infinity`` / ``NaN``, so a product carrying one would
+    leave the run as text no strict parser accepts. The computation may still produce one — only the
+    boundary refuses it.
+    """
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if value is None or isinstance(value, (str, bool, int)):
         return True
     if isinstance(value, list):
         return all(is_json_value(item) for item in value)
     if isinstance(value, dict):
         return all(isinstance(key, str) and is_json_value(item) for key, item in value.items())
     return False
+
+
+NON_JSON_FIX: Final = (
+    "write JSON values only: a float must be finite, since JSON has no Infinity / NaN"
+)
+"""The one fix line for "this cannot be JSON", shared by every text boundary."""
+
+_SYNTAX_FIX: Final = (
+    "fix the JSON syntax: keys and strings take double quotes, and there is no trailing comma"
+)
+
+
+def dumps_json(
+    value: object,
+    *,
+    indent: int | None = None,
+    sort_keys: bool = False,
+    separators: tuple[str, str] | None = None,
+    subject: str = "the value",
+) -> str:
+    """Write a value as **strict** JSON text (``allow_nan=False``, ``ensure_ascii=False``).
+
+    ``json.dumps`` would otherwise write ``Infinity`` / ``NaN``, which JSON does not have, and a
+    value outside the domain raises ``TypeError``. Both are ``UP2-E1004``: what a text boundary
+    writes must be what it would accept back. ``subject`` is the noun the diagnostic names.
+    """
+    try:
+        return json.dumps(
+            value,
+            indent=indent,
+            sort_keys=sort_keys,
+            separators=separators,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise Up2Error(
+            diag("UP2-E1004", f"{subject} cannot be written as JSON: {exc}", fix=NON_JSON_FIX)
+        ) from exc
+
+
+def loads_json(text: str | bytes, *, subject: str = "the text") -> Any:
+    """Read **strict** JSON text: a non-JSON constant or a syntax error is ``UP2-E1004``.
+
+    Python's decoder accepts ``Infinity`` / ``NaN`` and raises its own ``JSONDecodeError``; the
+    package's contract is one coded diagnostic for every kind of bad chain, so both are converted
+    here. ``subject`` is the noun the diagnostic names (a file path, for a stored row).
+    """
+
+    def reject(name: str) -> Any:
+        raise Up2Error(
+            diag("UP2-E1004", f"{subject} carries the non-JSON constant {name}", fix=NON_JSON_FIX)
+        )
+
+    try:
+        return json.loads(text, parse_constant=reject)
+    except json.JSONDecodeError as exc:
+        raise Up2Error(
+            diag("UP2-E1004", f"{subject} is not valid JSON: {exc}", fix=_SYNTAX_FIX)
+        ) from exc
 
 
 def text_of(value: object) -> str:

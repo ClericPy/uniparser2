@@ -29,7 +29,6 @@ reads chain files owns this IO too.
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -38,6 +37,7 @@ from typing import Any, Final
 
 from uniparser2 import Failed, Up2Error, compile_field, eval_field, pack, start
 from uniparser2.core.export import ProductDifference, render_difference
+from uniparser2.core.values import dumps_json, loads_json
 from uniparser2.net import RequestCache
 
 INPUT_NAME: Final = "input.txt"
@@ -138,20 +138,28 @@ def read_input(case: SampleCase) -> tuple[Any, str | None]:
 
 
 def read_expected(case: SampleCase) -> tuple[Any, str | None]:
-    """The recorded product of one case; a missing or broken snapshot is a plain error."""
+    """The recorded product of one case; a missing or broken snapshot is a plain error.
+
+    Strict JSON: a snapshot carrying ``Infinity`` is a broken snapshot, not the value ``inf``.
+    """
     try:
-        return json.loads(case.expected_path.read_text(encoding="utf-8")), None
+        text = case.expected_path.read_text(encoding="utf-8")
     except OSError as exc:
         return None, f"no expected product at {case.expected_path}: {exc}"
-    except json.JSONDecodeError as exc:
-        return None, f"{case.expected_path} is not valid JSON: {exc}"
+    try:
+        return loads_json(text, subject=str(case.expected_path)), None
+    except Up2Error as exc:
+        return None, str(exc)
 
 
 def record_expected(case: SampleCase, product: Any) -> str | None:
     """Write ``expected.json`` for one case: the **only** way a snapshot is written (`04` §7-S4)."""
     try:
+        text = dumps_json(product, indent=2, sort_keys=True, subject="the product") + "\n"
+    except Up2Error as exc:
+        return str(exc)
+    try:
         case.path.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(product, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
         case.expected_path.write_text(text, encoding="utf-8", newline="\n")
     except OSError as exc:
         return f"cannot write the snapshot {case.expected_path}: {exc}"

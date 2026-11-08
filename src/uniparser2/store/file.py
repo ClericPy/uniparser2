@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import builtins
 import contextlib
-import json
 import os
 import tempfile
 from collections.abc import Iterator, Mapping
@@ -36,6 +35,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from uniparser2.core.errors import Diagnostic
+from uniparser2.core.values import dumps_json, loads_json
 
 from .base import (
     Transaction,
@@ -142,7 +142,7 @@ class FileStore:
         """Atomically replace the chain file: temporary file, then ``os.replace``."""
         path = self.chain_path(template.root_domain, template.tpl_key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(asdict(template), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        text = dumps_json(asdict(template), indent=2, sort_keys=True, subject="the template") + "\n"
         handle, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
         os.close(handle)
         temporary = Path(name)
@@ -176,7 +176,7 @@ class FileStore:
             new_hash=new_hash,
             note=note,
         )
-        line = json.dumps(asdict(row), sort_keys=True, ensure_ascii=False) + "\n"
+        line = dumps_json(asdict(row), sort_keys=True, subject="the audit row") + "\n"
         with path.open("a", encoding="utf-8", newline="\n") as stream:
             stream.write(line)
         return row.seq
@@ -195,14 +195,16 @@ class FileStore:
         for path in self._audit_files():
             for line in path.read_text(encoding="utf-8").splitlines():
                 if line.strip():
-                    yield _audit_from_json(json.loads(line))
+                    yield _audit_from_json(loads_json(line, subject=f"the audit line in {path}"))
 
     def _chain_ids(self) -> set[str]:
         return {_template_from_json(_load_json(path)).chain_id for path in self._chain_files()}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    data: dict[str, Any] = loads_json(
+        path.read_text(encoding="utf-8"), subject=f"the chain file {path}"
+    )
     return data
 
 

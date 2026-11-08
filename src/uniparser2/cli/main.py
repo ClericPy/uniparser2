@@ -57,6 +57,7 @@ from uniparser2 import (
 )
 from uniparser2.core import compare_products, registry
 from uniparser2.core.conformance import check
+from uniparser2.core.values import loads_json
 from uniparser2.net import RequestCache
 from uniparser2.store import (
     AuditRow,
@@ -764,11 +765,13 @@ def _print_diagnostic(diagnostic: Diagnostic, *, as_json: bool) -> None:
 def _load_chain(path_text: str) -> tuple[Any, str | None]:
     path = Path(path_text)
     try:
-        return json.loads(path.read_text(encoding="utf-8")), None
+        text = path.read_text(encoding="utf-8")
     except OSError as exc:
         return None, f"cannot read chain file {path}: {exc}"
-    except json.JSONDecodeError as exc:
-        return None, f"{path} is not valid JSON: {exc}"
+    try:
+        return loads_json(text, subject=str(path)), None
+    except Up2Error as exc:
+        return None, str(exc)
 
 
 def _load_types(path_text: str) -> str | None:
@@ -848,8 +851,8 @@ def _read_inputs(items: Sequence[str]) -> tuple[dict[str, Any], str | None]:
 
 def _parse_json_or_text(raw: str) -> Any:
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+        return loads_json(raw)
+    except Up2Error:
         return raw
 
 

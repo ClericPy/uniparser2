@@ -22,7 +22,7 @@ CODES: Final[dict[str, str]] = {
     "UP2-E1001": "unknown operator",
     "UP2-E1002": "unknown or reserved action",
     "UP2-E1003": "py function is not in the allowlist",
-    "UP2-E1004": "stage length does not match the operator arity",
+    "UP2-E1004": "a stage's shape, or the JSON text that carries it, is not valid",
     "UP2-E1005": "parameter schema validation failed",
     "UP2-E1006": "reference targets an unknown root or a key that cannot be referenced",
     "UP2-E1007": "a literal was written where a reference is required",

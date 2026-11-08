@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import dumps, loads
+from uniparser2 import Up2Error, dumps, loads
 
 CHAINS: tuple[Any, ...] = (
     [["py", "strip", ""]],
@@ -75,4 +75,31 @@ def test_empty_chain_is_rejected() -> None:
 
     with pytest.raises(Up2Error) as info:
         loads([])
+    assert info.value.diagnostic.code == "UP2-E1004"
+
+
+@pytest.mark.parametrize(
+    "text", ['[["const",Infinity]]', '[["const",-Infinity]]', '[["const",NaN]]']
+)
+def test_a_non_json_constant_is_rejected(text: str) -> None:
+    """A chain is JSON data; Python's decoder takes these, JSON does not."""
+    with pytest.raises(Up2Error) as info:
+        loads(text)
+    assert info.value.diagnostic.code == "UP2-E1004"
+
+
+def test_malformed_text_is_e1004() -> None:
+    """A syntax error is one more bad chain: the public loader answers a code, not a decoder."""
+    with pytest.raises(Up2Error) as info:
+        loads("not json")
+    diagnostic = info.value.diagnostic
+    assert diagnostic.code == "UP2-E1004"
+    assert "is not valid JSON" in diagnostic.message
+    assert diagnostic.fix
+
+
+def test_dumps_refuses_a_non_finite_parameter() -> None:
+    """``allow_nan=False``: never write text a strict JSON parser rejects."""
+    with pytest.raises(Up2Error) as info:
+        dumps([["const", float("inf")]])
     assert info.value.diagnostic.code == "UP2-E1004"

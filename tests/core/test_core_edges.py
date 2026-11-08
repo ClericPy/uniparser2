@@ -66,6 +66,26 @@ def test_preview_of_a_host_object_names_its_class() -> None:
     assert values.is_json_value(response) is False
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_a_non_finite_float_is_not_a_json_value(bad: float) -> None:
+    """JSON has no Infinity / NaN, so a product carrying one is not exportable."""
+    from uniparser2.core.export import pack
+
+    assert values.is_json_value(bad) is False
+    assert values.is_json_value([1.0, bad]) is False
+    assert values.is_json_value({"r": bad}) is False
+    outcome = pack(bad)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2003"
+    assert "finite" in (outcome.fix or "")
+
+
+def test_a_finite_float_still_packs() -> None:
+    from uniparser2.core.export import pack
+
+    assert pack(1.5) == Ok(1.5)
+
+
 # ---------------------------------------------------------------- ast shape and serialization
 
 

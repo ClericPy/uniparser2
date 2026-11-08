@@ -232,7 +232,7 @@ up2 studio
 | No network | the page makes no external request (§1) |
 | Blocking does not freeze the UI | a synchronous call on the Python side blocks the JS call, so **a long run is split into two steps**: `run()` returns a `run_id` immediately and finishes synchronously (simplicity first), while the UI shows a busy state during the wait. If a single run ever exceeds 2 seconds, introduce "background thread + polling" then (**note**: the thread would then live only in the outer layer; the kernel still has no coroutines) |
 
-> **Pending (`07` §4-c)**: whether to provide a TUI as well. The minimal usable form of a TUI is "render columns ③④ of the three as text tables + hand the editor back to `$EDITOR`"; the effort is small, but the real usage frequency has to be confirmed first.
+> **Deferred (`07` §4-c: no TUI for now — decided, not pending)**: whether to provide a TUI as well. The minimal usable form of a TUI is "render columns ③④ of the three as text tables + hand the editor back to `$EDITOR`"; the effort is small, but the real usage frequency has to be confirmed first.
 
 ---
 

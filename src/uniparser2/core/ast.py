@@ -7,11 +7,11 @@ kind) lives in ``core.compile``.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from .errors import Up2Error, diag
+from .values import dumps_json, loads_json
 
 MIN_STAGE_LEN = 2
 MAX_STAGE_LEN = 3
@@ -167,19 +167,28 @@ def dumps(stages: Any) -> str:
     return _dumps_lists(_as_lists(stages))
 
 
+_CHAIN_TEXT: Final = "the chain text"
+"""The noun the strict-text diagnostics name: every stage of a chain arrives as chain text."""
+
+
 def _dumps_lists(stages: list[list[Any]]) -> str:
-    """The one JSON writing of an already-converted stage list."""
-    return json.dumps(stages, separators=(",", ":"), ensure_ascii=False)
+    """The one JSON writing of an already-converted stage list.
+
+    Delegates to the strict writer: ``allow_nan=False``, because the chain's own contract is "the
+    chain is data".
+    """
+    return dumps_json(stages, separators=(",", ":"), subject="the chain")
 
 
 def loads(source: Any, *, pointer: str = "") -> tuple[Stage, ...]:
     """Accept a JSON string / stage array / field-chain array, always return ``tuple[Stage, ...]``.
 
     The three input forms are idempotent. ``pointer`` is the JSON Pointer prefix of the chain, so a
-    sub-chain reports the location it really occupies.
+    sub-chain reports the location it really occupies. Text is read **strictly**: a malformed
+    document is ``UP2-E1004`` like any other bad chain, not a decoder exception.
     """
     if isinstance(source, (str, bytes)):
-        source = json.loads(source)
+        source = loads_json(source, subject=_CHAIN_TEXT)
     stages = _split_stages(source, pointer=pointer)
     return tuple(parse_stage(raw, pointer=f"{pointer}/{index}") for index, raw in enumerate(stages))
 

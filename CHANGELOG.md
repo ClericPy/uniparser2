@@ -43,6 +43,41 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Fixed
 
+- **`json`'s root expression works with the real engine**: `02` §6.2 says an empty expression is the
+  root, and `["json",""]` / `["json",null]` were tested — but only against the stub engine, which
+  answered `""` by itself. Real `jmespath` raises `EmptyExpressionError` for it, so the documented
+  spelling failed at compile time with `UP2-E1005`. The operator now maps an empty expression to
+  jmespath's `@`, and a real-engine test covers it.
+- **Every text boundary reads and writes strict JSON** (change `reject-non-json-text`): the store and
+  the sample runner still called `json.dumps` / `json.loads` bare, so a graph carrying `Infinity`
+  published successfully and landed in the chain file, a snapshot containing `Infinity` was read as
+  `inf`, and malformed chain text raised `JSONDecodeError` instead of `UP2-E1004`. `core.values` now
+  owns one strict pair (`dumps_json` / `loads_json`), and the fingerprint, every stored row and every
+  snapshot go through it: an illegal graph is refused **before** anything is written, and a corrupt
+  file is reported with its path. `up2.loads` answers `UP2-E1004` for malformed text as it already
+  did for a non-JSON constant. **Behaviour change**: JSON that Python accepts (`Infinity`) but JSON
+  does not is now an error on these paths too.
+- **A non-finite float is no longer a JSON value** (change `reject-non-finite-floats`): `inf` / `-inf`
+  / `nan` passed `is_json_value`, so they survived the single exit and reached the serializers —
+  `up2 trial --json` printed `{"state": "ok", "value": Infinity}`, which **no strict JSON parser
+  accepts**, and `dumps` wrote `[["const",Infinity]]`. The predicate now requires a finite float, so a
+  product carrying one (nested included) fails with `UP2-E2003` at the step that produced it, and
+  chain text obeys the same rule: `loads` rejects the constants Python's decoder permits and `dumps`
+  refuses to write them, both with `UP2-E1004`. The computation is untouched — `py.float("1e999")`
+  still answers `inf` mid-chain; only the boundary refuses it. **Behaviour change**: a chain whose
+  product was non-finite used to emit invalid JSON and now fails with a diagnostic.
+- **`py`'s scalar parameters are validated at compile time, not at the first run** (change
+  `literal-scalar-type-checks`): the check rejected a JSON *container* where a scalar belonged but
+  let a literal of another type through, so `["py","urljoin",42]`, `["py","slice","bogus"]`,
+  `["py","split",{"sep":",","maxsplit":"x"}]`, `["py","split",{"sep":42}]`,
+  `["py","replace",[42,"x"]]` and `["py","getattr",42]` all passed `up2 lint` and failed during
+  evaluation — `urljoin`'s with an **empty fix line**. The scalar table now carries the accepted
+  types, and the two strings the runtime parses (`slice.spec`, `split.maxsplit`) are parsed with the
+  runtime's own parser, so the compiler cannot fall behind it. `maxsplit` keeps its numeric strings
+  and its `null` / `""` "no limit" spellings, and parameters that only coerce (`join.sep`,
+  `parse_time.lang`, `default.value`) are untouched. **Behaviour narrowing**: a wrong-typed literal
+  now fails at lint with `UP2-E1005`, the parameter's pointer and a fix line; no chain that produced
+  a value changes meaning.
 - **`{"$lit": …}` escapes at every depth, and the diagnostics name it** (change
   `literal-escape-at-depth`): the escape was recognised only at the top of a parameter slot, so a
   literal starting with `$` had no legal spelling inside an array or an object — and one failure was
@@ -403,7 +438,11 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Planned
 
-- Chain-level structure (L2): `seed`/`parse`/`emit` node types, `select` fan-out, `result` assembly, the `pywebview` trial UI
+- The `up2 studio` trial bench (`06`, still a design draft). The chain-level structure it would
+  exercise has landed: the story model replaced the v0.1 graph (`03` D-03-3), so there are no
+  `seed` / `body` / `emit` node types and no `result` assembly, the fan-out is the `each` operator,
+  and `up2 trial` / `snapshot` / `test` run a story today. The `ui` extra stays declared for the
+  bench and is excluded from `all`.
 
 ## [0.1.0] - 2026-09-26
 

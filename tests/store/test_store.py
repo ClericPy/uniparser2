@@ -356,3 +356,41 @@ def test_replace_keeps_the_dataclass_frozen(tmp_path: Path) -> None:
         # ``setattr`` call is the same thing, hence the explicit form ruff prefers here).
         stored.__setattr__("status", "ready")
     assert replace(stored, status="ready").status == "ready"
+
+
+NON_FINITE_GRAPH: Graph = [["const", float("inf")]]
+
+
+def test_a_non_finite_graph_is_refused_before_any_write(
+    store: FileStore | SqliteStore,
+) -> None:
+    """The fingerprint is taken over strict JSON, so the gate runs before the row exists."""
+    with pytest.raises(Up2Error) as info:
+        store.publish(NON_FINITE_GRAPH, root_domain=DOMAIN, tpl_key=KEY, actor="me", source="agent")
+    assert info.value.diagnostic.code == "UP2-E1004"
+    assert "the graph" in info.value.diagnostic.message
+    assert store.get(DOMAIN, KEY) is None
+
+
+def test_a_corrupt_chain_file_is_a_coded_failure(tmp_path: Path) -> None:
+    """A hand-edited file is reported with its path, not with a decoder traceback."""
+    store = FileStore(tmp_path / "home")
+    path = store.chain_path(DOMAIN, KEY)
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(Up2Error) as info:
+        store.get(DOMAIN, KEY)
+    assert info.value.diagnostic.code == "UP2-E1004"
+    assert str(path) in info.value.diagnostic.message
+
+
+def test_a_corrupt_audit_line_is_a_coded_failure(tmp_path: Path) -> None:
+    """The audit file is read strictly too: one bad line names the file it is in."""
+    store = FileStore(tmp_path / "home")
+    path = store.audit_path(DOMAIN, KEY)
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json\n", encoding="utf-8")
+    with pytest.raises(Up2Error) as info:
+        store.audit("any-chain")
+    assert info.value.diagnostic.code == "UP2-E1004"
+    assert str(path) in info.value.diagnostic.message

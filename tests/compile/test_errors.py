@@ -51,14 +51,14 @@ def test_e1004_too_many_slots() -> None:
 def test_e1004_too_few_slots() -> None:
     """A 3-slot operator missing one slot: the error must name the arity and the slot roles."""
     with pytest.raises(Up2Error) as info:
-        compile_field([["py", "strip"]])
+        compile_field([["py"]])
     assert info.value.diagnostic.code == "UP2-E1004"
-    assert "py needs 3 slots, got 2" in info.value.diagnostic.message
+    assert "py needs 3 slots, got 1" in info.value.diagnostic.message
     assert "slot2=function, slot3=params" in info.value.diagnostic.fix
 
 
 def test_e1004_arity_two_rejects_third_slot() -> None:
-    assert compile_error([["const", "a", "b"]]) == "UP2-E1004"
+    assert compile_error([["py", "const", "a", "b"]]) == "UP2-E1004"
 
 
 def test_e1004_non_list_stage() -> None:
@@ -72,7 +72,7 @@ def test_e1005_missing_required_param() -> None:
 
 
 def test_e1005_unknown_named_param() -> None:
-    assert compile_error([["re", "group", {"pattern": "(a)", "oops": 1}]]) == "UP2-E1005"
+    assert compile_error([["py", "replace", {"old": "a", "new": "b"}]]) == "UP2-E1005"
 
 
 def test_e1005_too_many_positional_args() -> None:
@@ -137,7 +137,7 @@ def test_e1007_ref_kind_rejects_literal(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_e1012_too_many_steps() -> None:
-    chain = [["py", "strip", ""]] * 33
+    chain = [["py", "strip"]] * 33
     assert compile_error(chain) == "UP2-E1012"
 
 
@@ -169,7 +169,7 @@ def test_e1005_unsupported_directive_at_depth() -> None:
 def test_e1006_fix_names_the_literal_escape() -> None:
     """Typing `$100` needs the way out, not only the list of reserved roots."""
     with pytest.raises(Up2Error) as info:
-        compile_field([["py", "default", "$100"]])
+        compile_field([["py", "or", ["$100"]]])
     assert info.value.diagnostic.code == "UP2-E1006"
     assert "$lit" in info.value.diagnostic.fix
 
@@ -198,7 +198,7 @@ def _fake_missing_deps(instance: Op, action: str) -> tuple[str, ...]:
 def test_e1107_missing_optional_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(registry, "action_missing_deps", _fake_missing_deps)
     with pytest.raises(Up2Error) as info:
-        compile_field([["py", "html_to_markdown", ""]])
+        compile_field([["py", "html_to_markdown"]])
     assert info.value.diagnostic.code == "UP2-E1107"
     assert any("uniparser2[md]" in hint for hint in info.value.diagnostic.allowed)
 
@@ -237,7 +237,7 @@ def test_pointer_shape_is_uniform_across_operators() -> None:
     assert _pointer_of([["re", "nope", "x"]]) == "/0/1"
     assert _pointer_of([["py", "nope", ""]]) == "/0/1"
     assert _pointer_of([["re", "search", "("]]) == "/0/2/pattern"
-    assert _pointer_of([["re", "group", {"pattern": "a", "group": 9}]]) == "/0/2/group"
+    assert _pointer_of([["re", "search", ["a", 9]]]) == "/0/2/group"
     assert _pointer_of([["ctx", "set", "globals.x"]]) == "/0/2/path"
 
 

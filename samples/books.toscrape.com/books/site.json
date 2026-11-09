@@ -48,7 +48,7 @@
     {
       "name": "shelf",
       "body": {
-        "items": [["py", "flatten", ""], ["py", "slice", ":3"]]
+        "items": [["py","flatten"], ["py", "slice", ":3"]]
       },
       "type": "RequestBatch",
       "next": "book"
@@ -60,22 +60,22 @@
         "title": [
           ["py", "getattr", "text"],
           ["css1", "text", "div.product_main h1"],
-          ["py", "normalize_space", ""]
+          ["py","normalize_space"]
         ],
         "price": [
           ["py", "getattr", "text"],
           ["css1", "text", "p.price_color"],
-          ["py", "strip", ""]
+          ["py","strip"]
         ],
         "availability": [
           ["py", "getattr", "text"],
           ["css1", "text", "p.instock.availability"],
-          ["py", "normalize_space", ""]
+          ["py","normalize_space"]
         ],
         "description": [
           ["py", "getattr", "text"],
           ["css1", "text", "#product_description + p"],
-          ["py", "normalize_space", ""]
+          ["py","normalize_space"]
         ]
       },
       "type": "Book"

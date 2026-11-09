@@ -15,20 +15,20 @@ import pytest
 from uniparser2 import Up2Error, dumps, loads
 
 CHAINS: tuple[Any, ...] = (
-    [["py", "strip", ""]],
+    [["py", "strip"]],
     [["json", "data.html"]],
-    [["const", "article"]],
-    [["py", "int", ""]],
-    [["re", "group", {"pattern": "(a)-(b)", "group": 2}]],
+    [["py", "const", "article"]],
+    [["py", "int"]],
+    [["re", "search", ["(a)-(b)", 2]]],
     [
-        ["py", "upper", ""],
+        ["py", "upper"],
         ["ctx", "set", "locals._up"],
-        ["py", "lower", ""],
+        ["py", "lower"],
         ["ctx", "get", "locals._up"],
     ],
     [["ctx", "dict", {"title": "locals._t", "base": "globals.base"}]],
     [["py", "urljoin", "$globals.base_url"]],
-    [["try", "skip"], ["py", "int", ""]],
+    [["try", "skip"], ["py", "int"]],
     [["$in", ["py", "getattr", "url"]]],
 )
 
@@ -46,28 +46,28 @@ def test_second_round_trip_is_byte_identical(chain: Any) -> None:
 
 
 def test_loads_accepts_text_and_structures() -> None:
-    assert loads('[["py","strip",""]]') == loads([["py", "strip", ""]])
-    assert loads([["py", "strip", ""]]) == loads(dumps([["py", "strip", ""]]))
+    assert loads('[["py","strip"]]') == loads([["py", "strip"]])
+    assert loads([["py", "strip"]]) == loads(dumps([["py", "strip"]]))
 
 
 def test_loads_single_stage_sugar_matches_wrapped_form() -> None:
-    assert loads(["py", "strip", ""]) == loads([["py", "strip", ""]])
+    assert loads(["py", "strip"]) == loads([["py", "strip"]])
 
 
 def test_loads_accepts_the_source_by_keyword() -> None:
     """``loads`` is public (``core.__all__``), so its single parameter is not positional-only."""
-    assert loads(source=[["py", "strip", ""]]) == loads([["py", "strip", ""]])
+    assert loads(source=[["py", "strip"]]) == loads([["py", "strip"]])
 
 
 def test_two_slot_and_three_slot_forms_are_preserved() -> None:
     """2-slot operators (``const``/``json``) and 3-slot operators (``py``) keep their length."""
-    assert dumps(loads([["const", "article"]])) == '[["const","article"]]'
+    assert dumps(loads([["py", "const", "article"]])) == '[["py","const","article"]]'
     assert dumps(loads([["json", "data.html"]])) == '[["json","data.html"]]'
-    assert dumps(loads([["py", "strip", ""]])) == '[["py","strip",""]]'
+    assert dumps(loads([["py", "strip"]])) == '[["py","strip"]]'
 
 
 def test_non_ascii_is_not_escaped() -> None:
-    assert "café" in dumps(loads([["const", "café"]]))
+    assert "café" in dumps(loads([["py", "const", "café"]]))
 
 
 def test_empty_chain_is_rejected() -> None:
@@ -79,7 +79,7 @@ def test_empty_chain_is_rejected() -> None:
 
 
 @pytest.mark.parametrize(
-    "text", ['[["const",Infinity]]', '[["const",-Infinity]]', '[["const",NaN]]']
+    "text", ['[["py","const",Infinity]]', '[["py","const",-Infinity]]', '[["py","const",NaN]]']
 )
 def test_a_non_json_constant_is_rejected(text: str) -> None:
     """A chain is JSON data; Python's decoder takes these, JSON does not."""
@@ -101,5 +101,5 @@ def test_malformed_text_is_e1004() -> None:
 def test_dumps_refuses_a_non_finite_parameter() -> None:
     """``allow_nan=False``: never write text a strict JSON parser rejects."""
     with pytest.raises(Up2Error) as info:
-        dumps([["const", float("inf")]])
+        dumps([["py", "const", float("inf")]])
     assert info.value.diagnostic.code == "UP2-E1004"

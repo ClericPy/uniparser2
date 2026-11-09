@@ -30,7 +30,6 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
     pairs = registry.declared_pairs()
     ops = {op_name for op_name, _ in pairs}
     assert ops == {
-        "const",
         "each",
         "css",
         "css1",
@@ -42,28 +41,26 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
         "ctx",
         "code",
     }
-    assert len(pairs) == 74
-    assert len([pair for pair in pairs if pair[0] == "py"]) == 42
+    assert len(pairs) == 77
+    assert len([pair for pair in pairs if pair[0] == "py"]) == 46
     assert len([pair for pair in pairs if pair[0] == "css"]) == 8
     assert len([pair for pair in pairs if pair[0] == "css1"]) == 8
     assert len([pair for pair in pairs if pair[0] == "xpath"]) == 3
     assert len([pair for pair in pairs if pair[0] == "re"]) == 3
     assert len([pair for pair in pairs if pair[0] == "ctx"]) == 5
     assert len([pair for pair in pairs if pair[0] == "json"]) == 1
-    assert len([pair for pair in pairs if pair[0] == "const"]) == 1
     assert len([pair for pair in pairs if pair[0] == "each"]) == 1
     assert len([pair for pair in pairs if pair[0] == "udf"]) == 1
     assert len([pair for pair in pairs if pair[0] == "code"]) == 1
     assert ("re", "search") in pairs
     assert ("ctx", "dict") in pairs
     assert ("ctx", "list") in pairs
-    assert ("const", "const") in pairs
     # `each` is a 2-slot operator with a single action, so its action name never appears in a chain
     # either; its argument is a field map, which the compiler compiles recursively.
     assert ("each", "each") in pairs
     # The former ``time`` operator has been folded into ``py``; the old ``json.$get`` action slot is
     # gone together with the 2-slot operator.
-    assert ("py", "parse_time") in pairs
+    assert ("py", "strptime") in pairs
     assert ("py", "strftime") in pairs
     # The dict-key twin of `getitem` is gone: subscripting is one action (Python's `__getitem__`).
     assert ("py", "getitem") in pairs
@@ -81,7 +78,6 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
 def test_report_exposes_action_params_and_dependencies() -> None:
     report = {item.name: item for item in registry.report()}
     assert report["py"].arity == 3
-    assert report["const"].arity == 2
     assert report["each"].arity == 2
     assert report["each"].slots == ("fields",)
     # Slot semantics are declared by the operator: a 3-slot operator always carries its action in
@@ -93,7 +89,7 @@ def test_report_exposes_action_params_and_dependencies() -> None:
     assert report["json"].slots == ("jmespath path",)
     actions = {action.name: action for action in report["py"].actions}
     assert [param.name for param in actions["replace"].params] == ["old", "new"]
-    assert actions["strip"].params == ()
+    assert actions["upper"].params == ()
 
 
 def test_report_dicts_is_json_shaped() -> None:
@@ -118,8 +114,8 @@ def test_report_states_the_parameter_slot_shape() -> None:
     report = {item.name: item for item in registry.report()}
     py_actions = {action.name: action for action in report["py"].actions}
     assert py_actions["slice"].param_form is registry.ParamForm.VALUE
-    assert py_actions["split"].param_form is registry.ParamForm.NAMED
-    assert py_actions["strip"].param_form is registry.ParamForm.NONE
+    assert py_actions["replace"].param_form is registry.ParamForm.ARRAY
+    assert py_actions["upper"].param_form is registry.ParamForm.NONE
     # The action slot provides `attr`, so only the selector is written in slot 3.
     css_actions = {action.name: action for action in report["css1"].actions}
     assert css_actions["@<attribute>"].param_form is registry.ParamForm.VALUE
@@ -128,8 +124,8 @@ def test_report_states_the_parameter_slot_shape() -> None:
 def test_report_dicts_carries_the_parameter_slot_shape() -> None:
     payload = {item["name"]: item for item in registry.report_dicts()}
     actions = {action["name"]: action for action in payload["re"]["actions"]}
-    assert actions["group"]["param_form"] == "named"
-    assert actions["search"]["param_form"] == "value"
+    assert actions["search"]["param_form"] == "array"
+    assert actions["findall"]["param_form"] == "value"
 
 
 def test_missing_deps_detects_absent_module() -> None:

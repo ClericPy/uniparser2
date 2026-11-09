@@ -1,17 +1,16 @@
 """``re`` operator (design doc 02 §6.3).
 
 **Slots** (see ``02`` §1): ``["re", mode, pattern]`` — the mode is in slot 2 and the pattern in
-slot 3. Three modes (replacement and splitting are delegated to ``py``):
+slot 3. Three modes:
 
 | mode | semantics |
 |---|---|
-| ``search`` | the whole first match (``re.search(...).group(0)``) |
-| ``group`` | one capture group of that match (slot 3: ``{"pattern": …, "group": name or index}``) |
-| ``findall`` | every match (``re.findall``) |
+| ``search`` | the first match (``group(0)``), or one group with ``[pattern, group]`` |
+| ``findall`` | every match (``re.findall``; Python's tuples are encoded as arrays) |
+| ``sub`` | replace every match (``[pattern, replacement]``, Python's ``\\N`` / ``\\g<name>``) |
 
 > The name is ``search`` rather than ``match``: Python's ``re.match`` is **anchored at the start**,
-> whereas the semantics here are "find the first one from the start" = ``re.search`` (the ``$match``
-> note in the ``04`` draft says exactly "whole match group(0)").
+> whereas the semantics here are "find the first one from the start" = ``re.search``.
 
 **Current state of ReDoS protection (important)**: Python 3.14's ``re`` has **no** ``timeout``
 parameter (measured: the ``re.search`` signature is ``(pattern, string, flags=0)``), so there is no
@@ -34,8 +33,8 @@ from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import type_name
 
 _SEARCH: Final = "search"
-_GROUP: Final = "group"
 _FINDALL: Final = "findall"
+_SUB: Final = "sub"
 
 # Matches only "the whole group is one quantified atom and the whole group is itself quantified":
 # `(a+)+` / `(\w*)*` / `(?:[a-z]+)+`. `(\d+\.)+` has several atoms inside, so it does not match
@@ -66,21 +65,26 @@ def reject_nested_quantifier(pattern: str, /, *, pointer: str = "") -> None:
 
 @op("re")
 class Regex(Op):
-    """Regex matching: ``search`` whole match, ``group`` capture group, ``findall`` all matches."""
+    """Regex matching: ``search`` (one group), ``findall``, ``sub``."""
 
-    summary = "Regex matching (search / group / findall)"
+    summary = "Regex matching (search / findall / sub)"
     slot_roles = ("mode", "pattern")
     actions: ClassVar[Mapping[str, ActionSpec]] = {
         _SEARCH: ActionSpec(
-            _SEARCH, "the whole first match group(0)", (ParamSpec("pattern", Kind.LITERAL),)
-        ),
-        _GROUP: ActionSpec(
-            _GROUP,
-            "take the given capture group",
-            (ParamSpec("pattern", Kind.LITERAL), ParamSpec("group", Kind.LITERAL)),
+            _SEARCH,
+            "the first match, or one of its capture groups",
+            (
+                ParamSpec("pattern", Kind.LITERAL),
+                ParamSpec("group", Kind.LITERAL, required=False, default=None),
+            ),
         ),
         _FINDALL: ActionSpec(
             _FINDALL, "findall: every match", (ParamSpec("pattern", Kind.LITERAL),)
+        ),
+        _SUB: ActionSpec(
+            _SUB,
+            "replace every match (Python's \\N / \\g<name> in the replacement)",
+            (ParamSpec("pattern", Kind.LITERAL), ParamSpec("replacement", Kind.LITERAL)),
         ),
     }
 
@@ -100,8 +104,14 @@ class Regex(Op):
                     pointer=f"{pointer}/pattern",
                 )
             ) from exc
-        if action == _GROUP:
-            _check_group(compiled, _literal(params, "group"), pointer=f"{pointer}/group")
+        if action == _SEARCH:
+            group = _literal(params, "group")
+            if group is not None:
+                _check_group(compiled, group, pointer=f"{pointer}/group")
+        elif action == _SUB:
+            _check_replacement(
+                compiled, _literal_text(params, "replacement"), pointer=f"{pointer}/replacement"
+            )
         return compiled
 
     def evaluate(self, call: Call) -> Outcome:
@@ -109,18 +119,28 @@ class Regex(Op):
             return Failed(
                 code="UP2-E2002",
                 reason=f"re.{call.action} needs a str input, got {type_name(call.value)}",
-                fix="turn the upstream value into text with py.strip_tags / py.getitem first",
+                fix="turn the upstream value into text with py.str / py.getitem first",
             )
         compiled: re.Pattern[str] = call.payload
         if call.action == _SEARCH:
-            found = compiled.search(call.value)
-            return Ok(found.group(0)) if found is not None else Ok("")
+            return _search(compiled, call.value, call.params.get("group"))
         if call.action == _FINDALL:
-            return Ok(compiled.findall(call.value))
-        found_group = compiled.search(call.value)
-        if found_group is None:
-            return Ok("")
-        return Ok(found_group.group(call.params["group"]))
+            return _findall(compiled, call.value)
+        return Ok(compiled.sub(str(call.params["replacement"]), call.value))
+
+
+def _search(compiled: re.Pattern[str], text: str, group: Any) -> Outcome:
+    found = compiled.search(text)
+    if found is None:
+        return Ok("")
+    return Ok(found.group(0 if group is None else group))
+
+
+def _findall(compiled: re.Pattern[str], text: str) -> Outcome:
+    """Python's ``findall`` with tuples encoded as arrays (the value domain has no tuple)."""
+    if compiled.groups >= 2:
+        return Ok([list(match) for match in compiled.findall(text)])
+    return Ok(compiled.findall(text))
 
 
 def _check_group(compiled: re.Pattern[str], group: Any, *, pointer: str) -> None:
@@ -161,6 +181,21 @@ def _check_group(compiled: re.Pattern[str], group: Any, *, pointer: str) -> None
         )
 
 
+def _check_replacement(compiled: re.Pattern[str], replacement: str, *, pointer: str) -> None:
+    """Every ``\\N`` / ``\\g<name>`` is checked against the pattern at compile time."""
+    try:
+        compiled.sub(replacement, "")
+    except (re.error, IndexError) as exc:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"the replacement is unusable: {exc}",
+                fix="fix the group references, or escape a literal backslash as \\\\",
+                pointer=pointer,
+            )
+        ) from exc
+
+
 def _literal(params: Mapping[str, Param], name: str) -> Any:
     value = params[name]
     return value.value if isinstance(value, Lit) else value
@@ -173,7 +208,7 @@ def _literal_text(params: Mapping[str, Param], name: str) -> str:
             diag(
                 "UP2-E1005",
                 f"parameter {name!r} must be a string, got {type_name(text)}",
-                fix="write the pattern as a string",
+                fix="write it as a string",
                 pointer=f"/2/{name}",
             )
         )

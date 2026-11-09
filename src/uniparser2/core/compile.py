@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping, Sequence
-from enum import StrEnum
 from typing import Any, Final
 
 from . import registry
 from .ast import (
-    MIN_STAGE_LEN,
+    MAX_STAGE_LEN,
     REF_OPERATOR,
     TRY_OPERATOR,
     CompiledField,
@@ -28,7 +27,7 @@ from .ast import (
 )
 from .errors import Up2Error, diag
 from .limits import MAX_EACH_DEPTH, MAX_FIELDS_PER_MAP, MAX_STEPS_PER_FIELD
-from .refs import LIT_DIRECTIVE, RESERVED_ROOTS, is_ref_text, parse_ref
+from .refs import LIT_DIRECTIVE, OBJ_ROOT, RESERVED_ROOTS, is_ref_text, parse_ref
 from .values import type_name
 
 logger = logging.getLogger("uniparser2")
@@ -183,6 +182,7 @@ def compile_stage(
     params = _build_params(
         spec,
         instance.params_source(action_text, _slot(stage, param_slot)),
+        present=stage.length == instance.arity,
         preset=instance.action_params(action, action_text),
         pointer=f"{pointer}/{param_slot}",
         products=tuple(products),
@@ -233,7 +233,7 @@ def _compile_ref_field(
     """A chain written as a whole-chain reference: one reference, no stage (`03` §2)."""
     ref = parse_ref(str(source), pointer=pointer)
     _check_refs({"ref": ref}, products=tuple(products), pointer=pointer)
-    marker = Stage(op=REF_OPERATOR, slot1=ref, slot2=None, length=MIN_STAGE_LEN)
+    marker = Stage(op=REF_OPERATOR, slot1=ref, slot2=None, length=2)
     return CompiledField(stages=(), source=(marker,), name=name, ref=ref)
 
 
@@ -245,7 +245,7 @@ def _compile_literal_field(
     A task item's `next` is a step name, exactly like the step-level `next`, so the string is the
     value the field holds -- not a JSON document to parse and not a reference (`03` §4.1.1).
     """
-    literal = Stage(op="const", slot1=source, slot2=None, length=MIN_STAGE_LEN)
+    literal = Stage(op="py", slot1="const", slot2=source, length=MAX_STAGE_LEN)
     compiled = compile_stage(literal, index=0, products=products, pointer=pointer)
     return CompiledField(stages=(compiled,), source=(literal,), name=name)
 
@@ -275,7 +275,7 @@ def _opening_ref_stage(raw: Any, *, pointer: str) -> Stage:
         op=REF_OPERATOR,
         slot1=parse_ref(str(raw), pointer=pointer),
         slot2=None,
-        length=MIN_STAGE_LEN,
+        length=2,
     )
 
 
@@ -294,157 +294,89 @@ def _slot(stage: Stage, index: int | None) -> Any:
 
 
 def _check_arity(instance: registry.Op, stage: Stage, *, pointer: str) -> None:
-    """The stage length must be **exactly** the arity declared by the operator (2 or 3)."""
-    if stage.length == instance.arity:
+    """The stage length is the operator's arity, or one shorter when the parameter is omitted."""
+    if stage.length in (instance.arity, instance.arity - 1):
         return
     shape = ", ".join(f"slot{i + 2}={role}" for i, role in enumerate(instance.slot_roles))
     raise Up2Error(
         diag(
             "UP2-E1004",
             f"{stage.op} needs {instance.arity} slots, got {stage.length}",
-            fix=f"this operator's slots are {shape}; for an action with no parameters, "
-            'write "" in slot 3',
+            fix=f"this operator's slots are {shape}; drop the parameter slot when the action "
+            "declares nothing required",
             pointer=pointer,
         )
     )
-
-
-class _Shape(StrEnum):
-    """Shape of the parameter slot (the four shapes of 02 §4 plus three boundary cases)."""
-
-    DEFAULTS = "defaults"
-    DIRECTIVE = "directive"
-    NO_PARAMS = "no_params"
-    SINGLE = "single"
-    NAMED = "named"
-    POSITIONAL = "positional"
-    FIRST = "first"
-
-
-def _is_empty_placeholder(raw: Any, active: Sequence[registry.ParamSpec]) -> bool:
-    """``None``, or an empty string when nothing is required, means "no parameter passed".
-
-    Draft ``04`` writes "no parameters" as an empty-string placeholder (``["py","strip",""]``,
-    ``["udf","fn",""]``), so an empty string has to be read as "not passed"; but with **required
-    parameters** an empty string is a real value (the empty separator of ``["py","split",""]`` must
-    be able to fail at runtime instead of being taken as not passed).
-    """
-    if raw is None:
-        return True
-    return raw == "" and not any(param.required for param in active)
-
-
-def _classify(active: Sequence[registry.ParamSpec], raw: Any) -> _Shape:
-    if _is_empty_placeholder(raw, active):
-        return _Shape.DEFAULTS
-    if isinstance(raw, dict) and _directive_name(raw) is not None:
-        return _Shape.DIRECTIVE
-    if not active:
-        return _Shape.NO_PARAMS
-    if len(active) == 1:
-        return _Shape.SINGLE
-    if isinstance(raw, dict):
-        return _Shape.NAMED
-    if isinstance(raw, (list, tuple)):
-        return _Shape.POSITIONAL
-    return _Shape.FIRST
-
-
-def _first_param(active: Sequence[registry.ParamSpec]) -> registry.ParamSpec:
-    """The first parameter still to fill (only called once parameters are known to exist)."""
-    first = next(iter(active), None)
-    if first is None:  # pragma: no cover - _classify already rejects zero parameters
-        raise Up2Error(diag("UP2-E1005", "this action has no parameters", pointer=""))
-    return first
 
 
 def _build_params(
     spec: registry.ActionSpec,
     raw: Any,
     *,
+    present: bool,
     preset: Mapping[str, Param],
     pointer: str,
     products: tuple[str, ...] = (),
     depth: int = 0,
 ) -> dict[str, Param]:
-    """The four shapes of the parameter slot -> named parameters (02 §4).
+    """Bind slot 3 by the action's declaration (02 §4).
 
-    Classify first, then dispatch: the order of discrimination is fixed and leaves no ambiguity.
-
-    ``preset`` holds the **parameters the action slot already provided** (``css``'s ``@href``
-    providing ``attr``, for example); they take no part in the parameter-slot mapping and only join
-    the final merge. ``products`` / ``depth`` are the compile-time context a nested field map
-    inherits (``each``'s argument).
+    A parameter slot that is **absent** takes the defaults (``["py","strip"]``); a slot that is
+    written binds the declared parameters **positionally**: one value for a one-parameter action,
+    or one array for an action with several. An object is a data map, never a parameter list, so
+    the only object accepted here is the ``$lit`` directive.
     """
     active = tuple(param for param in spec.params if param.name not in preset)
-    shape = _classify(active, raw)
-    if shape is _Shape.DEFAULTS:
+    if not present:
         return _fill_defaults(
             spec, active, {}, preset=preset, pointer=pointer, products=products, depth=depth
         )
-    if shape is _Shape.DIRECTIVE:
-        directive = _directive_name(raw) or ""
-        return _directive_params(spec, active, raw, directive, preset=preset, pointer=pointer)
-    if shape is _Shape.NO_PARAMS:
+    if not active:
         raise Up2Error(
             diag(
-                "UP2-E1005",
-                f"action {spec.name!r} accepts no parameters, but {raw!r} was given",
-                fix='drop slot 3, or write "" (the empty placeholder)',
+                "UP2-E1004",
+                f"action {spec.name!r} takes no parameter, but {raw!r} was written in the slot",
+                fix="drop the slot: the action has nothing left to configure",
                 pointer=pointer,
             )
         )
-    if shape is _Shape.SINGLE:
-        first = _first_param(active).name
+    if isinstance(raw, dict) and _directive_name(raw) is not None:
+        directive = _directive_name(raw) or ""
+        return _directive_params(spec, active, raw, directive, preset=preset, pointer=pointer)
+    if len(active) == 1:
         return _fill_defaults(
             spec,
             active,
-            {first: raw},
+            {active[0].name: raw},
             preset=preset,
             pointer=pointer,
             products=products,
             depth=depth,
         )
-    if shape is _Shape.NAMED:
-        return _named_params(
-            spec, active, raw, preset=preset, pointer=pointer, products=products, depth=depth
-        )
-    if shape is _Shape.POSITIONAL:
-        return _positional_params(
-            spec, active, raw, preset=preset, pointer=pointer, products=products, depth=depth
-        )
-    # A scalar given to a multi-parameter action lands on the first parameter, and the rest take
-    # their defaults (["time","$parse","zh"], for example).
-    first = _first_param(active).name
-    return _fill_defaults(
-        spec, active, {first: raw}, preset=preset, pointer=pointer, products=products, depth=depth
-    )
-
-
-def _named_params(
-    spec: registry.ActionSpec,
-    active: Sequence[registry.ParamSpec],
-    raw: Mapping[str, Any],
-    *,
-    preset: Mapping[str, Param],
-    pointer: str,
-    products: tuple[str, ...] = (),
-    depth: int = 0,
-) -> dict[str, Param]:
-    declared_names = {param.name for param in active}
-    unknown = [key for key in raw if key not in declared_names]
-    if unknown:
+    if isinstance(raw, dict):
         raise Up2Error(
             diag(
                 "UP2-E1005",
-                f"unknown parameters: {', '.join(map(repr, unknown))}",
-                fix="use one of the following parameter names, or a positional array",
+                f"action {spec.name!r} takes its {len(active)} parameters positionally, "
+                "got an object",
+                fix='write the parameters as one array, for example ["py","replace",[old,new]]',
                 pointer=pointer,
-                allowed=tuple(param.name for param in active),
             )
         )
+    if isinstance(raw, (list, tuple)):
+        return _positional_params(
+            spec, active, raw, preset=preset, pointer=pointer, products=products, depth=depth
+        )
+    # A scalar given to a multi-parameter action fills the first parameter; the rest take their
+    # defaults (xpath's expression without a namespace map, for example).
     return _fill_defaults(
-        spec, active, dict(raw), preset=preset, pointer=pointer, products=products, depth=depth
+        spec,
+        active,
+        {active[0].name: raw},
+        preset=preset,
+        pointer=pointer,
+        products=products,
+        depth=depth,
     )
 
 
@@ -458,25 +390,42 @@ def _positional_params(
     products: tuple[str, ...] = (),
     depth: int = 0,
 ) -> dict[str, Param]:
+    required = sum(1 for param in active if param.required)
     if len(raw) > len(active):
         raise Up2Error(
             diag(
                 "UP2-E1005",
-                f"{len(raw)} positional parameters were given, the action accepts "
-                f"only {len(active)}",
-                fix="drop the extra parameters, or use a named object",
+                f"{len(raw)} parameters were given, the action accepts at most {len(active)}",
+                fix=f"keep the first {len(active)}, in the declared order: {_param_order(active)}",
+                pointer=pointer,
+            )
+        )
+    if len(raw) < required:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"{len(raw)} parameters were given, the action needs at least {required}",
+                fix=f"write them in the declared order: {_param_order(active)}",
                 pointer=pointer,
                 allowed=tuple(param.name for param in active),
             )
         )
+    values = {param.name: value for param, value in zip(active, raw, strict=False)}
     return _fill_defaults(
         spec,
         active,
-        {param.name: value for param, value in zip(active, raw, strict=False)},
+        values,
         preset=preset,
         pointer=pointer,
         products=products,
         depth=depth,
+        keys={param.name: index for index, param in enumerate(active)},
+    )
+
+
+def _param_order(active: Sequence[registry.ParamSpec]) -> str:
+    return ", ".join(
+        f"{param.name} ({'required' if param.required else 'optional'})" for param in active
     )
 
 
@@ -489,15 +438,17 @@ def _fill_defaults(
     pointer: str,
     products: tuple[str, ...] = (),
     depth: int = 0,
+    keys: Mapping[str, int] | None = None,
 ) -> dict[str, Param]:
     """Merge the parameters the action slot provided, fill in defaults, and resolve by kind."""
     params: dict[str, Param] = dict(preset)
     for param in active:
         if param.name in values:
+            suffix = str(keys[param.name]) if keys is not None else param.name
             params[param.name] = _resolve_param(
                 param,
                 values[param.name],
-                pointer=f"{pointer}/{param.name}",
+                pointer=f"{pointer}/{suffix}",
                 products=products,
                 depth=depth,
             )
@@ -531,6 +482,10 @@ def _resolve_param(
     """
     if spec.kind is registry.Kind.FIELDS:
         return _resolve_field_map(spec, raw, pointer=pointer, products=products, depth=depth)
+    if spec.kind is registry.Kind.FIELDS_OR_CHAIN:
+        return _resolve_field_map_or_chain(
+            spec, raw, pointer=pointer, products=products, depth=depth
+        )
     if spec.kind is registry.Kind.LITERAL:
         return Lit(raw)
     if isinstance(raw, list):
@@ -572,6 +527,32 @@ def _quoted_literal(raw: Mapping[str, Any], *, pointer: str) -> Param | None:
             )
         )
     return Lit(raw[directive])
+
+
+def _resolve_field_map_or_chain(
+    spec: registry.ParamSpec,
+    raw: Any,
+    *,
+    pointer: str,
+    products: tuple[str, ...],
+    depth: int,
+) -> dict[str, CompiledField] | CompiledField:
+    """``each``'s parameter: an object is a field map, an array is one chain (design D8)."""
+    if isinstance(raw, Mapping):
+        return _resolve_field_map(spec, raw, pointer=pointer, products=products, depth=depth)
+    if isinstance(raw, (list, tuple)):
+        return compile_field(
+            raw, products=products, depth=depth + 1, pointer=pointer, name=spec.name
+        )
+    raise Up2Error(
+        diag(
+            "UP2-E1005",
+            f"{spec.name} must be a field map or one chain, got {type_name(raw)}",
+            fix='write {"title": [["py","strip"]]} for one dictionary per element, or '
+            '[[["py","strip"]]] for one value per element',
+            pointer=pointer,
+        )
+    )
 
 
 def _resolve_field_map(
@@ -735,6 +716,15 @@ def _check_refs(params: Mapping[str, Param], *, products: tuple[str, ...], point
     thing in both positions (`03` §2).
     """
     for ref in _iter_refs(params):
+        if ref.root == OBJ_ROOT and ref.path:
+            raise Up2Error(
+                diag(
+                    "UP2-E1006",
+                    f"{ref.raw} walks into `obj`, which names the whole value",
+                    fix='read a field with ["py","getitem",K] after "$obj", or use $locals',
+                    pointer=pointer,
+                )
+            )
         if ref.root in RESERVED_ROOTS:
             continue
         if ref.root in products:

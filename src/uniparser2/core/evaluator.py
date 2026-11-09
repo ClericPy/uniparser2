@@ -18,7 +18,7 @@ from typing import Any, Final
 from . import registry
 from .ast import REF_OPERATOR, TRY_OPERATOR, CompiledField, CompiledStage, Lit, Param, Ref, Stage
 from .errors import Failed, Ok, Outcome
-from .refs import Scope
+from .refs import OBJ_ROOT, Scope
 from .trace import Trace, elapsed_ms, stamp
 
 logger = logging.getLogger("uniparser2")
@@ -131,7 +131,7 @@ def _invoke(
             reason=f"operator {stage.op_name!r} is not registered",
             fix="import uniparser2.ops again to register the built-in operators",
         )
-    resolved = resolve_params(stage.params, scope)
+    resolved = resolve_params(stage.params, scope, value)
     if isinstance(resolved, (Ok, Failed)):
         return resolved
     call = registry.Call(
@@ -157,20 +157,37 @@ def _invoke(
         )
 
 
-def resolve_params(params: Mapping[str, Param], scope: Scope) -> Mapping[str, Any] | Outcome:
+_NO_STAGE_VALUE: Final = object()
+"""Marks "no stage value here": a read of ``$obj`` then fails instead of yielding a value."""
+
+
+def resolve_params(
+    params: Mapping[str, Param], scope: Scope, value: Any = _NO_STAGE_VALUE
+) -> Mapping[str, Any] | Outcome:
     """Read the references in the parameter tree into values.
 
-    Any reference that is not ``Ok`` short-circuits the whole stage. This is also how the story
-    layer resolves a ``call`` step's ``with`` arguments: the same leaves, the same scope.
+    ``value`` is the value the stage received, which is what ``$obj`` names; the story layer
+    resolves a ``call`` step's ``with`` arguments without one, so ``$obj`` is a coded failure there.
+    Any reference that is not ``Ok`` short-circuits the whole stage.
     """
     try:
-        return {key: _resolve_value(item, scope) for key, item in params.items()}
+        return {key: _resolve_value(item, scope, value) for key, item in params.items()}
     except _UnwindError as unwind:
         return unwind.outcome
 
 
-def _resolve_value(node: Any, scope: Scope) -> Any:
+def _resolve_value(node: Any, scope: Scope, value: Any = _NO_STAGE_VALUE) -> Any:
     if isinstance(node, Ref):
+        if node.root == OBJ_ROOT:
+            if value is _NO_STAGE_VALUE:
+                raise _UnwindError(
+                    Failed(
+                        code="UP2-E2001",
+                        reason="$obj names the value a stage received, and this is not a stage",
+                        fix='a call step argument reads a scope; use "$in" / "$locals" there',
+                    )
+                )
+            return value
         outcome = scope.read(node)
         if isinstance(outcome, Ok):
             return outcome.value
@@ -178,9 +195,9 @@ def _resolve_value(node: Any, scope: Scope) -> Any:
     if isinstance(node, Lit):
         return node.value
     if isinstance(node, list):
-        return [_resolve_value(item, scope) for item in node]
+        return [_resolve_value(item, scope, value) for item in node]
     if isinstance(node, dict):
-        return {key: _resolve_value(item, scope) for key, item in node.items()}
+        return {key: _resolve_value(item, scope, value) for key, item in node.items()}
     return node
 
 

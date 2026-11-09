@@ -218,7 +218,7 @@ def coverage_cases() -> list[Case]:
         Case(
             "const",
             "const",
-            [["const", "article"]],
+            [["py", "const", "article"]],
             None,
             "Core",
             1,
@@ -229,7 +229,7 @@ def coverage_cases() -> list[Case]:
         Case(
             "each",
             "each",
-            [["each", {"title": [["py", "strip", ""]], "size": [["py", "len", ""]]}]],
+            [["each", {"title": [["py", "strip"]], "size": [["py", "len"]]}]],
             ["  a  ", "bb"],
             "Core",
             1,
@@ -238,7 +238,7 @@ def coverage_cases() -> list[Case]:
         Case(
             "code",
             "run",
-            [["code", {"src": "ctx.locals.prefix + normalize_space(obj)"}]],
+            [["code", "ctx.locals.prefix + normalize_space(obj)"]],
             HTML_DOC,
             "Advanced",
             1,
@@ -272,7 +272,7 @@ def coverage_cases() -> list[Case]:
         Case(
             "re",
             "group",
-            [["re", "group", {"pattern": r"(\d{4})-(\d{2})", "group": 2}]],
+            [["re", "search", [r"(\d{4})-(\d{2})", 2]]],
             "2026-09",
             "Common",
             1,
@@ -335,7 +335,7 @@ def coverage_cases() -> list[Case]:
         Case(
             "udf",
             _DYNAMIC,
-            [["udf", "demo_upper", ""]],
+            [["udf", "demo_upper"]],
             "hello",
             "Common",
             1,
@@ -371,36 +371,14 @@ def _py_cases() -> list[Case]:
         ),
         ("Core", 7, "len", [1, 2, 3], "", "length"),
         ("Core", 8, "slice", "abcdef", ":3", 'slice: ":3" / "1:5" / "::-1"'),
-        (
-            "Core",
-            9,
-            "default",
-            "",
-            "fallback value",
-            'fallback for None / "" only (a missing upstream is a failure, not a value)',
-        ),
         ("Common", 1, "getitem", ["a", "b"], 1, "list index (out of range ⇒ UP2-E2018)"),
         ("Common", 2, "last", [1, 2], "", "last item"),
         ("Common", 3, "replace", "old document", ["old", "new"], "replace all (positional array)"),
         ("Common", 4, "split", "a,b,c", ",", "split on a separator"),
         ("Common", 5, "join", ["a", "b"], "-", "join a list"),
-        ("Common", 6, "strip_tags", "<b>text</b>", "", "strip HTML tags"),
-        (
-            "Common",
-            7,
-            "parse_time",
-            "2026-09-24 15:30:00",
-            "",
-            "time normalization (0 required dependencies)",
-        ),
-        (
-            "Common",
-            8,
-            "strftime",
-            "2026-09-24 15:30:00",
-            "%Y/%m/%d",
-            "render the canonical time in another layout (output side)",
-        ),
+        ("Common", 6, "find_jsons", 'x{"a": 1}y', "", "every embedded JSON value"),
+        ("Common", 7, "md5", "abc", "", "checksum (not for security)"),
+        ("Common", 8, "between", 250, [200, 300], "half-open numeric interval"),
         (
             "Common",
             9,
@@ -434,7 +412,6 @@ def _py_cases() -> list[Case]:
         ("Advanced", 9, "from_json", '{"a": 1}', "", "JSON text → JSON tree (formerly cast json)"),
         ("Advanced", 10, "float", "1.5", "", "type conversion"),
         ("Advanced", 11, "bool", "no", "", "type conversion (falsey word list)"),
-        ("Advanced", 12, "list", '["a","b"]', "", "JSON array text → list"),
         (
             "Advanced",
             17,
@@ -450,7 +427,15 @@ def _py_cases() -> list[Case]:
         ("Rare", 1, "b64_encode", "abc", "", "Base64 encode"),
     ]
     return [
-        Case("py", name, [["py", name, params]], value, tier, rank, note=note)
+        Case(
+            "py",
+            name,
+            [["py", name] if params == "" else ["py", name, params]],
+            value,
+            tier,
+            rank,
+            note=note,
+        )
         for tier, rank, name, value, params, note in spec
     ]
 
@@ -461,14 +446,14 @@ def chain_cases() -> list[Case]:
         Case(
             "py",
             "composition",
-            [["py", "parse_time", ""], ["py", "strftime", "%Y/%m/%d"]],
+            [["py", "strptime", "%Y-%m-%d %H:%M:%S"], ["py", "strftime", "%Y/%m/%d"]],
             "2026-09-24 15:30:00",
             note="normalize to the canonical time → render another layout (the output side)",
         ),
         Case(
             "css1",
             "composition",
-            [["css1", "text", "h1.article-title"], ["py", "normalize_space", ""]],
+            [["css1", "text", "h1.article-title"], ["py", "normalize_space"]],
             HTML_DOC,
             note="take the heading → normalize whitespace",
         ),
@@ -485,7 +470,7 @@ def chain_cases() -> list[Case]:
             [
                 ["css", "remove", "script,style"],
                 ["css1", "html", "div.content"],
-                ["py", "html_to_markdown", ""],
+                ["py", "html_to_markdown"],
             ],
             HTML_DOC,
             note="prune → take HTML → convert to Markdown (the standard body-extraction trio)",
@@ -500,7 +485,7 @@ def chain_cases() -> list[Case]:
         Case(
             "css",
             "composition",
-            [["css", "nodes", "ul.rel a"], ["py", "len", ""]],
+            [["css", "nodes", "ul.rel a"], ["py", "len"]],
             HTML_DOC,
             note="node set → count",
         ),
@@ -517,14 +502,14 @@ def chain_cases() -> list[Case]:
         Case(
             "css",
             "composition",
-            [["css1", "text", "h1.article-title"], ["code", {"src": "normalize_space(obj)"}]],
+            [["css1", "text", "h1.article-title"], ["code", "normalize_space(obj)"]],
             HTML_DOC,
             note="extract → process in the sandbox (allowlisted functions need no import)",
         ),
         Case(
             "py",
             "composition",
-            [["py", "from_json", ""], ["json", "data.html"]],
+            [["py", "from_json"], ["json", "data.html"]],
             JSON_DOC,
             note="parse the JSON text first, then use the json operator to take a subtree",
         ),
@@ -539,21 +524,21 @@ def chain_cases() -> list[Case]:
         Case(
             "py",
             "composition",
-            [["py", "str", ""], ["re", "search", r"\d+"], ["py", "int", ""]],
+            [["py", "str"], ["re", "search", r"\d+"], ["py", "int"]],
             2026,
             note="convert → regex → convert again",
         ),
         Case(
             "py",
             "composition",
-            [["py", "parse_time", ""], ["py", "slice", ":10"]],
+            [["py", "strptime", "%Y/%m/%d %H:%M:%S"], ["py", "strftime", "%Y-%m-%d"]],
             "2026/09/24 15:30:00",
             note="time normalization → take the date part",
         ),
         Case(
             "json",
             "composition",
-            [["json", "data.list[*].url"], ["py", "first", ""]],
+            [["json", "data.list[*].url"], ["py", "first"]],
             JSON_DOC,
             note="take all URLs → take the first",
         ),
@@ -567,7 +552,7 @@ def chain_cases() -> list[Case]:
         Case(
             "xpath",
             "composition",
-            [["xpath", "text", "//*[local-name()='lastmod']"], ["py", "last", ""]],
+            [["xpath", "text", "//*[local-name()='lastmod']"], ["py", "last"]],
             XML_DOC,
             note="sitemap: every lastmod → take the last",
         ),
@@ -578,7 +563,7 @@ def chain_cases() -> list[Case]:
                 [
                     "xpath",
                     "text",
-                    {"expr": "//dc:creator", "ns": {"dc": "http://purl.org/dc/elements/1.1/"}},
+                    ["//dc:creator", {"dc": "http://purl.org/dc/elements/1.1/"}],
                 ]
             ],
             RSS_DOC,
@@ -615,11 +600,11 @@ def edge_cases() -> list[Case]:
         Case(
             "outcome",
             "Failed (input type mismatch)",
-            [["py", "strip_tags", ""]],
+            [["py", "upper"]],
             42,
             note="UP2-E2002",
         ),
-        Case("outcome", "Failed (evaluation failed)", [["py", "int", ""]], "abc", note="UP2-E2005"),
+        Case("outcome", "Failed (evaluation failed)", [["py", "int"]], "abc", note="UP2-E2005"),
         Case(
             "outcome",
             "Failed (a subscript that is not there)",
@@ -651,14 +636,14 @@ def edge_cases() -> list[Case]:
         Case(
             "outcome",
             "Failed (sandbox code raised)",
-            [["code", {"src": "1 / 0"}]],
+            [["code", "1 / 0"]],
             None,
             note="UP2-E2017 (the sandbox code can catch it with try/except)",
         ),
         Case(
             "outcome",
             "Failed (sandbox execution over limit)",
-            [["code", {"src": "while True:\n    pass"}]],
+            [["code", "while True:\n    pass"]],
             None,
             note="UP2-E2016: limits are configured by the host (a tiny time budget is used here)",
         ),
@@ -679,49 +664,49 @@ def scope_cases() -> list[Case]:
         Case(
             "scope",
             "locals: one field's scratch space",
-            [["const", "42"], ["ctx", "set", "locals._n"], ["ctx", "get", "locals._n"]],
+            [["py", "const", "42"], ["ctx", "set", "locals._n"], ["ctx", "get", "locals._n"]],
             None,
             note="private to the field that wrote it",
         ),
         Case(
             "scope",
             "public: the run's shared notes",
-            [["const", "42"], ["ctx", "set", "public.n"], ["ctx", "get", "public.n"]],
+            [["py", "const", "42"], ["ctx", "set", "public.n"], ["ctx", "get", "public.n"]],
             None,
             note="writable and readable from any node; never part of the chain data",
         ),
         Case(
             "scope",
             "public may be collected like any scope",
-            [["const", "42"], ["ctx", "set", "public.n"], ["ctx", "dict", {"n": "public.n"}]],
+            [["py", "const", "42"], ["ctx", "set", "public.n"], ["ctx", "dict", {"n": "public.n"}]],
             None,
             note="ctx.dict / ctx.list read any scope, globals included",
         ),
         Case(
             "guard",
             "try skip: a guarded failure keeps the value the chain carried",
-            [["const", "keep"], ["try", "skip"], ["py", "int", ""]],
+            [["py", "const", "keep"], ["try", "skip"], ["py", "int"]],
             "not-a-number",
             note="the guard covers the NEXT stage only, and never turns the error into a value",
         ),
         Case(
             "guard",
             "try break: a guarded failure ends the chain with that value",
-            [["const", "keep"], ["try", "break"], ["py", "int", ""]],
+            [["py", "const", "keep"], ["try", "break"], ["py", "int"]],
             "not-a-number",
             note="the stages after the guarded one are not evaluated",
         ),
         Case(
             "guard",
             "try raise: the default behaviour of a failing stage",
-            [["const", "keep"], ["try", "raise"], ["py", "int", ""]],
+            [["py", "const", "keep"], ["try", "raise"], ["py", "int"]],
             "not-a-number",
             note="UP2-E2005: the run fails",
         ),
         Case(
             "guard",
             "a guarded success disarms the guard",
-            [["const", ""], ["try", "skip"], ["py", "strip", ""], ["py", "int", ""]],
+            [["py", "const", ""], ["try", "skip"], ["py", "strip"], ["py", "int"]],
             "not-a-number",
             note="the guard covered one stage only: the later failure still fails the run",
         ),
@@ -733,7 +718,7 @@ def form_cases() -> list[Case]:
     return [
         Case("form", "scalar parameter", [["py", "urljoin", "https://x/p/"]], "a.html"),
         Case("form", "positional array", [["py", "replace", ["old", "new"]]], "old text"),
-        Case("form", "named object", [["re", "group", {"pattern": r"(\d+)", "group": 1}]], "x42"),
+        Case("form", "two parameters in one array", [["re", "search", [r"(\d+)", 1]]], "x42"),
         Case(
             "form",
             "reference ($globals / $locals)",
@@ -744,7 +729,7 @@ def form_cases() -> list[Case]:
         Case(
             "form",
             'directive object {"$lit": …}: a literal starting with $',
-            [["py", "default", {"$lit": "$locals.title"}]],
+            [["py", "or", [{"$lit": "$locals.title"}]]],
             "",
             note="without $lit it is a reference (E1006, see the invalid-form sections)",
         ),
@@ -760,26 +745,26 @@ def form_cases() -> list[Case]:
 def bad_chains() -> list[list[Any]]:
     """Compile-time bad chains (attributed to the operator of the first stage)."""
     return [
-        [["py", "strip"]],
+        [["py"]],
         [["py", "strip", "", ""]],
         [["py", "no_such_function", ""]],
-        [["py", "parse_time", {"format": "%Q"}]],
-        [["py", "default", "$nope.x"]],
+        [["py", "strptime", "%Q"]],
+        [["py", "urljoin", "$nope.x"]],
         # A container where the function's own runtime path needs a scalar: the named-object form of
         # a single-parameter function, an array, and an unknown enum value.
         [["py", "urljoin", {"base": "https://example.com/news/"}]],
         [["py", "slice", {"spec": "0:4"}]],
         [["py", "getitem", {"at": {}}]],
-        [["py", "split", {"sep": ",", "maxsplit": {}}]],
-        [["py", "sort", {"key": {}}]],
+        [["py", "split", {"sep": {}}]],
+        [["py", "sort", "int"]],
         [["css", "txt", "h1"]],
         [["css", "@", "h1"]],
         [["css", "text", "!!!"]],
         [["css", "$text", "h1"]],
-        [["re", "group", {"pattern": "a", "group": 9}]],
+        [["re", "search", ["a", 9]]],
         [["xpath", "text", "//dc:creator"]],
         [["json", "("]],
-        [["udf", "not_registered", ""]],
+        [["udf", "not_registered"]],
         [["ctx", "set", "globals.x"]],
         [["nope", "strip", ""]],
     ]

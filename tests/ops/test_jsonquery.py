@@ -104,7 +104,9 @@ def test_empty_expression_returns_root_with_the_real_engine() -> None:
     """The stub answers `""` itself; the real library raises `EmptyExpressionError` for it."""
     pytest.importorskip("jmespath")
     assert run([["json", ""]], {"a": 1}) == Ok({"a": 1})
-    assert run([["json", None]], {"a": 1}) == Ok({"a": 1})
+    with pytest.raises(Up2Error) as info:
+        compile_field([["json", None]])
+    assert info.value.diagnostic.code == "UP2-E1005"
     assert run([["json", "@"]], {"a": 1}) == Ok({"a": 1})
 
 

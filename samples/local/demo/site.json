@@ -6,7 +6,7 @@
       "body": {
         "headings": [
           ["css", "text", "h2"],
-          ["py", "uniq", ""]
+          ["py","uniq"]
         ]
       },
       "type": "dict"

@@ -38,7 +38,6 @@ def test_ops_json_lists_operators(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     names = {item["name"] for item in payload}
     assert names == {
-        "const",
         "each",
         "css",
         "css1",
@@ -57,7 +56,7 @@ def test_ops_json_lists_operators(capsys) -> None:
     # In-chain code is an optional capability: `--json` must expose what it depends on.
     code_item = next(item for item in payload if item["name"] == "code")
     assert code_item["requires"] == ["pydantic_monty"]
-    assert code_item["slots"] == ["source & inputs"]
+    assert code_item["slots"] == ["source"]
 
 
 def test_ops_text_mentions_actions(capsys) -> None:
@@ -69,7 +68,7 @@ def test_ops_text_mentions_actions(capsys) -> None:
     assert "slot2=function" in out
     assert "slot2=accessor" in out
     assert "slot3=selector" in out
-    assert "slot2=source & inputs" in out  # code: a 2-slot operator has a single parameter
+    assert "slot2=source" in out  # code: a 2-slot operator has a single parameter
 
 
 def test_ops_json_reports_the_parameter_slot_shape(capsys) -> None:
@@ -80,8 +79,8 @@ def test_ops_json_reports_the_parameter_slot_shape(capsys) -> None:
         (item["name"], action["name"]): action for item in payload for action in item["actions"]
     }
     assert actions[("py", "slice")]["param_form"] == "value"
-    assert actions[("py", "split")]["param_form"] == "named"
-    assert actions[("py", "strip")]["param_form"] == "none"
+    assert actions[("py", "replace")]["param_form"] == "array"
+    assert actions[("py", "upper")]["param_form"] == "none"
     # A parameter the action slot itself provides does not count: `@<attribute>` fills `attr`.
     assert actions[("css1", "@<attribute>")]["param_form"] == "value"
 
@@ -89,12 +88,12 @@ def test_ops_json_reports_the_parameter_slot_shape(capsys) -> None:
 def test_ops_text_reports_the_parameter_slot_shape(capsys) -> None:
     assert main(["ops"]) == EXIT_OK
     out = capsys.readouterr().out
-    for form in ("value", "named", "none"):
+    for form in ("value", "array", "none"):
         assert f"[slot3={form}]" in out
-    # A 2-slot operator's parameter slot is slot 2, not slot 3: `code` takes a named object
-    # (`src` / `inputs`) and `json` takes the value itself.
-    assert "[slot2=named]" in out
+    # A single-action operator's parameter slot is slot 2, not slot 3: `code` takes the source
+    # and `json` takes the expression itself.
     assert "[slot2=value]" in out
+    assert "[slot2=source]" in out
 
 
 def test_conformance_check_passes(capsys) -> None:
@@ -114,7 +113,7 @@ def test_conformance_missing_tests_root() -> None:
 
 
 def test_lint_ok(tmp_path: Path, capsys) -> None:
-    path = write_chain(tmp_path, [["py", "strip", ""], ["py", "upper", ""]])
+    path = write_chain(tmp_path, [["py", "strip"], ["py", "upper"]])
     assert main(["lint", str(path)]) == EXIT_OK
     assert "OK" in capsys.readouterr().out
 
@@ -133,7 +132,7 @@ def test_lint_bad_json_is_usage_error(tmp_path: Path) -> None:
 
 
 def test_trial_runs_chain_with_input(tmp_path: Path, capsys) -> None:
-    path = write_chain(tmp_path, [["py", "normalize_space", ""], ["py", "upper", ""]])
+    path = write_chain(tmp_path, [["py", "normalize_space"], ["py", "upper"]])
     code = main(["trial", str(path), "--input", "text=  a   b  ", "--json"])
     assert code == EXIT_OK
     payload = json.loads(capsys.readouterr().out)
@@ -143,7 +142,7 @@ def test_trial_runs_chain_with_input(tmp_path: Path, capsys) -> None:
 def test_trial_reads_input_from_file(tmp_path: Path, capsys) -> None:
     sample = tmp_path / "sample.txt"
     sample.write_text("  hi  ", encoding="utf-8")
-    path = write_chain(tmp_path, [["py", "strip", ""]])
+    path = write_chain(tmp_path, [["py", "strip"]])
     assert main(["trial", str(path), "--input", f"text=@{sample}", "--json"]) == EXIT_OK
     assert json.loads(capsys.readouterr().out)["value"] == "hi"
 
@@ -167,7 +166,7 @@ def test_trial_uses_globals_reference(tmp_path: Path, capsys) -> None:
 
 def test_trial_keeps_numeric_input_as_text(tmp_path: Path, capsys) -> None:
     """``--input text=123`` must not silently become an int (or ``py.strip`` would fail)."""
-    path = write_chain(tmp_path, [["py", "strip", ""]])
+    path = write_chain(tmp_path, [["py", "strip"]])
     assert main(["trial", str(path), "--input", "text=123", "--json"]) == EXIT_OK
     assert json.loads(capsys.readouterr().out)["value"] == "123"
 
@@ -183,7 +182,7 @@ def test_trial_no_match_is_not_an_error(tmp_path: Path, capsys) -> None:
 
 def test_trial_failed_exits_nonzero(tmp_path: Path, capsys) -> None:
     """A failed stage always fails the run: there is no configuration that degrades it."""
-    path = write_chain(tmp_path, [["py", "int", ""]])
+    path = write_chain(tmp_path, [["py", "int"]])
     code = main(["trial", str(path), "--input", "text=abc", "--json"])
     assert code == EXIT_FAILED
     assert json.loads(capsys.readouterr().out)["code"] == "UP2-E2005"
@@ -208,7 +207,7 @@ def test_trial_products_reference(tmp_path: Path, capsys) -> None:
 
 def test_trial_has_no_settlement_flags(tmp_path: Path) -> None:
     """The retired ``--on-missing`` / ``--on-error`` are gone, not silently ignored."""
-    path = write_chain(tmp_path, [["py", "strip", ""]])
+    path = write_chain(tmp_path, [["py", "strip"]])
     for flag in ("--on-missing", "--on-error"):
         with pytest.raises(SystemExit) as info:
             main(["trial", str(path), "--input", "text=a", flag, "drop"])
@@ -216,7 +215,7 @@ def test_trial_has_no_settlement_flags(tmp_path: Path) -> None:
 
 
 def test_trial_bad_product_syntax(tmp_path: Path) -> None:
-    path = write_chain(tmp_path, [["py", "strip", ""]])
+    path = write_chain(tmp_path, [["py", "strip"]])
     assert main(["trial", str(path), "--input", "text=a", "--product", "n1"]) == EXIT_USAGE
 
 
@@ -224,7 +223,7 @@ def test_trial_bad_product_syntax(tmp_path: Path) -> None:
 
 
 def _story(*, request: bool = True) -> dict[str, object]:
-    body: list[object] = [["py", "getattr", "text"]] if request else [["py", "strip", ""]]
+    body: list[object] = [["py", "getattr", "text"]] if request else [["py", "strip"]]
     steps: list[dict[str, object]] = [
         {
             "name": "records",
@@ -362,7 +361,7 @@ def test_trial_trace_is_one_line_per_event_without_json(tmp_path: Path, capsys) 
 
 
 def test_trial_trace_carries_the_failing_stage(tmp_path: Path, capsys) -> None:
-    path = write_chain(tmp_path, [["py", "int", ""]])
+    path = write_chain(tmp_path, [["py", "int"]])
     code = main(["trial", str(path), "--input", "text=abc", "--trace", "--json"])
     assert code == EXIT_FAILED
     payload = json.loads(capsys.readouterr().out)

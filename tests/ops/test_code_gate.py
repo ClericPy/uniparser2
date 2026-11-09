@@ -62,7 +62,7 @@ def test_operator_is_registered_with_single_action() -> None:
     instance = registry.get("code")
     assert instance is not None
     assert instance.arity == 2
-    assert instance.slot_roles == ("source & inputs",)
+    assert instance.slot_roles == ("source",)
     assert tuple(instance.actions) == ("run",)
     assert instance.requires == ("pydantic_monty",)
 

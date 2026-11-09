@@ -27,25 +27,25 @@ def diagnostic(chain: Any) -> Any:
 
 @pytest.mark.covers("each", "each")
 def test_one_dictionary_per_element() -> None:
-    chain = [["each", {"n": [["py", "len", ""]], "u": [["py", "upper", ""]]}]]
+    chain = [["each", {"n": [["py", "len"]], "u": [["py", "upper"]]}]]
     assert run(chain, ["ab", "cd"]) == Ok([{"n": 2, "u": "AB"}, {"n": 2, "u": "CD"}])
 
 
 @pytest.mark.covers("each", "each")
 def test_empty_list_is_an_empty_list() -> None:
-    assert run([["each", {"n": [["py", "len", ""]]}]], []) == Ok([])
+    assert run([["each", {"n": [["py", "len"]]}]], []) == Ok([])
 
 
 @pytest.mark.covers("each", "each")
 def test_input_order_is_preserved() -> None:
-    assert run([["each", {"raw": [["py", "strip", ""]]}]], ["b", "a"]) == Ok(
+    assert run([["each", {"raw": [["py", "strip"]]}]], ["b", "a"]) == Ok(
         [{"raw": "b"}, {"raw": "a"}]
     )
 
 
 @pytest.mark.covers("each", "each")
 def test_a_non_list_input_is_a_type_error() -> None:
-    outcome = run([["each", {"n": [["py", "len", ""]]}]], {"a": 1})
+    outcome = run([["each", {"n": [["py", "len"]]}]], {"a": 1})
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2002"
     assert "dict" in outcome.reason
@@ -54,7 +54,7 @@ def test_a_non_list_input_is_a_type_error() -> None:
 @pytest.mark.covers("each", "each")
 def test_an_unreadable_source_fails_before_each_runs() -> None:
     """A path that cannot be read is a failure (`UP2-E2001`), so `each` never sees it."""
-    outcome = run([["ctx", "get", "locals.nope"], ["each", {"n": [["py", "len", ""]]}]], ["a"])
+    outcome = run([["ctx", "get", "locals.nope"], ["each", {"n": [["py", "len"]]}]], ["a"])
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2001"
 
@@ -72,7 +72,7 @@ def test_a_collected_node_set_is_parsed_per_element() -> None:
 
 @pytest.mark.covers("each", "each")
 def test_a_later_field_reads_what_an_earlier_field_stored() -> None:
-    chain = [["each", {"_raw": [["py", "strip", ""]], "seen": [["ctx", "get", "locals._raw"]]}]]
+    chain = [["each", {"_raw": [["py", "strip"]], "seen": [["ctx", "get", "locals._raw"]]}]]
     assert run(chain, ["  a  "]) == Ok([{"seen": "a"}])
 
 
@@ -82,9 +82,9 @@ def test_a_local_field_never_enters_the_dictionary() -> None:
         [
             "each",
             {
-                "_t": [["py", "strip", ""]],
+                "_t": [["py", "strip"]],
                 "a": [["ctx", "get", "locals._t"]],
-                "b": [["ctx", "get", "locals._t"], ["py", "upper", ""]],
+                "b": [["ctx", "get", "locals._t"], ["py", "upper"]],
             },
         ]
     ]
@@ -99,7 +99,7 @@ def test_an_element_local_shadows_the_calling_scope() -> None:
             "each",
             {
                 "seen": [
-                    ["py", "upper", ""],
+                    ["py", "upper"],
                     ["ctx", "set", "locals.t"],
                     ["ctx", "get", "locals.t"],
                 ]
@@ -120,7 +120,7 @@ def test_an_element_reads_a_value_from_the_calling_scope() -> None:
 
 @pytest.mark.covers("each", "each")
 def test_an_element_local_does_not_outlive_the_element() -> None:
-    chain = [["each", {"_t": [["py", "strip", ""]]}], ["ctx", "get", "locals._t"]]
+    chain = [["each", {"_t": [["py", "strip"]]}], ["ctx", "get", "locals._t"]]
     outcome = run(chain, ["a"])
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2001"
@@ -135,7 +135,7 @@ def test_an_element_is_kept_even_when_every_field_is_empty() -> None:
 @pytest.mark.covers("each", "each")
 def test_a_field_that_matched_nothing_carries_the_empty_value() -> None:
     """A no-match is a value: the key is present, carrying the shape's empty value."""
-    chain = [["each", {"gone": [["re", "search", "zzz"]], "n": [["py", "len", ""]]}]]
+    chain = [["each", {"gone": [["re", "search", "zzz"]], "n": [["py", "len"]]}]]
     assert run(chain, ["ab"]) == Ok([{"gone": "", "n": 2}])
 
 
@@ -148,7 +148,7 @@ def test_a_failing_stage_propagates_its_own_code() -> None:
 
 @pytest.mark.covers("each", "each")
 def test_nested_each_stages_iterate_level_by_level() -> None:
-    chain = [["each", {"lens": [["each", {"n": [["py", "len", ""]]}]]}]]
+    chain = [["each", {"lens": [["each", {"n": [["py", "len"]]}]]}]]
     assert run(chain, [["a", "b"], ["c"]]) == Ok(
         [{"lens": [{"n": 1}, {"n": 1}]}, {"lens": [{"n": 1}]}]
     )
@@ -186,7 +186,7 @@ def test_a_wrong_stage_length_inside_a_sub_chain_points_into_the_map() -> None:
 
 @pytest.mark.covers("each", "each")
 def test_a_field_map_nested_too_deeply_is_a_limit_error() -> None:
-    chain: Any = [["py", "strip", ""]]
+    chain: Any = [["py", "strip"]]
     for field in ("d", "c", "b", "a"):
         chain = [["each", {field: chain}]]
     assert diagnostic(chain).code == "UP2-E1012"
@@ -194,13 +194,13 @@ def test_a_field_map_nested_too_deeply_is_a_limit_error() -> None:
 
 @pytest.mark.covers("each", "each")
 def test_three_nested_field_maps_are_still_accepted() -> None:
-    chain = [["each", {"a": [["each", {"b": [["each", {"c": [["py", "strip", ""]]}]]}]]}]]
+    chain = [["each", {"a": [["each", {"b": [["each", {"c": [["py", "strip"]]}]]}]]}]]
     assert run(chain, [[[" x "]]]) == Ok([{"a": [{"b": [{"c": "x"}]}]}])
 
 
 @pytest.mark.covers("each", "each")
 def test_a_sub_chain_respects_the_stage_limit() -> None:
-    info = diagnostic([["each", {"t": [["py", "strip", ""]] * 33}]])
+    info = diagnostic([["each", {"t": [["py", "strip"]] * 33}]])
     assert info.code == "UP2-E1012"
     assert info.pointer == "/0/1/fields/t"
 
@@ -218,7 +218,7 @@ def test_an_empty_field_map_is_a_schema_error() -> None:
 @pytest.mark.parametrize("name", ["_a.b", "a.b", ""])
 def test_a_field_name_a_reference_cannot_address_is_a_schema_error(name: str) -> None:
     """A path splits on `.`, so such a key would be computed and then silently unreachable."""
-    info = diagnostic([["each", {name: [["py", "strip", ""]]}]])
+    info = diagnostic([["each", {name: [["py", "strip"]]}]])
     assert info.code == "UP2-E1005"
     assert info.pointer == f"/0/1/fields/{name}"
     assert repr(name) in info.fix
@@ -226,7 +226,7 @@ def test_a_field_name_a_reference_cannot_address_is_a_schema_error(name: str) ->
 
 @pytest.mark.covers("each", "each")
 def test_a_field_map_over_the_field_bound_is_a_limit_error() -> None:
-    fields = {f"f{index}": [["py", "strip", ""]] for index in range(257)}
+    fields = {f"f{index}": [["py", "strip"]] for index in range(257)}
     info = diagnostic([["each", fields]])
     assert info.code == "UP2-E1012"
     assert info.pointer == "/0/1/fields"
@@ -236,7 +236,7 @@ def test_a_field_map_over_the_field_bound_is_a_limit_error() -> None:
 
 @pytest.mark.covers("each", "each")
 def test_a_field_map_at_the_field_bound_is_accepted() -> None:
-    fields = {f"f{index}": [["py", "strip", ""]] for index in range(256)}
+    fields = {f"f{index}": [["py", "strip"]] for index in range(256)}
     assert run([["each", fields]], [" a "]) == Ok([dict.fromkeys(fields, "a")])
 
 
@@ -247,12 +247,12 @@ def test_a_missing_key_does_not_fall_through_to_an_outer_name() -> None:
         [
             "each",
             {
-                "_a": [["const", {"b": 1}]],
+                "_a": [["py", "const", {"b": 1}]],
                 "kids": [
                     [
                         "each",
                         {
-                            "_a": [["const", {"c": 2}]],
+                            "_a": [["py", "const", {"c": 2}]],
                             "seen": [["ctx", "get", "locals._a.b"]],
                         },
                     ]
@@ -268,5 +268,28 @@ def test_a_missing_key_does_not_fall_through_to_an_outer_name() -> None:
 
 @pytest.mark.covers("each", "each")
 def test_the_chain_round_trips_through_dumps() -> None:
-    chain = [["each", {"n": [["py", "len", ""]]}]]
-    assert compile_field(chain).dumps() == '[["each",{"n":[["py","len",""]]}]]'
+    chain = [["each", {"n": [["py", "len"]]}]]
+    assert compile_field(chain).dumps() == '[["each",{"n":[["py","len"]]}]]'
+
+
+@pytest.mark.covers("each", "each")
+def test_an_array_parameter_is_one_chain_over_every_element() -> None:
+    """The parameter's shape selects the mode: an object is a field map, an array is one chain."""
+    assert run([["each", [["py", "strip"]]]], [" a ", " b "]) == Ok(["a", "b"])
+
+
+@pytest.mark.covers("each", "each")
+def test_the_chain_mode_runs_a_multi_stage_chain() -> None:
+    chain = [["each", [["py", "getitem", "url"], ["py", "upper"]]]]
+    assert run(chain, [{"url": "a.html"}, {"url": "b.html"}]) == Ok(["A.HTML", "B.HTML"])
+
+
+@pytest.mark.covers("each", "each")
+def test_a_failure_in_the_chain_mode_stops_the_iteration() -> None:
+    outcome = run([["each", [["py", "int"]]]], ["1", "x", "3"])
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2005"
+
+
+def test_an_empty_chain_is_refused() -> None:
+    assert diagnostic([["each", []]]).code == "UP2-E1004"

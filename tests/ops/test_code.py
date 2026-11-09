@@ -50,8 +50,8 @@ def _run(
     return up2.eval_field(up2.compile_field(chain), value, scope=scope)
 
 
-def _code(src: str, **extra: Any) -> Any:
-    return [["code", {"src": src, **extra}]]
+def _code(src: Any) -> Any:
+    return [["code", src]]
 
 
 def _failed(outcome: Outcome) -> Failed:
@@ -81,7 +81,7 @@ def sandbox() -> Any:
 
 
 def test_missing_src_is_parameter_error() -> None:
-    code, pointer = _compile_error([["code", {"inputs": {"x": 1}}]])
+    code, pointer = _compile_error([["code"]])
     assert code == "UP2-E1005"
     assert pointer == "/0/1"
 
@@ -101,30 +101,16 @@ def test_non_string_src_is_rejected() -> None:
 
 
 def test_third_slot_is_arity_error() -> None:
-    code, pointer = _compile_error([["code", {"src": "1"}, "extra"]])
+    code, pointer = _compile_error([["code", "1", "extra"]])
     assert code == "UP2-E1004"
     assert pointer == "/0"
 
 
-def test_reserved_input_names_are_rejected() -> None:
-    for reserved in ("obj", "ctx"):
-        with pytest.raises(up2.Up2Error) as info:
-            up2.compile_field(_code("1", inputs={reserved: 1}))
-        assert info.value.diagnostic.code == "UP2-E1005"
-        assert info.value.diagnostic.pointer == "/0/1/inputs"
-
-
-def test_inputs_must_be_an_object() -> None:
-    with pytest.raises(up2.Up2Error) as info:
-        up2.compile_field(_code("1", inputs=["$locals.x"]))
-    assert info.value.diagnostic.code == "UP2-E1005"
-
-
-def test_dangling_reference_fails_at_compile_time() -> None:
-    code, pointer = _compile_error(_code("x", inputs={"x": "$nope.n"}))
-    assert code == "UP2-E1006"
-    assert pointer == "/0/1"
-    assert "$nope" not in str(pointer)
+def test_a_named_object_is_not_the_source() -> None:
+    """The source is the parameter itself; the retired ``inputs`` object is not a writing."""
+    code, pointer = _compile_error([["code", {"src": "1", "inputs": {"x": 1}}]])
+    assert code == "UP2-E1005"
+    assert pointer == "/0/1/src"
 
 
 # ------------------------------------------------ 3. isolation and limits (real sandbox)
@@ -192,8 +178,10 @@ def test_round_trip_budget_must_be_positive(sandbox: Any) -> None:
 
 
 def test_chain_cannot_widen_limits() -> None:
-    code, _ = _compile_error(_code("1", max_memory=1 << 40))
-    assert code == "UP2-E1005"
+    """There is no parameter for limits: the stage takes the source and nothing else."""
+    code, pointer = _compile_error([["code", "1", {"max_memory": 1 << 40}]])
+    assert code == "UP2-E1004"
+    assert pointer == "/0"
 
 
 # ------------------------------------------------ 4. determinism and allowlisted functions
@@ -274,7 +262,7 @@ def test_ctx_locals_and_globals_are_attribute_style(sandbox: Any) -> None:
 
 def test_ctx_locals_carries_values_written_by_the_chain(sandbox: Any) -> None:
     """A temporary variable an earlier stage wrote into locals is readable straight from code."""
-    outcome = _run([["ctx", "set", "locals.k"], ["code", {"src": "ctx.locals.k"}]], "intermediate")
+    outcome = _run([["ctx", "set", "locals.k"], ["code", "ctx.locals.k"]], "intermediate")
     assert outcome == Ok("intermediate")
 
 
@@ -310,8 +298,12 @@ def test_ctx_assignment_does_not_flow_back(sandbox: Any) -> None:
     assert "added" not in scope.locals
 
 
-def test_named_inputs_are_available(sandbox: Any) -> None:
-    outcome = _run(_code("x + 1", inputs={"x": "$locals.n"}), None, locals_={"n": 41})
+def test_a_payload_replaces_named_inputs(sandbox: Any) -> None:
+    outcome = _run(
+        [["ctx", "dict", {"n": "locals.n"}], ["code", 'obj["n"] + 1']],
+        None,
+        locals_={"n": 41},
+    )
     assert outcome == Ok(42)
 
 
@@ -341,7 +333,7 @@ def test_return_value_is_last_expression(sandbox: Any) -> None:
 def test_an_unreadable_upstream_stops_the_chain(sandbox: Any) -> None:
     """A path that cannot be read fails the stage before ``code`` runs (`UP2-E2001`)."""
     outcome = up2.eval_field(
-        up2.compile_field([["ctx", "get", "locals.nope"], ["code", {"src": "1"}]]),
+        up2.compile_field([["ctx", "get", "locals.nope"], ["code", "1"]]),
         None,
     )
     assert isinstance(outcome, Failed)
@@ -361,3 +353,17 @@ def test_policy_changes_are_visible(sandbox: Any) -> None:
     assert policy.max_memory == 1234
     assert code_op.current_policy().max_memory == 1234
     assert code_op.reset_policy().max_memory == code_op.DEFAULT_POLICY.max_memory
+
+
+def test_print_is_silenced(sandbox: Any, capsys: Any) -> None:
+    """The product is the channel; in-chain print output is dropped (design D9)."""
+    assert _run(_code("print('hello')\n1")) == Ok(1)
+    assert capsys.readouterr().out == ""
+
+
+def test_up2_code_off_disables_the_operator(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UP2_CODE", "off")
+    with pytest.raises(up2.Up2Error) as info:
+        up2.compile_field([["code", "1"]])
+    assert info.value.diagnostic.code == "UP2-E1107"
+    assert "UP2_CODE" in info.value.diagnostic.fix

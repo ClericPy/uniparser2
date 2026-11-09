@@ -91,7 +91,7 @@ def test_text_on_attributes_needs_no_attr_action(xml_ready: None) -> None:
 
 def test_prefixed_namespace_with_ns_map(xml_ready: None) -> None:
     """A prefixed namespace must come with an ``ns`` map (selectolax reports Bad CSS Selectors)."""
-    chain = [["xpath", "text", {"expr": "//dc:creator", "ns": NS_DC}]]
+    chain = [["xpath", "text", ["//dc:creator", NS_DC]]]
     assert run(chain, RSS) == Ok(["Reporter A"])
 
 
@@ -110,7 +110,7 @@ def test_default_namespace_is_empty_and_needs_local_name(xml_ready: None) -> Non
 
 def test_default_namespace_workarounds(xml_ready: None) -> None:
     by_local_name = [["xpath", "text", "//*[local-name()='loc']"]]
-    by_ns_map = [["xpath", "text", {"expr": "//sm:loc", "ns": NS_SM}]]
+    by_ns_map = [["xpath", "text", ["//sm:loc", NS_SM]]]
     assert run(by_local_name) == Ok(["https://x/1", "https://x/2"])
     assert run(by_ns_map) == Ok(["https://x/1", "https://x/2"])
 
@@ -149,7 +149,7 @@ def test_self_then_relative_path(xml_ready: None) -> None:
 
     This is the only way within L1 to "land on a single node".
     """
-    chain = [["xpath", "self", {"expr": "//item", "ns": NS_DC}], ["xpath", "text", "./title"]]
+    chain = [["xpath", "self", ["//item", NS_DC]], ["xpath", "text", "./title"]]
     assert run(chain, RSS) == Ok(["Title"])
 
 
@@ -174,7 +174,7 @@ def test_bad_expression_is_schema_error(xml_ready: None, expr: str) -> None:
 
 def test_ns_must_be_string_map(xml_ready: None) -> None:
     with pytest.raises(Up2Error) as info:
-        compile_field([["xpath", "text", {"expr": "//dc:creator", "ns": {"dc": 1}}]])
+        compile_field([["xpath", "text", ["//dc:creator", {"dc": 1}]]])
     assert info.value.diagnostic.code == "UP2-E1005"
     assert "ns" in info.value.diagnostic.message
 
@@ -225,9 +225,7 @@ def test_real_lxml_roundtrip() -> None:
     """Walk the three most representative chains again under the real lxml (runs when installed)."""
     pytest.importorskip("lxml")
     assert run([["xpath", "text", "//*[local-name()='loc']"]]) == Ok(["https://x/1", "https://x/2"])
-    assert run([["xpath", "text", {"expr": "//dc:creator", "ns": NS_DC}]], RSS) == Ok(
-        ["Reporter A"]
-    )
+    assert run([["xpath", "text", ["//dc:creator", NS_DC]]], RSS) == Ok(["Reporter A"])
     assert run([["xpath", "text", "//enclosure/@url"]], RSS) == Ok(["https://x/a.mp3"])
 
 
@@ -240,7 +238,7 @@ def test_xml_text_is_materialized_once_per_run(xml_ready: None) -> None:
                 "name": "record",
                 "body": {
                     "title": [["xpath", "text", "//title"]],
-                    "creator": [["xpath", "text", {"expr": "//dc:creator", "ns": NS_DC}]],
+                    "creator": [["xpath", "text", ["//dc:creator", NS_DC]]],
                 },
             }
         ],

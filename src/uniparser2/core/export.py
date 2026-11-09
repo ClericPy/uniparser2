@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from .errors import Failed, Ok, Outcome
@@ -161,6 +162,13 @@ def pack(value: Any, /, *, pointer: str = "") -> Outcome:
             code="UP2-E2003",
             reason=f"export contains the node handle {type(value).__name__}",
             fix=_SERIALIZE_FIX,
+        )
+    if isinstance(value, datetime):
+        return Failed(
+            code="UP2-E2003",
+            reason=f"export contains a datetime ({preview(value, 80)})",
+            fix='a datetime is an internal value: render it first with ["py","strftime","%Y-%m-%d '
+            '%H:%M:%S"]',
         )
     if not is_json_value(value):
         return Failed(

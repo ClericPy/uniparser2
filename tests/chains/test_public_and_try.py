@@ -40,7 +40,7 @@ def compile_error(chain: Any) -> str:
 
 def test_public_is_writable_and_readable() -> None:
     scope = Scope()
-    assert run([["const", 7], ["ctx", "set", "public.page"]], scope=scope) == Ok(7)
+    assert run([["py", "const", 7], ["ctx", "set", "public.page"]], scope=scope) == Ok(7)
     assert run([["ctx", "get", "public.page"]], scope=scope) == Ok(7)
 
 
@@ -75,7 +75,7 @@ def test_a_node_writes_and_the_next_node_reads() -> None:
         "steps": [
             {
                 "name": "write",
-                "body": {"_w": [["const", 42], ["ctx", "set", "public.v"]]},
+                "body": {"_w": [["py", "const", 42], ["ctx", "set", "public.v"]]},
                 "type": "dict",
             },
             {"name": "read", "body": {"v": "$public.v"}, "type": "dict"},
@@ -94,10 +94,13 @@ def test_public_is_shared_across_the_fan_out() -> None:
                 "name": "fan",
                 "body": {
                     "rows": [
-                        ["const", ["a", "b"]],
+                        ["py", "const", ["a", "b"]],
                         [
                             "each",
-                            {"_w": [["const", 1], ["ctx", "set", "public.n"]], "v": "$public.n"},
+                            {
+                                "_w": [["py", "const", 1], ["ctx", "set", "public.n"]],
+                                "v": "$public.n",
+                            },
                         ],
                     ],
                 },
@@ -131,7 +134,7 @@ def test_public_is_a_reserved_root() -> None:
         start(
             {
                 "entry": "public",
-                "steps": [{"name": "public", "body": {"v": [["const", 1]]}, "type": "dict"}],
+                "steps": [{"name": "public", "body": {"v": [["py", "const", 1]]}, "type": "dict"}],
                 "collect": "public",
             }
         )
@@ -142,49 +145,49 @@ def test_public_is_a_reserved_root() -> None:
 
 
 def test_a_guarded_failure_is_skipped() -> None:
-    chain = [["const", "keep"], ["try", "skip"], ["py", "int", ""]]
+    chain = [["py", "const", "keep"], ["try", "skip"], ["py", "int"]]
     assert run(chain, "not-a-number") == Ok("keep")
 
 
 def test_a_guarded_failure_breaks_the_chain() -> None:
-    chain = [["const", "keep"], ["try", "break"], ["py", "int", ""], ["py", "strip", ""]]
+    chain = [["py", "const", "keep"], ["try", "break"], ["py", "int"], ["py", "strip"]]
     assert run(chain, "not-a-number") == Ok("keep")
 
 
 def test_a_guarded_success_disarms_the_guard() -> None:
     """The guard covers one stage: a later failure is not swallowed."""
-    chain = [["const", ""], ["try", "skip"], ["py", "strip", ""], ["py", "int", ""]]
+    chain = [["py", "const", ""], ["try", "skip"], ["py", "strip"], ["py", "int"]]
     outcome = run(chain, "not-a-number")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2005"
 
 
 def test_an_unguarded_failure_fails_the_run() -> None:
-    chain = [["const", "keep"], ["py", "int", ""]]
+    chain = [["py", "const", "keep"], ["py", "int"]]
     outcome = run(chain, "not-a-number")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2005"
 
 
 def test_the_raise_policy_is_the_default_behaviour() -> None:
-    chain = [["const", "keep"], ["try", "raise"], ["py", "int", ""]]
+    chain = [["py", "const", "keep"], ["try", "raise"], ["py", "int"]]
     outcome = run(chain, "not-a-number")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2005"
 
 
 def test_two_guards_in_a_row_are_a_compile_error() -> None:
-    assert compile_error([["try", "skip"], ["try", "skip"], ["py", "strip", ""]]) == "UP2-E1005"
+    assert compile_error([["try", "skip"], ["try", "skip"], ["py", "strip"]]) == "UP2-E1005"
 
 
 def test_a_guard_at_the_end_of_a_chain_is_a_compile_error() -> None:
-    assert compile_error([["py", "strip", ""], ["try", "skip"]]) == "UP2-E1005"
+    assert compile_error([["py", "strip"], ["try", "skip"]]) == "UP2-E1005"
 
 
 def test_an_unknown_policy_is_a_compile_error() -> None:
-    assert compile_error([["try", "ignore"], ["py", "strip", ""]]) == "UP2-E1005"
+    assert compile_error([["try", "ignore"], ["py", "strip"]]) == "UP2-E1005"
 
 
 def test_a_guard_does_not_run_as_a_stage() -> None:
     """The directive does no work: the value flows through it unchanged."""
-    assert run([["const", "v"], ["try", "skip"], ["py", "strip", ""]]) == Ok("v")
+    assert run([["py", "const", "v"], ["try", "skip"], ["py", "strip"]]) == Ok("v")

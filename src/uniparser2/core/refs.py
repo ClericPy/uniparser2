@@ -34,9 +34,15 @@ _NO_STEP_INPUT: Final = object()
 
 REF_PREFIX: Final = "$"
 LIT_DIRECTIVE: Final = "$lit"
-RESERVED_ROOTS: Final = ("globals", "locals", "public", "in")
+RESERVED_ROOTS: Final = ("globals", "locals", "public", "in", "obj")
 WRITABLE_ROOTS: Final = ("locals", "public")
 INPUT_ROOT: Final = "in"
+OBJ_ROOT: Final = "obj"
+"""The root naming **the value the current stage received** (design D11/D14).
+
+It is not a scope: it takes no path and is resolved from the stage's ``Call`` rather than from a
+``Scope``. The same value is readable through ``ctx`` as ``obj``.
+"""
 """The root naming **this step's own input** (``$in.url``, design doc 03 §2.1).
 
 A story step's input is the value the step was handed (the previous step's product, a host answer,
@@ -212,6 +218,12 @@ class Scope:
                     fix="hand the run a value, or write the step that produces this input",
                 )
             return _walk_path(self.step_input, ref)
+        if ref.root == OBJ_ROOT:
+            return Failed(
+                code="UP2-E2001",
+                reason=f"{ref.raw} names the value a stage received, and a scope cannot read it",
+                fix='read "$obj" in a stage parameter; a whole-chain reference names a scope',
+            )
         product = self.products.get(ref.root)
         if product is None:
             return Failed(

@@ -358,7 +358,7 @@ def test_replace_keeps_the_dataclass_frozen(tmp_path: Path) -> None:
     assert replace(stored, status="ready").status == "ready"
 
 
-NON_FINITE_GRAPH: Graph = [["const", float("inf")]]
+NON_FINITE_GRAPH: Graph = [["py", "const", float("inf")]]
 
 
 def test_a_non_finite_graph_is_refused_before_any_write(

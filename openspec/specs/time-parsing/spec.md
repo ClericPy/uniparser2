@@ -10,193 +10,88 @@ normalised output shape that keeps downstream comparisons and stored values stab
 
 ## Requirements
 
-### Requirement: Zone-bearing timestamp shapes are accepted without an explicit format
+### Requirement: strptime parses with an explicit literal format
 
-When `py.parse_time` receives no `format` parameter, it SHALL accept a timestamp whose zone is
-written inside the string, in these shapes:
+`py.strptime` SHALL parse the upstream text with one explicit, literal format
+(`["py","strptime","%d|%m|%Y"]`) and answer a `datetime`: naive, or aware when the format contains
+`%z`. The format MUST be validated at compile time against `strftime`'s locale-free allowlist, and a
+bad or unknown directive MUST be `UP2-E1005`. There SHALL be no format guessing, fallback table or
+implicit trimming; a text that does not match MUST be `UP2-E2005`, naming the format.
 
-- ISO 8601 with a `T` separator and a numeric offset (`+08:00` or `+0800`) or a `Z` suffix,
-  with or without fractional seconds;
-- RFC 822 / RFC 2822 (`Thu, 24 Sep 2026 15:30:00 +0800`), including the named zones `GMT` and
-  `UTC` in place of the numeric offset;
-- the space-separated variant of an ISO timestamp followed by a numeric offset
-  (`2026-09-24 15:30:00 +0800`).
+#### Scenario: A day-first date
 
-A string matching none of the accepted shapes MUST still fail with `UP2-E2007`, exactly as before.
+- **WHEN** the chain is `[["py","strptime","%d|%m|%Y"]]` and the value is `24|09|2026`
+- **THEN** the result is the naive `datetime` for 2026-09-24 at 00:00:00
 
-#### Scenario: RSS 2.0 `pubDate`
+#### Scenario: A format with an offset
 
-- **WHEN** the upstream value is `Thu, 24 Sep 2026 15:30:00 +0800` and the chain is `["py", "parse_time", ""]`
-- **THEN** the result is `2026-09-24 15:30:00`
+- **WHEN** the chain is `[["py","strptime","%Y-%m-%dT%H:%M:%S%z"]]` and the value is
+  `2026-09-24T15:30:00+0800`
+- **THEN** the result is an aware `datetime` at `+08:00`
 
-#### Scenario: RSS 2.0 `pubDate` with a named zone
+#### Scenario: A text that does not match
 
-- **WHEN** the upstream value is `Thu, 24 Sep 2026 15:30:00 GMT`
-- **THEN** the result is `2026-09-24 15:30:00`
+- **WHEN** the chain is `[["py","strptime","%d|%m|%Y"]]` and the value is `2026-09-24`
+- **THEN** the outcome is `UP2-E2005`, and the message names `%d|%m|%Y`
 
-#### Scenario: Atom 1.0 `updated`
+#### Scenario: There is no guessing
 
-- **WHEN** the upstream value is `2026-09-24T15:30:00Z`
-- **THEN** the result is `2026-09-24 15:30:00`
+- **WHEN** the chain is `[["py","strptime","%d|%m|%Y"]]` and the value is
+  `Thu, 24 Sep 2026 15:30:00 +0800`
+- **THEN** the outcome is `UP2-E2005`, because a shape the format does not describe is never inferred
 
-#### Scenario: An ISO timestamp with a numeric offset and fractional seconds
+#### Scenario: A rejected directive is a compile error
 
-- **WHEN** the upstream value is `2026-09-24T15:30:00.000+08:00`
-- **THEN** the result is `2026-09-24 15:30:00`
+- **WHEN** the chain is `["py","strptime","%B %d, %Y"]` and it is compiled
+- **THEN** compilation fails with `UP2-E1005` at the format parameter, because the locale decides the
+  month name
 
-#### Scenario: An unreadable timestamp still fails
+### Requirement: An epoch converts to and from a datetime
 
-- **WHEN** the upstream value is `not a timestamp`
-- **THEN** the outcome is `UP2-E2007`
+`py.from_timestamp` and `py.to_timestamp` SHALL convert between epoch seconds and a `datetime` at a
+fixed offset, with no timezone database or DST. `from_timestamp` SHALL answer an aware `datetime` at
+`tz` hours (optional, default `0` = UTC; a half-hour zone writes `5.5`). `to_timestamp` SHALL use an
+aware value's own offset and interpret a naive value at `tz`; an aware value with a non-zero `tz` MUST
+be `UP2-E2002`, and a `tz` that is not a number MUST be `UP2-E1005`.
 
-### Requirement: The offset is consumed, not applied
+#### Scenario: Epoch seconds become an aware datetime
 
-The result of `py.parse_time` MUST stay the normalised wall-clock string
-`%Y-%m-%d %H:%M:%S`. A zone in the input MUST NOT shift the returned time: the offset is read so
-that the string parses, and is then dropped. The operation MUST NOT convert to UTC and MUST NOT
-return a zone-bearing value.
+- **WHEN** the chain is `[["py","from_timestamp",0]]` and the value is `0`
+- **THEN** the result is an aware `datetime` at `+00:00` holding 1970-01-01 00:00:00
 
-#### Scenario: Two zones, one wall clock
+#### Scenario: A half-hour zone
 
-- **WHEN** `2026-09-24T15:30:00Z` and `2026-09-24T15:30:00+08:00` are parsed
-- **THEN** both return `2026-09-24 15:30:00` (identical output; no UTC shift)
+- **WHEN** the chain is `[["py","from_timestamp",5.5]]` and the value is `0`
+- **THEN** the result is an aware `datetime` at `+05:30` holding 1970-01-01 05:30:00
 
-#### Scenario: The accepted shapes agree with the existing zone-less shape
+#### Scenario: The zone defaults to UTC
 
-- **WHEN** `2026-09-24T15:30:00`, `2026-09-24T15:30:00Z` and `2026-09-24T15:30:00+00:00` are parsed
-- **THEN** all three return `2026-09-24 15:30:00`
+- **WHEN** the chain is `[["py","from_timestamp"]]` and the value is `0`
+- **THEN** the result is an aware `datetime` at `+00:00`
 
-### Requirement: An explicit format and the language fallback keep their precedence
+#### Scenario: An aware value uses its own offset
 
-The decision order of `py.parse_time` SHALL be: an explicit `format` (parsed with exactly that layout) →
-the built-in table of machine shapes → the language fallback → `UP2-E2007`. The explicit `format` SHALL
-take precedence over the built-in table and over the language fallback, the language fallback SHALL be
-reachable without naming a language (see "Natural-language input is parsed without a parameter"), and
-leading and trailing whitespace SHALL still be trimmed before parsing.
+- **WHEN** the chain is `[["py","to_timestamp"]]` and the value is an aware `datetime` at `+08:00`
+  holding 1970-01-01 08:00:00
+- **THEN** the result is `0`
 
-#### Scenario: Explicit format still wins
+#### Scenario: A naive value is read at UTC
 
-- **WHEN** the chain is `["py", "parse_time", {"format": "%d.%m.%Y %H:%M"}]` and the value is `24.09.2026 15:30`
-- **THEN** the result is `2026-09-24 15:30:00`
+- **WHEN** the chain is `[["py","to_timestamp"]]` and the value is the naive `datetime`
+  1970-01-01 00:00:00
+- **THEN** the result is `0`, regardless of the machine's local zone
 
-#### Scenario: The table is reached before the language fallback
+#### Scenario: A second zone on an aware value
 
-- **WHEN** the chain is `["py", "parse_time", ""]` and the value is `2026-09-24 15:30:00`
-- **THEN** the result is `2026-09-24 15:30:00` without consulting the language engine
+- **WHEN** the chain is `[["py","to_timestamp",2]]` and the value is an aware `datetime`
+- **THEN** the outcome is `UP2-E2002`, because the value already carries an offset
 
-#### Scenario: Whitespace is still trimmed
+#### Scenario: A zone that is not a number
 
-- **WHEN** the upstream value is `  2026-09-24T15:30:00Z  `
-- **THEN** the result is `2026-09-24 15:30:00`
+- **WHEN** the chain is `["py","from_timestamp","+02:00"]` and it is compiled
+- **THEN** compilation fails with `UP2-E1005` at the zone parameter
 
-### Requirement: Natural-language input is parsed without a parameter
+#### Scenario: A receiver that is not a datetime
 
-When the chain gives no explicit `format` and the built-in table matches nothing, `py.parse_time` SHALL
-pass the text to the optional natural-language engine (`dateparser`) with automatic language detection,
-so a chain does not have to name a language to read one. The canonical output stays
-`%Y-%m-%d %H:%M:%S`.
-
-When the engine is not installed, the outcome MUST be `UP2-E2008`, naming the extra to install; a chain
-MUST NOT return a different value because an optional engine is absent. When the engine is installed and
-cannot read the text, the outcome MUST be `UP2-E2007`.
-
-#### Scenario: A French date without parameters
-
-- **WHEN** the chain is `["py", "parse_time", ""]` and the value is `24 septembre 2026`
-- **THEN** the result is `2026-09-24 00:00:00` (with the engine installed)
-
-#### Scenario: A relative expression without parameters
-
-- **WHEN** the chain is `["py", "parse_time", ""]` and the value is `yesterday`
-- **THEN** the result is the canonical form of the day before the base clock
-
-#### Scenario: A German date without parameters
-
-- **WHEN** the chain is `["py", "parse_time", ""]` and the value is `24. September 2026`
-- **THEN** the result is `2026-09-24 00:00:00` (with the engine installed)
-
-#### Scenario: A machine shape never needs the engine
-
-- **WHEN** the chain is `["py", "parse_time", ""]` and the value is `Sep 24, 2026`
-- **THEN** the result is `2026-09-24 00:00:00` and the optional engine is not imported
-
-#### Scenario: The engine is missing
-
-- **WHEN** the engine is not installed and the value is `24 septembre 2026`
-- **THEN** the outcome is `UP2-E2008` and the fix line names the extra to install
-
-#### Scenario: Nothing can read the text
-
-- **WHEN** the engine is installed and the value is `not a timestamp at all`
-- **THEN** the outcome is `UP2-E2007`
-
-### Requirement: The ambiguous numeric order is an explicit parameter
-
-`py.parse_time` SHALL accept an optional `date_order` parameter whose value is one of `MDY`, `DMY` or
-`YMD`, validated at compile time with `UP2-E1005`. It MUST decide the order of an ambiguous numeric
-writing in **both** places where such a writing can be read — the built-in table's `dd/mm/yyyy` /
-`mm/dd/yyyy` pair and the natural-language engine — so that a plain date and a date with a time part
-cannot give different dates. When `date_order` is absent the default MUST be `DMY`, and that default
-MUST be stated in the design note and in the operator reference. `YMD` has no writing of its own in the
-table's pair, so it MUST keep the default order there and only affect the engine.
-
-#### Scenario: The default is day first, in both writings
-
-- **WHEN** the chains `["py", "parse_time", ""]` receive `03/04/2026` and `03/04/2026 15:30`
-- **THEN** both results are `2026-04-03` (the same date, at 00:00:00 and 15:30:00)
-
-#### Scenario: A month-first order changes both writings
-
-- **WHEN** the chain is `["py", "parse_time", {"date_order": "MDY"}]` and the values are `03/04/2026` and
-  `03/04/2026 15:30`
-- **THEN** both results are `2026-03-04` (the same date, at 00:00:00 and 15:30:00)
-
-#### Scenario: The parameter overrides the language preference
-
-- **WHEN** the chain is `["py", "parse_time", {"lang": "de", "date_order": "MDY"}]` and the value is
-  `03/04/2026 15:30`
-- **THEN** the result is `2026-03-04 15:30:00`
-
-#### Scenario: An unknown order is a compile error
-
-- **WHEN** the chain is `["py", "parse_time", {"date_order": "YDM"}]` and it is compiled
-- **THEN** compilation fails with `UP2-E1005` at the parameter, and the fix line names the accepted values
-
-### Requirement: Relative expressions have a pinnable base clock
-
-`py.parse_time` SHALL accept an optional `now` parameter that fixes the base clock of a relative
-expression (`yesterday`, `3 days ago`). The parameter is a `ref_or_literal` value: it SHALL accept the
-canonical layout as a literal and a reference such as `"$globals.now"`. When it is absent, the wall clock
-is used and that time-dependence MUST be stated in the design note and in the operator reference.
-
-#### Scenario: A literal base clock
-
-- **WHEN** the chain is `["py", "parse_time", {"now": "2026-01-01 12:00:00"}]` and the value is `tomorrow`
-- **THEN** the result is `2026-01-02 12:00:00`
-
-#### Scenario: A base clock from the chain environment
-
-- **WHEN** the chain is `["py", "parse_time", {"now": "$globals.now"}]`, the environment carries
-  `now = 2026-01-01 12:00:00` and the value is `tomorrow`
-- **THEN** the result is `2026-01-02 12:00:00`
-
-#### Scenario: A base clock that is not a canonical time
-
-- **WHEN** the chain is `["py", "parse_time", {"now": "next tuesday"}]` and it is compiled
-- **THEN** compilation fails with `UP2-E1005` at the parameter
-
-### Requirement: An explicit format and a language are alternatives
-
-A `format` and a `lang` given together MUST be rejected at compile time with `UP2-E1005`, because the
-explicit format wins over the language fallback and the language could therefore never have an effect.
-The fix line MUST name the two alternatives.
-
-#### Scenario: The combination is rejected
-
-- **WHEN** the chain is `["py", "parse_time", {"format": "%Y-%m-%d", "lang": "en"}]` and it is compiled
-- **THEN** compilation fails with `UP2-E1005` at the language parameter
-
-#### Scenario: A language alone still restricts the detection
-
-- **WHEN** the chain is `["py", "parse_time", {"lang": "fr"}]` and the value is `24 septembre 2026`
-- **THEN** the result is `2026-09-24 00:00:00`
+- **WHEN** the chain is `["py","to_timestamp"]` and the value is the text `"0"`
+- **THEN** the outcome is `UP2-E2002`

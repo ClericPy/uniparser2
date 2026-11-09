@@ -22,7 +22,7 @@ all handled correctly.
 
 **Slots** (see ``02`` §1, uniform across operators): ``["xpath", accessor, XPath expression]`` —
 the accessor is in slot 2 and the operand (the expression) in slot 3. When the expression needs a
-namespace mapping, slot 3 holds an object ``{"expr": …, "ns": {…}}``.
+namespace mapping, slot 3 is a two-element array ``[expr, {"dc": …}]`` (design D3).
 
 **There are only three accessors** (the value is always a ``list``; ask for a scalar by chaining
 ``py.first`` explicitly — the same shape rule as ``css``):

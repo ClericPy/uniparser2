@@ -218,7 +218,7 @@ def test_a_scope_without_materialization_holds_nothing() -> None:
     scope = Scope()
 
     assert scope.cache is None
-    outcome = eval_field(compile_field([["const", 1]]), None, scope=scope)
+    outcome = eval_field(compile_field([["py", "const", 1]]), None, scope=scope)
     assert isinstance(outcome, Ok)
     assert outcome.value == 1
     assert len(scope.materializer) == 0

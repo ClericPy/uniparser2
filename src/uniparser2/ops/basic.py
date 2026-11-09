@@ -1,12 +1,8 @@
-"""Building-block operators: ``const`` (design doc 02 §6.5) and ``each`` (design doc 03 §4).
+"""The ``each`` operator (design doc 03 §4): one pass per element of a list.
 
-Two-slot operators ``[const, value]`` / ``[each, fields]``: each has **exactly one action**, so the
-chain omits the action slot.
-
-Type conversion (the former ``cast`` operator) has been folded back into ``py``: ``str`` / ``int`` /
-``float`` / ``bool`` / ``list`` / ``from_json`` — these are Python built-ins to begin with, and a
-standalone operator would only add another "where does the target type go" convention (see D-02-14
-in ``02``).
+``each`` has exactly one action, so the chain writes no action slot and its parameter is slot 2.
+The parameter's shape selects the mode — an object is a field map, an array is one chain. The
+former ``const`` operator is gone: a literal is ``["py","const",value]`` (design D0).
 """
 
 from __future__ import annotations
@@ -20,35 +16,8 @@ from ..core.limits import MAX_EACH_ITER
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import type_name
 
-_CONST_ACTION: Final = "const"
 _EACH_ACTION: Final = "each"
 _LOCAL_PREFIX: Final = "_"
-
-
-@op("const")
-class Const(Op):
-    """Produce the literal verbatim.
-
-    ``["const", "$100"]`` yields the string ``"$100"`` (never resolved as a reference).
-    """
-
-    summary = "Literal (never resolved as a reference)"
-    arity = 2
-    slot_roles = ("value",)
-    actions: ClassVar[Mapping[str, ActionSpec]] = {
-        _CONST_ACTION: ActionSpec(
-            _CONST_ACTION,
-            "Produce the value verbatim",
-            (ParamSpec("value", Kind.LITERAL),),
-        )
-    }
-
-    def resolve_action(self, action_text: Any, *, pointer: str = "") -> str:
-        del action_text, pointer  # single action: the chain omits the action slot
-        return _CONST_ACTION
-
-    def evaluate(self, call: Call) -> Outcome:
-        return Ok(call.params["value"])
 
 
 @op("each")
@@ -59,6 +28,9 @@ class Each(Op):
     order. Each element is evaluated in **its own scope**, so a field can stash a temporary in
     ``locals`` and a later field of the same element can read it; a field whose name starts with
     ``_`` is such a temporary and never becomes a key of the element's dictionary.
+
+    The parameter's shape selects the mode: an **object** is a field map, an **array** is one
+    chain run over every element, answering a list of its products (``["each",[["py","strip"]]]``).
 
     The input must be a list: an element of an object would be a key/value pair, and no operator in
     the set can consume one (``py.getitem`` takes lists). An empty list yields an empty list.
@@ -71,7 +43,7 @@ class Each(Op):
         _EACH_ACTION: ActionSpec(
             _EACH_ACTION,
             "Run the field map once per element",
-            (ParamSpec("fields", Kind.FIELDS),),
+            (ParamSpec("fields", Kind.FIELDS_OR_CHAIN),),
         )
     }
 
@@ -98,6 +70,8 @@ class Each(Op):
                 reason=f"each got {len(value)} elements, over MAX_EACH_ITER={MAX_EACH_ITER}",
                 fix='truncate the list first with ["py","slice",":100"]',
             )
+        if isinstance(call.payload, CompiledField):
+            return self._run_chain(call, value)
         fields: Mapping[str, CompiledField] = call.payload
         rows: list[dict[str, Any]] = []
         for position, element in enumerate(value):
@@ -115,3 +89,15 @@ class Each(Op):
                     row[name] = outcome.value
             rows.append(row)
         return Ok(rows)
+
+    @staticmethod
+    def _run_chain(call: Call, value: list[Any]) -> Outcome:
+        """The chain mode: one product per element, in input order."""
+        chain = call.payload
+        products: list[Any] = []
+        for position, element in enumerate(value):
+            outcome = call.run_chain(chain, element, call.scope.child(position))
+            if isinstance(outcome, Failed):
+                return outcome
+            products.append(outcome.value)
+        return Ok(products)

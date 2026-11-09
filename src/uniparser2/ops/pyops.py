@@ -1,4 +1,4 @@
-"""``py`` operator: 42 allowlist functions (design doc 02 §6.4).
+"""``py`` operator: the allowlist function table (design doc 02 §6.4).
 
 **Slots** (see ``02`` §1): ``["py", function name, parameters]`` — the function name is in slot 2
 and its parameters in slot 3.
@@ -17,27 +17,27 @@ error: it yields the empty value of its shape (``""`` / ``[]`` / ``None``).
 ``getattr`` (a host object's own attribute) is the one action that is not a function of a JSON
 value: see its own docstring.
 
-Two groups of functions used to be separate operators and were folded into this table (see D-02-14
-in ``02``):
+``const`` is the literal stage (the former ``const`` operator): the parameter is returned verbatim.
+Time is Python's own pair: ``strptime`` (text + explicit format -> ``datetime``) and ``strftime``
+(``datetime`` + layout -> text), plus ``from_timestamp`` / ``to_timestamp`` for epoch seconds. A
+``datetime`` may flow between stages but is not exportable; ``strftime`` is the way out (D14).
 
-- ``parse_time``: time parsing (the former ``time`` operator). Common machine formats go through a
-  stdlib format table with **no required dependency**; ``dateparser`` is used only when ``lang`` is
-  given (missing it raises ``UP2-E2008``).
-- ``str`` / ``int`` / ``float`` / ``bool`` / ``list`` / ``from_json``: type conversion (the former
-  ``cast`` operator) — these are Python built-ins to begin with, and a standalone operator would
-  only add another "where does the target type go" convention.
+``str`` / ``int`` / ``float`` / ``bool`` / ``from_json`` are the former ``cast`` operator: these are
+Python built-ins to begin with, and a standalone operator would only add another "where does the
+target type go" convention.
 """
 
 from __future__ import annotations
 
 import base64
+import calendar
 import hashlib
 import importlib
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Final
 from urllib.parse import urljoin as _urljoin
 from urllib.parse import urlsplit as _urlsplit
@@ -46,54 +46,15 @@ from ..core.ast import Lit, Param
 from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
 from ..core.refs import Scope
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
-from ..core.values import is_json_value, type_name
+from ..core.values import is_json_value, loads_json, type_name
 
 _Fn = Callable[[Any, Mapping[str, Any], Scope], Outcome]
 
-_TAG_PATTERN: Final = re.compile(r"<[^>]*>")
 _SPACE_PATTERN: Final = re.compile(r"\s+")
 _URL_PARTS: Final = ("scheme", "netloc", "path", "query", "fragment")
-_SORT_KEYS: Final = ("str", "int", "float")
-_TRUE_TEXT: Final = ("true", "1", "yes")
 _MARKDOWN_EXTRA: Final = 'uv add "uniparser2[md]"'
 
-# ---- time parsing (the former time operator) ----
-TIME_FORMAT: Final = "%Y-%m-%d %H:%M:%S"
-"""The canonical output format (identical to the old v3 ``TIME_OUTPUT``, for easy comparison)."""
-_TIME_EXTRA: Final = 'uv add "uniparser2[time]"'
-_TIME_FMTS: Final = (
-    "%Y-%m-%d %H:%M:%S",
-    "%Y-%m-%dT%H:%M:%S",
-    "%Y-%m-%d %H:%M",
-    "%Y-%m-%d",
-    "%Y/%m/%d %H:%M:%S",
-    "%Y/%m/%d",
-    "%Y.%m.%d",
-    # The three date patterns below spell their CJK date units as escapes on purpose: the literal
-    # characters are part of the pattern the parser must match, and this file stays ASCII.
-    "%Y\u5e74%m\u6708%d\u65e5 %H:%M:%S",
-    "%Y\u5e74%m\u6708%d\u65e5 %H:%M",
-    "%Y\u5e74%m\u6708%d\u65e5",
-    "%Y%m%d",
-    # The ambiguous ``dd/mm/yyyy`` / ``mm/dd/yyyy`` pair is not listed here: which one is tried
-    # first is decided by ``date_order`` (see ``_ambiguous_fmts``), so that a plain date and a
-    # date with a time part cannot disagree about the same writing.
-    "%d %b %Y",
-    "%b %d, %Y",
-    # Zone-bearing shapes, so that the two canonical feed timestamps parse with no parameters:
-    # RSS 2.0 ``pubDate`` (RFC 822, optionally with the named zones GMT/UTC) and Atom ``updated``
-    # (ISO 8601 with Z or a numeric offset). ``%z`` accepts Z as well as +0800/+08:00. The offset is
-    # only consumed so that the string parses; the rendered result stays the wall clock in
-    # ``TIME_FORMAT`` and is never shifted to UTC.
-    "%Y-%m-%dT%H:%M:%S%z",
-    "%Y-%m-%dT%H:%M:%S.%f%z",
-    "%Y-%m-%d %H:%M:%S %z",
-    "%a, %d %b %Y %H:%M:%S %z",
-    "%a, %d %b %Y %H:%M:%S %Z",
-)
-
 # ---- type conversion (the former cast operator) ----
-_FALSEY_TEXT: Final = frozenset({"", "0", "false", "no", "null", "none"})
 _CONTAINER_SEPARATORS: Final = (",", ":")
 
 
@@ -117,7 +78,7 @@ def _text(value: Any, who: str) -> str | Failed:
     return Failed(
         code="UP2-E2002",
         reason=f"py.{who} needs a str, got {type_name(value)}",
-        fix="turn the upstream value into text with py.strip_tags / py.getitem first",
+        fix="turn the upstream value into text with py.str / py.getitem first",
     )
 
 
@@ -141,12 +102,10 @@ def _int_param(params: Mapping[str, Any], name: str) -> int:
 
 def _py_strip(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     text = _text(value, "strip")
-    return text if isinstance(text, Failed) else Ok(text.strip())
-
-
-def _py_strip_tags(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
-    text = _text(value, "strip_tags")
-    return text if isinstance(text, Failed) else Ok(_TAG_PATTERN.sub("", text))
+    if isinstance(text, Failed):
+        return text
+    chars = params.get("chars")
+    return Ok(text.strip() if chars is None else text.strip(str(chars)))
 
 
 def _py_normalize_space(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
@@ -171,16 +130,11 @@ def _py_split(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     sep = params["sep"]
     if not isinstance(sep, str):
         return Failed(code="UP2-E2002", reason="the separator of split must be a string")
-    raw_max = params.get("maxsplit")
     try:
-        if raw_max is None or raw_max == "":
-            return Ok(text.split(sep))
-        return Ok(text.split(sep, _int_param(params, "maxsplit")))
+        return Ok(text.split(sep))
     except ValueError as exc:
         return Failed(
-            code="UP2-E2005",
-            reason=f"split failed: {exc}",
-            fix="check the separator and maxsplit",
+            code="UP2-E2005", reason=f"split failed: {exc}", fix="use a non-empty separator"
         )
 
 
@@ -326,48 +280,53 @@ def _py_flatten(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     return Ok(flat)
 
 
-def _sort_key(name: Any) -> Callable[[Any], Any]:
-    if name in (None, "", "str"):
-        return str
-    if name == "int":
-        return int
-    if name == "float":
-        return float
-    raise ValueError(f"the key of sort must be one of {_SORT_KEYS}, got {name!r}")
-
-
 def _py_sort(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Python's ``sorted``, with no key and no coercion."""
+    del params, scope
     items = _items(value, "sort")
     if isinstance(items, Failed):
         return items
     try:
-        key = _sort_key(params.get("key"))
-        return Ok(sorted(items, key=key, reverse=_truthy(params.get("reverse"))))
-    except (ValueError, TypeError) as exc:
+        return Ok(sorted(items))
+    except TypeError as exc:
         return Failed(
             code="UP2-E2005",
             reason=f"sort failed: {exc}",
-            fix="check the element types and the key",
+            fix="sort comparable values only; convert the elements first with each + int/float",
         )
 
 
-def _truthy(raw: Any) -> bool:
-    if isinstance(raw, bool):
-        return raw
-    return str(raw).strip().lower() in _TRUE_TEXT
+def _py_sort_desc(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Python's ``sorted(..., reverse=True)``."""
+    del params, scope
+    items = _items(value, "sort_desc")
+    if isinstance(items, Failed):
+        return items
+    try:
+        return Ok(sorted(items, reverse=True))
+    except TypeError as exc:
+        return Failed(
+            code="UP2-E2005",
+            reason=f"sort_desc failed: {exc}",
+            fix="sort comparable values only; convert the elements first with each + int/float",
+        )
 
 
 def _py_uniq(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Deduplicate while preserving order: a set for membership, a list for order."""
+    del params, scope
     items = _items(value, "uniq")
     if isinstance(items, Failed):
         return items
-    seen: list[Any] = []
+    seen: set[Any] = set()
+    unique: list[Any] = []
     for item in items:
         if isinstance(item, (list, dict)):
             return Failed(code="UP2-E2002", reason="uniq does not support list/dict elements")
         if item not in seen:
-            seen.append(item)
-    return Ok(seen)
+            seen.add(item)
+            unique.append(item)
+    return Ok(unique)
 
 
 def _py_urljoin(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
@@ -385,13 +344,6 @@ def _py_urlsplit(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome
     if isinstance(text, Failed):
         return text
     return Ok(getattr(_urlsplit(text), str(params["part"])))
-
-
-def _py_default(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
-    fallback = params.get("value")
-    if value is None or value == "":
-        return Ok(fallback)
-    return Ok(value)
 
 
 def _py_b64_encode(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
@@ -519,28 +471,8 @@ def _to_float(value: Any) -> float:
 
 
 def _to_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() not in _FALSEY_TEXT
-    if isinstance(value, (int, float)):
-        return value != 0
-    if value is None:
-        return False
-    if isinstance(value, (list, dict)):
-        return len(value) > 0
-    raise TypeError(f"{type_name(value)} cannot be converted to bool")
-
-
-def _to_list(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        parsed = json.loads(value)
-        if not isinstance(parsed, list):
-            raise TypeError("the string is not a JSON array")
-        return parsed
-    raise TypeError(f"{type_name(value)} cannot be converted to list")
+    """Python's own truthiness: every non-empty string is true, including ``"false"``."""
+    return bool(value)
 
 
 def _to_json(value: Any) -> Any:
@@ -571,11 +503,6 @@ def _py_bool(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     return _convert(value, "bool", _to_bool)
 
 
-def _py_list(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
-    del params, scope
-    return _convert(value, "list", _to_list)
-
-
 def _py_from_json(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     del params, scope
     return _convert(value, "from_json", _to_json)
@@ -598,223 +525,90 @@ def _py_items(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     return Ok([[key, item] for key, item in value.items()])
 
 
-# ---------------------------------------------------------------- time parsing (former time)
+# ---------------------------------------------------------------- time (datetime in / out)
 
 
-def _import_dateparser() -> Callable[..., Any]:
-    """Import the optional enhancement lazily (a dynamic import hides missing modules)."""
-    module = importlib.import_module("dateparser")
-    parser: Callable[..., Any] = getattr(module, "parse")  # noqa: B009 - ModuleType attribute
-    return parser
-
-
-def _py_parse_time(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+def _py_strptime(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Python's ``datetime.strptime``: text + explicit format -> ``datetime``."""
     del scope
-    if value is None:
-        return Ok("")
-    if not isinstance(value, str):
+    text = _text(value, "strptime")
+    if isinstance(text, Failed):
+        return text
+    fmt = str(params["format"])
+    try:
+        return Ok(datetime.strptime(text, fmt))
+    except ValueError as exc:
+        return Failed(
+            code="UP2-E2005",
+            reason=f"parsing {text!r} with format {fmt!r} failed: {exc}",
+            fix="check the format against the actual layout of the time string",
+        )
+
+
+def _py_strftime(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Python's ``datetime.strftime``: ``datetime`` + layout -> text."""
+    del scope
+    if not isinstance(value, datetime):
         return Failed(
             code="UP2-E2002",
-            reason=f"py.parse_time needs a str input, got {type_name(value)}",
-            fix="turn the upstream value into text with py.strip / py.getitem first",
+            reason=f"py.strftime needs a datetime, got {type_name(value)}",
+            fix='parse the text first with ["py","strptime","%Y-%m-%d %H:%M:%S"]',
         )
-    text = value.strip()
-    if not text:
-        return Ok("")
-
-    fmt = params.get("format")
-    if fmt:
-        return _time_with_format(text, str(fmt))
-    order = params.get("date_order") or _TIME_DATE_ORDER_DEFAULT
-    parsed = _time_by_table(text, str(order))
-    if parsed is not None:
-        return Ok(parsed.strftime(TIME_FORMAT))
-    return _time_by_language(text, params, order=str(order))
+    return Ok(value.strftime(str(params["layout"])))
 
 
-def _time_with_format(text: str, fmt: str) -> Outcome:
-    try:
-        return Ok(datetime.strptime(text, fmt).strftime(TIME_FORMAT))
-    except ValueError as exc:
+def _py_from_timestamp(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Epoch seconds -> an aware ``datetime`` at a fixed offset (design D14)."""
+    del scope
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return Failed(
-            code="UP2-E2007",
-            reason=f"parsing {text!r} with format {fmt!r} failed: {exc}",
-            fix="check format against the actual layout of the time string",
+            code="UP2-E2002",
+            reason=f"py.from_timestamp needs a number of seconds, got {type_name(value)}",
+            fix='take the epoch out of the JSON tree first, e.g. ["json","data.ts"]',
         )
+    tz = _tz_hours(params)
+    if isinstance(tz, Failed):
+        return tz
+    return Ok(datetime.fromtimestamp(value, timezone(timedelta(hours=tz))))
 
 
-def _time_by_table(text: str, order: str) -> datetime | None:
-    """The built-in shapes, with the ambiguous slash pair tried in the requested order.
-
-    The pair is ordered rather than listed because a plain ``03/04/2026`` and a ``03/04/2026 15:30``
-    must not disagree: the table decides the first, the engine the second, and both are driven by
-    the same ``date_order`` value.
-    """
-    for candidate in (*_TIME_FMTS, *_ambiguous_fmts(order)):
-        try:
-            return datetime.strptime(text, candidate)
-        except ValueError:
-            continue
-    return None
-
-
-def _time_by_language(text: str, params: Mapping[str, Any], *, order: str) -> Outcome:
-    """The last resort: the optional engine, detecting the language unless ``lang`` restricts it.
-
-    ``lang`` no longer gates the engine (a chain should not have to name a language to read one), it
-    only narrows the detection. ``order`` and ``now`` are passed through as engine settings, so an
-    ambiguous numeric date and the base clock of a relative expression are the chain's decisions
-    rather than the library's. Without the extra the outcome is a coded error, never another value.
-    """
-    try:
-        parse = _import_dateparser()
-    except ImportError as exc:
+def _py_to_timestamp(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """``datetime`` -> epoch seconds; a naive value is read at ``tz`` (UTC by default)."""
+    del scope
+    if not isinstance(value, datetime):
         return Failed(
-            code="UP2-E2008",
-            reason=f"natural-language dates need dateparser: {exc}",
-            fix=f"install the optional dependency: {_TIME_EXTRA}",
+            code="UP2-E2002",
+            reason=f"py.to_timestamp needs a datetime, got {type_name(value)}",
+            fix='parse the text first with ["py","strptime","%Y-%m-%d %H:%M:%S"]',
         )
-    lang = params.get("lang")
-    settings: dict[str, Any] = {"DATE_ORDER": order}
-    now = params.get("now")
-    if now:
-        base = _parse_canonical(str(now))
-        if base is None:
+    tz = _tz_hours(params)
+    if isinstance(tz, Failed):
+        return tz
+    if value.tzinfo is not None:
+        if tz:
             return Failed(
-                code="UP2-E2007",
-                reason=f"now must be the canonical time {TIME_FORMAT}, got {now!r}",
-                fix='write the canonical shape, for example "2026-01-01 12:00:00"',
+                code="UP2-E2002",
+                reason="the datetime already carries its own offset, and tz asks for another",
+                fix="drop the tz parameter: an aware value converts with its own offset",
             )
-        settings["RELATIVE_BASE"] = base
-    try:
-        parsed = parse(text, languages=[str(lang)] if lang else None, settings=settings or None)
-    except Exception as exc:  # a third-party parse failure must become a coded Failed
+        return Ok(int(value.timestamp()))
+    return Ok(int(calendar.timegm(value.timetuple())) - int(tz * 3600))
+
+
+def _tz_hours(params: Mapping[str, Any]) -> float | Failed:
+    raw = params.get("tz")
+    if raw is None:
+        return 0.0
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return Failed(
-            code="UP2-E2007",
-            reason=f"dateparser failed to parse: {exc}",
-            fix="check the text, or restrict the language with lang",
+            code="UP2-E2002",
+            reason=f"tz must be a number of hours, got {type_name(raw)}",
+            fix="write the fixed offset in hours: 8, -5, 5.5",
         )
-    if parsed is None:
-        return Failed(
-            code="UP2-E2007",
-            reason=f"nothing could read the time string {text!r}",
-            fix=(
-                "extract the time fragment with re/py first, or give an explicit layout "
-                'such as {"format": "%Y-%m-%d"}'
-            ),
-        )
-    return Ok(parsed.strftime(TIME_FORMAT))
+    return float(raw)
 
 
-def _check_time_format(params: Mapping[str, Param], *, pointer: str = "") -> None:
-    raw = params["format"]
-    fmt = raw.value if isinstance(raw, Lit) else raw
-    if fmt is None:
-        return
-    target = pointer or "/2/format"
-    if not isinstance(fmt, str) or not fmt:
-        raise Up2Error(
-            diag(
-                "UP2-E1005",
-                f"format must be a non-empty string, got {fmt!r}",
-                fix='write a strptime format such as "%Y-%m-%d %H:%M:%S"',
-                pointer=target,
-            )
-        )
-    try:
-        datetime.strptime("", fmt)
-    except ValueError as exc:
-        # `_strptime` (pure Python, the same on every platform) reports a format it cannot use
-        # with a message ending in "in format '<fmt>'": "'Q' is a bad directive in format '%Q'"
-        # or "stray % in format '%'". Its other ValueError — "time data '' does not match
-        # format ..." — only says the probe text does not fit, not that the format is bad.
-        #
-        # Probing with `strftime` (what this check did before) is **platform-dependent**: glibc
-        # passes an unknown directive through verbatim while the Windows CRT raises, so the same
-        # chain compiled on Linux and was rejected on Windows. Asking `strptime` also matches
-        # what the operator does at parse time, so a format it accepts is never rejected here.
-        if " in format " not in str(exc):
-            return
-        raise Up2Error(
-            diag(
-                "UP2-E1005",
-                f"invalid strptime format: {exc}",
-                fix="fix the directives in format",
-                pointer=target,
-            )
-        ) from exc
-
-
-_TIME_DATE_ORDER_DEFAULT: Final = "DMY"
-"""Day first, which is what the built-in table has always done for a plain ``03/04/2026``."""
-
-_AMBIGUOUS_ORDER: Final[Mapping[str, tuple[str, str]]] = {
-    "MDY": ("%m/%d/%Y", "%d/%m/%Y"),
-    "DMY": ("%d/%m/%Y", "%m/%d/%Y"),
-}
-"""The two writings of an ambiguous slash date, in the order the requested policy tries them."""
-
-
-def _ambiguous_fmts(order: str) -> tuple[str, ...]:
-    return _AMBIGUOUS_ORDER.get(order, _AMBIGUOUS_ORDER[_TIME_DATE_ORDER_DEFAULT])
-
-
-_TIME_DATE_ORDERS: Final = ("MDY", "DMY", "YMD")
-"""The numeric orders the engine understands (``settings["DATE_ORDER"]``)."""
-
-
-def _written(raw: Param | None) -> Any:
-    """The value as written in the chain (``Lit``), or the structure behind a reference."""
-    return raw.value if isinstance(raw, Lit) else raw
-
-
-def _check_time_params(params: Mapping[str, Param], *, pointer: str = "") -> None:
-    """The compile-time checks of ``py.parse_time``: layout, order, base clock, combination."""
-    _check_time_format(params, pointer=f"{pointer}/format")
-    fmt = _written(params.get("format"))
-    lang = _written(params.get("lang"))
-    if fmt and lang:
-        raise Up2Error(
-            diag(
-                "UP2-E1005",
-                "format and lang cannot be given together: the explicit format wins, so the "
-                "language would never have an effect",
-                fix=(
-                    'keep one of them — give "format" for an explicit layout, or drop it and let '
-                    "the language detection run"
-                ),
-                pointer=f"{pointer}/lang" if pointer else "/2/lang",
-            )
-        )
-    order = _written(params.get("date_order"))
-    if order is not None and order not in _TIME_DATE_ORDERS:
-        raise Up2Error(
-            diag(
-                "UP2-E1005",
-                f"date_order must be one of {_TIME_DATE_ORDERS}, got {order!r}",
-                fix='write "MDY" (month first), "DMY" (day first) or "YMD"',
-                pointer=f"{pointer}/date_order" if pointer else "/2/date_order",
-                allowed=_TIME_DATE_ORDERS,
-            )
-        )
-    now = _written(params.get("now"))
-    if isinstance(now, str) and now and _parse_canonical(now) is None:
-        raise Up2Error(
-            diag(
-                "UP2-E1005",
-                f"now must be the canonical time {TIME_FORMAT}, got {now!r}",
-                fix=(
-                    'write the canonical shape, for example "2026-01-01 12:00:00", or a '
-                    'reference such as "$globals.now"'
-                ),
-                pointer=f"{pointer}/now" if pointer else "/2/now",
-            )
-        )
-
-
-# ---------------------------------------------------------------- time rendering (output side)
-
-_STRFTIME_ALLOWED: Final = frozenset("YymdHMISfjUWwu")
+_STRFTIME_ALLOWED: Final = frozenset("YymdHMISfjUWwuz")
 """The directives whose rendering is locale-free and stable across platforms (design D6)."""
 
 _STRFTIME_REJECTED: Final[Mapping[str, str]] = {
@@ -826,14 +620,13 @@ _STRFTIME_REJECTED: Final[Mapping[str, str]] = {
     "c": "the locale's date and time representation is decided by the process locale",
     "x": "the locale's date representation is decided by the process locale",
     "X": "the locale's time representation is decided by the process locale",
-    "z": "the canonical value carries no zone, so an offset would always render as empty",
-    "Z": "the canonical value carries no zone, so a zone name would always render as empty",
+    "Z": "a zone name is decided by the platform's zone data",
     "e": "a platform-specific directive (glibc); it is not available everywhere",
     "k": "a platform-specific directive (glibc); it is not available everywhere",
     "l": "a platform-specific directive (glibc); it is not available everywhere",
     "G": "the ISO year is platform-dependent and needs the ISO week and weekday together",
     "V": "the ISO week is platform-dependent",
-    "s": "epoch seconds would have to assume a zone for a zone-less value",
+    "s": "epoch seconds would have to assume a zone for a naive value",
 }
 
 _STRFTIME_FIX: Final = (
@@ -841,30 +634,9 @@ _STRFTIME_FIX: Final = (
 )
 
 
-def _parse_canonical(text: str) -> datetime | None:
-    """Parse the canonical time shape, or report that the text is not one (strictly zero-padded)."""
-    try:
-        return datetime.strptime(text, TIME_FORMAT)
-    except ValueError:
-        return None
-
-
-def _py_strftime(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
-    del scope
-    if not isinstance(value, str):
-        return Failed(
-            code="UP2-E2002",
-            reason=f"py.strftime needs the canonical time string, got {type_name(value)}",
-            fix="produce it first with py.parse_time",
-        )
-    parsed = _parse_canonical(value)
-    if parsed is None:
-        return Failed(
-            code="UP2-E2007",
-            reason=f"{value!r} is not the canonical time shape {TIME_FORMAT}",
-            fix="normalise the value first with py.parse_time",
-        )
-    return Ok(parsed.strftime(str(params["layout"])))
+def _written(raw: Param | None) -> Any:
+    """The value as written in the chain (``Lit``), or the structure behind a reference."""
+    return raw.value if isinstance(raw, Lit) else raw
 
 
 def _layout_directives(layout: str) -> list[str]:
@@ -883,15 +655,17 @@ def _layout_directives(layout: str) -> list[str]:
     return found
 
 
-def _check_strftime_layout(params: Mapping[str, Param], *, pointer: str = "") -> None:
-    """Reject a layout that cannot render identically on every platform and locale (design D6)."""
-    target = pointer or "/2/layout"
-    layout = _written(params.get("layout"))
+def _check_time_layout(
+    action: str, name: str, params: Mapping[str, Param], *, pointer: str
+) -> None:
+    """Reject a format that cannot render identically on every platform and locale (design D6)."""
+    target = f"{pointer}/{name}" if pointer else f"/2/{name}"
+    layout = _written(params.get(name))
     if not isinstance(layout, str) or not layout:
         raise Up2Error(
             diag(
                 "UP2-E1005",
-                f"layout must be a non-empty string, got {layout!r}",
+                f"{name} must be a non-empty string, got {layout!r}",
                 fix=_STRFTIME_FIX,
                 pointer=target,
             )
@@ -903,7 +677,7 @@ def _check_strftime_layout(params: Mapping[str, Param], *, pointer: str = "") ->
             raise Up2Error(
                 diag(
                     "UP2-E1005",
-                    f"layout {layout!r} ends with a stray %",
+                    f"{name} {layout!r} ends with a stray %",
                     fix='write "%%" for a literal percent sign',
                     pointer=target,
                 )
@@ -913,7 +687,7 @@ def _check_strftime_layout(params: Mapping[str, Param], *, pointer: str = "") ->
             raise Up2Error(
                 diag(
                     "UP2-E1005",
-                    f"%{directive} cannot be rendered: {reason}",
+                    f"%{directive} cannot be used: {reason}",
                     fix=_STRFTIME_FIX,
                     pointer=target,
                 )
@@ -922,12 +696,25 @@ def _check_strftime_layout(params: Mapping[str, Param], *, pointer: str = "") ->
             raise Up2Error(
                 diag(
                     "UP2-E1005",
-                    f"unknown directive %{directive} in the layout",
+                    f"unknown directive %{directive} in {action}'s {name}",
                     fix=_STRFTIME_FIX,
                     pointer=target,
                     allowed=tuple(sorted(_STRFTIME_ALLOWED)),
                 )
             )
+    try:
+        datetime.strptime("", layout)
+    except ValueError as exc:
+        if " in format " not in str(exc):
+            return
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"invalid {name}: {exc}",
+                fix=f"fix the directives in {name}",
+                pointer=target,
+            )
+        ) from exc
 
 
 # ---- predicates (the chain layer's boolean vocabulary) ----
@@ -1022,7 +809,7 @@ def _operands(raw: Any, who: str) -> list[Any] | Failed:
 
 
 def _py_or(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
-    """Python's ``or``: the first truthy operand, otherwise the last one (``false`` when empty).
+    """Python's ``or`` over ``[value, *operands]``: the first truthy, otherwise the last.
 
     This is the "take A, else B, else C" shape, so the answer is an **operand**, not a boolean —
     which is why it is not spelled ``any``.
@@ -1030,66 +817,147 @@ def _py_or(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     items = _operands(params.get("operands"), "or")
     if isinstance(items, Failed):
         return items
-    if not items:
-        return Ok(False)
-    for item in items:
+    operands = [value, *items]
+    for item in operands:
         if item:
             return Ok(item)
-    return Ok(items[-1])
+    return Ok(operands[-1])
 
 
 def _py_and(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
-    """Python's ``and``: the first falsy operand, otherwise the last one (``true`` when empty)."""
+    """Python's ``and`` over ``[value, *operands]``: the first falsy, otherwise the last."""
     items = _operands(params.get("operands"), "and")
     if isinstance(items, Failed):
         return items
-    if not items:
-        return Ok(True)
-    for item in items:
+    operands = [value, *items]
+    for item in operands:
         if not item:
             return Ok(item)
-    return Ok(items[-1])
+    return Ok(operands[-1])
+
+
+def _py_const(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """The literal written as the parameter, verbatim (the former ``const`` operator)."""
+    del value, scope
+    return Ok(params["value"])
+
+
+def _py_md5(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    text = _text(value, "md5")
+    if isinstance(text, Failed):
+        return text
+    # Non-security use only (checksums / ETags); the weak hash is deliberate here.
+    return Ok(hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest())
+
+
+def _is_number(raw: Any) -> bool:
+    return isinstance(raw, (int, float)) and not isinstance(raw, bool)
+
+
+def _py_between(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """``lo <= value < hi``: numbers only, half-open, no coercion."""
+    del scope
+    bounds = params["bounds"]
+    if not isinstance(bounds, list) or len(bounds) != 2:
+        return Failed(
+            code="UP2-E2002",
+            reason="py.between needs a two-element [lo, hi] array",
+            fix='write ["py","between",[200,300]]',
+        )
+    low, high = bounds
+    if not all(_is_number(item) for item in (value, low, high)):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"py.between compares numbers only, got {type_name(value)}",
+            fix="convert the value and the bounds to numbers first",
+        )
+    return Ok(low <= value < high)
+
+
+_JSON_BRACKETS: Final = {"{": "}", "[": "]"}
+_JSON_CLOSERS: Final = frozenset("}]")
+
+
+def _py_find_jsons(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Every JSON object/array embedded in a text, parsed, in document order."""
+    del params, scope
+    text = _text(value, "find_jsons")
+    if isinstance(text, Failed):
+        return text
+    return Ok(_scan_jsons(text))
+
+
+def _scan_jsons(text: str) -> list[Any]:
+    """One stack-based pass: balanced spans only, string literals skipped, no backtracking."""
+    found: list[Any] = []
+    stack: list[str] = []
+    start = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in _JSON_BRACKETS:
+            if not stack:
+                start = index
+            stack.append(char)
+        elif char in _JSON_CLOSERS:
+            if not stack:
+                continue
+            if _JSON_BRACKETS[stack[-1]] != char:
+                stack.clear()
+                continue
+            stack.pop()
+            if not stack:
+                parsed = _load_json_candidate(text[start : index + 1])
+                if parsed is not None:
+                    found.append(parsed)
+    return found
+
+
+def _load_json_candidate(candidate: str) -> Any:
+    try:
+        parsed = loads_json(candidate)
+    except Up2Error:
+        return None
+    return parsed if isinstance(parsed, (dict, list)) else None
 
 
 _SCALAR_PARAMS: Final[Mapping[str, Mapping[str, tuple[str, tuple[type, ...]]]]] = {
     "urljoin": {"base": ("a string", (str,))},
     "slice": {"spec": ("a string", (str,))},
-    "split": {
-        "sep": ("a string", (str,)),
-        "maxsplit": ("an integer", (int, float, str, type(None))),
-    },
+    "split": {"sep": ("a string", (str,))},
+    "strip": {"chars": ("a string", (str,))},
     "getitem": {"at": ("a scalar", (str, int))},
     "getattr": {"ref_or_literal": ("a string", (str,))},
     "replace": {"old": ("a string", (str,)), "new": ("a string", (str,))},
     "strftime": {"layout": ("a string", (str,))},
+    "strptime": {"format": ("a string", (str,))},
+    "from_timestamp": {"tz": ("a number", (int, float))},
+    "to_timestamp": {"tz": ("a number", (int, float))},
 }
-"""Parameters whose runtime path needs a scalar, with the types it really accepts (design D3 of
-``add-parameter-shape-contract``).
-
-A JSON container here is always a mistake: these functions either reject it with ``UP2-E2002`` or
-raise inside ``int()``. A **literal of another type** is the same mistake one step later, and so is
-a string the runtime parses and refuses (``slice.spec`` / ``split.maxsplit``), so both fail at
-compile time too — the kernel invariant is "bad chains fail at compile time", not "at the first
-run". The accepted types mirror what evaluation actually takes: ``maxsplit`` keeps its numeric
-strings and ``None``/``""`` (no limit), and ``at`` takes the subscript types a JSON value really
-indexes with.
-
-Parameters that merely coerce their argument (``join.sep``, ``parse_time.lang``) and the any-typed
-``default.value`` are deliberately absent — a coercion is not a rejection, and a container there is
-a legal value.
-"""
 
 
 def _scalar_error(
     action: str, name: str, expected: str, got: str, *, pointer: str = "", fix: str = ""
 ) -> Up2Error:
     """One malformed-scalar diagnostic, at the parameter's own pointer."""
+    declared = [param.name for param in _ENTRIES[action].params]
+    suffix = str(declared.index(name)) if len(declared) > 1 else name
     return Up2Error(
         diag(
             "UP2-E1005",
             f"parameter {name!r} of py.{action} must be {expected}, got {got}",
             fix=fix or _scalar_fix(action, name),
-            pointer=f"{pointer}/{name}" if pointer else f"/2/{name}",
+            pointer=f"{pointer}/{suffix}" if pointer else f"/2/{suffix}",
         )
     )
 
@@ -1101,15 +969,8 @@ def _scalar_value_problem(action: str, name: str, value: Any) -> tuple[str, str]
             _parse_slice_spec(value)
         except ValueError:
             return 'a slice notation such as ":20" or "1:5"', 'write ":20" / "1:5" / "::-1"'
-    elif action == "split" and name == "maxsplit":
-        if value is None or value == "":
-            return None  # the documented "no limit" spellings
-        try:
-            if isinstance(value, bool):
-                raise ValueError("bool is not an integer")
-            int(value)
-        except (TypeError, ValueError):
-            return "an integer", 'write an integer, or "" for no limit'
+    elif action in ("from_timestamp", "to_timestamp") and name == "tz" and isinstance(value, bool):
+        return "a number of hours", "write 8, -5 or 5.5; no quotes, no booleans"
     return None
 
 
@@ -1127,6 +988,9 @@ def _check_scalar_params(action: str, params: Mapping[str, Param], *, pointer: s
                 raise _scalar_error(action, name, expected, type_name(raw), pointer=pointer)
             continue
         value = raw.value
+        spec = next(param for param in _ENTRIES[action].params if param.name == name)
+        if value is None and not spec.required:
+            continue
         if isinstance(value, (Mapping, list, tuple)) or not isinstance(value, accepted):
             raise _scalar_error(action, name, expected, type_name(value), pointer=pointer)
         problem = _scalar_value_problem(action, name, value)
@@ -1142,34 +1006,73 @@ def _scalar_fix(action: str, name: str) -> str:
     if len(declared) == 1:
         return f'write the value directly: ["py", "{action}", "…"]'
     names = ", ".join(repr(param.name) for param in declared)
-    return f'write the parameters as a named object with {names}, for example {{"{name}": …}}'
+    return f"write the parameters as one array in this order: {names}"
 
 
-_SORT_KEYS_ALLOWED: Final = ("", *_SORT_KEYS)
-
-
-def _check_sort_key(params: Mapping[str, Param], *, pointer: str = "") -> None:
-    """``sort.key`` is an enum, so an unknown value is decidable before the run."""
-    raw = params.get("key")
-    if not isinstance(raw, Lit):
-        return
-    key = raw.value
-    if key is None or key in _SORT_KEYS_ALLOWED:
-        return
-    raise Up2Error(
-        diag(
-            "UP2-E1005",
-            f"the key of sort must be one of {_SORT_KEYS_ALLOWED}, got {key!r}",
-            fix='write "str", "int" or "float", or drop the parameter',
-            pointer=pointer or "/2/key",
-            allowed=_SORT_KEYS_ALLOWED,
+def _check_operands(params: Mapping[str, Param], *, pointer: str = "") -> None:
+    """A literal operand list must be an array; a reference is decided at runtime."""
+    raw = params["operands"]
+    if isinstance(raw, Lit):
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"or/and need an array of operands, got {type_name(raw.value)}",
+                fix='write the operands as one array: ["py","or",["$locals.a","fallback"]]',
+                pointer=pointer or "/2/operands",
+            )
         )
-    )
+    if isinstance(raw, list):
+        return
+
+
+def _check_between(params: Mapping[str, Param], *, pointer: str = "") -> None:
+    """A literal bounds array must hold two numbers; references are decided at runtime."""
+    raw = params["bounds"]
+    if isinstance(raw, Lit):
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                "between needs a two-element [lo, hi] array",
+                fix='write ["py","between",[200,300]]',
+                pointer=pointer or "/2/bounds",
+            )
+        )
+    if not isinstance(raw, list):
+        return
+    if len(raw) != 2:
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"between needs exactly two bounds, got {len(raw)}",
+                fix='write ["py","between",[200,300]]',
+                pointer=pointer or "/2/bounds",
+            )
+        )
+    for index, item in enumerate(raw):
+        if isinstance(item, Lit) and not _is_number(item.value):
+            raise Up2Error(
+                diag(
+                    "UP2-E1005",
+                    f"bound {index} must be a number, got {type_name(item.value)}",
+                    fix="compare numbers only; convert the bound first",
+                    pointer=f"{pointer}/{index}" if pointer else f"/2/{index}",
+                )
+            )
 
 
 _TABLE: Final[tuple[_Entry, ...]] = (
-    _Entry("strip", "strip leading and trailing whitespace", _py_strip),
-    _Entry("strip_tags", "remove HTML tags", _py_strip_tags),
+    _Entry(
+        "const",
+        "produce the literal value verbatim (never resolved as a reference)",
+        _py_const,
+        (ParamSpec("value", Kind.LITERAL),),
+    ),
+    _Entry(
+        "strip",
+        "strip leading and trailing whitespace, or the given characters",
+        _py_strip,
+        (ParamSpec("chars", Kind.LITERAL, required=False, default=None),),
+    ),
     _Entry(
         "normalize_space",
         "collapse runs of whitespace into a single space",
@@ -1177,7 +1080,7 @@ _TABLE: Final[tuple[_Entry, ...]] = (
     ),
     _Entry(
         "html_to_markdown",
-        "HTML → Markdown (no parameters; complete relative links with py.urljoin)",
+        "HTML -> Markdown (no parameters; complete relative links with py.urljoin)",
         _py_html_to_markdown,
         (),
         ("html_to_markdown",),
@@ -1188,15 +1091,7 @@ _TABLE: Final[tuple[_Entry, ...]] = (
         _py_replace,
         (ParamSpec("old", Kind.LITERAL), ParamSpec("new", Kind.LITERAL)),
     ),
-    _Entry(
-        "split",
-        "split on a separator",
-        _py_split,
-        (
-            ParamSpec("sep", Kind.LITERAL),
-            ParamSpec("maxsplit", Kind.LITERAL, required=False, default=None),
-        ),
-    ),
+    _Entry("split", "split on a separator", _py_split, (ParamSpec("sep", Kind.LITERAL),)),
     _Entry("join", "join a list", _py_join, (ParamSpec("sep", Kind.LITERAL),)),
     _Entry("upper", "convert to uppercase", _py_upper),
     _Entry("lower", "convert to lowercase", _py_lower),
@@ -1217,16 +1112,14 @@ _TABLE: Final[tuple[_Entry, ...]] = (
     _Entry("first", "take the first element", _py_first),
     _Entry("last", "take the last element", _py_last),
     _Entry("flatten", "flatten one level", _py_flatten),
-    _Entry(
-        "sort",
-        "stable sort",
-        _py_sort,
-        (
-            ParamSpec("key", Kind.LITERAL, required=False, default=None),
-            ParamSpec("reverse", Kind.LITERAL, required=False, default=False),
-        ),
-    ),
+    _Entry("sort", "Python's sorted", _py_sort),
+    _Entry("sort_desc", "Python's sorted(reverse=True)", _py_sort_desc),
     _Entry("uniq", "deduplicate while preserving order", _py_uniq),
+    _Entry(
+        "find_jsons",
+        "every JSON object/array embedded in the text, parsed, in document order",
+        _py_find_jsons,
+    ),
     _Entry(
         "urljoin",
         "resolve relative to absolute",
@@ -1239,44 +1132,44 @@ _TABLE: Final[tuple[_Entry, ...]] = (
         _py_urlsplit,
         (ParamSpec("part", Kind.LITERAL),),
     ),
-    _Entry(
-        "default",
-        "fall back when the value is None or an empty string",
-        _py_default,
-        (ParamSpec("value", Kind.REF_OR_LITERAL),),
-    ),
     _Entry("b64_encode", "Base64 encode", _py_b64_encode),
     _Entry("b64_decode", "Base64 decode", _py_b64_decode),
     _Entry("sha256", "hexadecimal digest", _py_sha256),
+    _Entry("md5", "hexadecimal digest (checksums only, not security)", _py_md5),
     _Entry(
-        "parse_time",
-        "parse a time string into the canonical format %Y-%m-%d %H:%M:%S (explicit format, the "
-        "built-in table, then natural-language detection)",
-        _py_parse_time,
-        (
-            ParamSpec("lang", Kind.LITERAL, required=False, default=None),
-            ParamSpec("format", Kind.LITERAL, required=False, default=None),
-            ParamSpec("date_order", Kind.LITERAL, required=False, default=None),
-            ParamSpec("now", Kind.REF_OR_LITERAL, required=False, default=None),
-        ),
+        "strptime",
+        "parse text with an explicit format into a datetime",
+        _py_strptime,
+        (ParamSpec("format", Kind.LITERAL),),
     ),
     _Entry(
         "strftime",
-        "render the canonical time string in another layout (%Y-%m-%d %H:%M:%S → %Y/%m/%d)",
+        "render a datetime with a layout",
         _py_strftime,
         (ParamSpec("layout", Kind.LITERAL),),
+    ),
+    _Entry(
+        "from_timestamp",
+        "epoch seconds -> an aware datetime at a fixed offset",
+        _py_from_timestamp,
+        (ParamSpec("tz", Kind.REF_OR_LITERAL, required=False, default=None),),
+    ),
+    _Entry(
+        "to_timestamp",
+        "a datetime -> epoch seconds (a naive value is read at tz, UTC by default)",
+        _py_to_timestamp,
+        (ParamSpec("tz", Kind.REF_OR_LITERAL, required=False, default=None),),
     ),
     _Entry("str", "convert to a string (former cast str)", _py_str),
     _Entry("int", "convert to an integer (former cast int)", _py_int),
     _Entry("float", "convert to a float (former cast float)", _py_float),
-    _Entry("bool", "convert to a boolean (former cast bool)", _py_bool),
-    _Entry("list", "convert to a list (JSON array text or as-is)", _py_list),
+    _Entry("bool", "convert with Python's bool (former cast bool)", _py_bool),
     _Entry(
         "items",
-        "a dict becomes [[key, value], …] (index a pair with the literal 0 / 1)",
+        "a dict becomes [[key, value], ...] (index a pair with the literal 0 / 1)",
         _py_items,
     ),
-    _Entry("from_json", "JSON text → JSON tree (former cast json)", _py_from_json),
+    _Entry("from_json", "JSON text -> JSON tree (former cast json)", _py_from_json),
     _Entry(
         "==",
         "equal to the parameter (no type coercion)",
@@ -1320,14 +1213,20 @@ _TABLE: Final[tuple[_Entry, ...]] = (
         (ParamSpec("container", Kind.REF_OR_LITERAL),),
     ),
     _Entry(
+        "between",
+        "lo <= value < hi (numbers only, half-open)",
+        _py_between,
+        (ParamSpec("bounds", Kind.REF_OR_LITERAL),),
+    ),
+    _Entry(
         "or",
-        "the first truthy operand, else the last (Python's or; answers with the operand)",
+        "the first truthy of [value, *operands], else the last (Python's or)",
         _py_or,
         (ParamSpec("operands", Kind.REF_OR_LITERAL),),
     ),
     _Entry(
         "and",
-        "the first falsy operand, else the last (Python's and)",
+        "the first falsy of [value, *operands], else the last (Python's and)",
         _py_and,
         (ParamSpec("operands", Kind.REF_OR_LITERAL),),
     ),
@@ -1348,7 +1247,7 @@ _ACTIONS: Final[Mapping[str, ActionSpec]] = {
 
 @op("py", aliases=("python",))
 class Py(Op):
-    """The allowlist function set (42 functions, closed)."""
+    """The allowlist function set (closed)."""
 
     summary = "Python built-in allowlist functions"
     slot_roles = ("function", "params")
@@ -1369,14 +1268,16 @@ class Py(Op):
 
     def precompile(self, action: str, params: Mapping[str, Param], *, pointer: str = "") -> Any:
         _check_scalar_params(action, params, pointer=pointer)
-        if action == "sort":
-            _check_sort_key(params, pointer=f"{pointer}/key")
+        if action == "strftime":
+            _check_time_layout(action, "layout", params, pointer=pointer)
+        elif action == "strptime":
+            _check_time_layout(action, "format", params, pointer=pointer)
         elif action == "urlsplit":
             _check_url_part(params, pointer=f"{pointer}/part")
-        elif action == "parse_time":
-            _check_time_params(params, pointer=pointer)
-        elif action == "strftime":
-            _check_strftime_layout(params, pointer=pointer)
+        elif action == "between":
+            _check_between(params, pointer=f"{pointer}/bounds")
+        elif action in ("or", "and"):
+            _check_operands(params, pointer=f"{pointer}/operands")
         return None
 
     def evaluate(self, call: Call) -> Outcome:

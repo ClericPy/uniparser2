@@ -90,7 +90,7 @@ def _parse_story(**overrides: Any) -> dict[str, Any]:
         [
             {
                 "name": "records",
-                "body": {"url": "$in", "size": [["py", "len", ""]]},
+                "body": {"url": "$in", "size": [["py", "len"]]},
                 "type": "Record",
             }
         ]
@@ -133,7 +133,7 @@ def test_a_bundle_must_be_an_object() -> None:
 
 def test_an_unknown_bundle_key_is_rejected() -> None:
     """`chains` is the deleted table: a parse rule is a step, so the key is gone for good."""
-    code = _compile_error(_parse_story(chains={"list": [["py", "strip", ""]]}))
+    code = _compile_error(_parse_story(chains={"list": [["py", "strip"]]}))
     assert code == "UP2-E1005"
 
 
@@ -153,8 +153,8 @@ def test_the_run_starts_at_the_entry_not_at_the_first_step() -> None:
     """The entry is a declared name, and it must still be reachable through the flow."""
     story = _bundle(
         [
-            {"name": "a", "body": {"u": [["py", "upper", ""]]}, "type": "dict"},
-            {"name": "b", "body": {"u": [["py", "lower", ""]]}, "type": "dict"},
+            {"name": "a", "body": {"u": [["py", "upper"]]}, "type": "dict"},
+            {"name": "b", "body": {"u": [["py", "lower"]]}, "type": "dict"},
         ],
         entry="b",
     )
@@ -235,7 +235,7 @@ def test_a_backward_next_that_closes_a_loop_is_rejected_at_compile_time() -> Non
                     "type": "Request",
                     "next": "page",
                 },
-                {"name": "page", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+                {"name": "page", "body": {"n": [["py", "len"]]}, "type": "dict"},
                 {
                     "name": "again",
                     "body": {"url": "$in"},
@@ -284,15 +284,19 @@ def test_a_backward_next_into_a_region_that_cannot_reach_it_compiles() -> None:
                 "name": "fan",
                 "body": {
                     "items": [
-                        ["const", [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}]]
+                        [
+                            "py",
+                            "const",
+                            [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}],
+                        ]
                     ]
                 },
                 "type": "RequestBatch",
                 "next": "left",
             },
-            {"name": "left", "body": {"side": [["const", "left"]]}, "type": "dict"},
-            {"name": "right", "body": {"side": [["const", "right"]]}, "type": "dict"},
-            {"name": "joined", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+            {"name": "left", "body": {"side": [["py", "const", "left"]]}, "type": "dict"},
+            {"name": "right", "body": {"side": [["py", "const", "right"]]}, "type": "dict"},
+            {"name": "joined", "body": {"n": [["py", "len"]]}, "type": "dict"},
         ]
     )
     run = start(story, "seed")
@@ -321,7 +325,7 @@ def test_a_backward_next_followed_by_a_forward_jump_compiles() -> None:
                 "name": "shelf",
                 "body": {
                     "items": [
-                        ["const", ["u"]],
+                        ["py", "const", ["u"]],
                         ["each", {"url": [["py", "urljoin", "https://x/"]]}],
                     ]
                 },
@@ -348,7 +352,7 @@ def test_a_step_nothing_reaches_is_rejected() -> None:
     diagnostic = _compile_diagnostic(
         _bundle(
             [
-                {"name": "start", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+                {"name": "start", "body": {"n": [["py", "len"]]}, "type": "dict"},
                 {"name": "orphan", "body": {"u": "$in"}, "type": "dict"},
             ],
             entry="orphan",
@@ -453,7 +457,7 @@ def test_the_answer_is_never_copied_or_converted() -> None:
                 "name": "read",
                 "body": {
                     "final": [["py", "getattr", "url"]],
-                    "resolved": [["const", "https://x/final"], ["py", "==", "$in.url"]],
+                    "resolved": [["py", "const", "https://x/final"], ["py", "==", "$in.url"]],
                 },
                 "type": "Answer",
             },
@@ -497,12 +501,12 @@ def test_a_batch_runs_the_receiving_step_once_per_answer_and_rejoins() -> None:
             },
             {
                 "name": "fan",
-                "body": {"items": [["const", [{"url": "a"}, {"url": "b"}]]]},
+                "body": {"items": [["py", "const", [{"url": "a"}, {"url": "b"}]]]},
                 "type": "RequestBatch",
                 "next": "page",
             },
             {"name": "page", "body": [["py", "getattr", "text"]], "type": "Page"},
-            {"name": "count", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+            {"name": "count", "body": {"n": [["py", "len"]]}, "type": "dict"},
         ]
     )
     run = start(story, "seed")
@@ -525,15 +529,19 @@ def test_a_task_may_override_next() -> None:
                 "name": "fan",
                 "body": {
                     "items": [
-                        ["const", [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}]]
+                        [
+                            "py",
+                            "const",
+                            [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}],
+                        ]
                     ]
                 },
                 "type": "RequestBatch",
                 "next": "left",
             },
-            {"name": "left", "body": {"side": [["const", "left"]]}, "type": "dict"},
-            {"name": "right", "body": {"side": [["const", "right"]]}, "type": "dict"},
-            {"name": "joined", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+            {"name": "left", "body": {"side": [["py", "const", "left"]]}, "type": "dict"},
+            {"name": "right", "body": {"side": [["py", "const", "right"]]}, "type": "dict"},
+            {"name": "joined", "body": {"n": [["py", "len"]]}, "type": "dict"},
         ]
     )
     run = start(story, "seed")
@@ -567,15 +575,19 @@ def test_a_task_next_may_be_a_plain_string() -> None:
                 "name": "fan",
                 "body": {
                     "items": [
-                        ["const", [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}]]
+                        [
+                            "py",
+                            "const",
+                            [{"url": "a", "next": "left"}, {"url": "b", "next": "right"}],
+                        ]
                     ]
                 },
                 "type": "RequestBatch",
                 "next": "left",
             },
-            {"name": "left", "body": {"side": [["const", "left"]]}, "type": "dict"},
-            {"name": "right", "body": {"side": [["const", "right"]]}, "type": "dict"},
-            {"name": "joined", "body": {"n": [["py", "len", ""]]}, "type": "dict"},
+            {"name": "left", "body": {"side": [["py", "const", "left"]]}, "type": "dict"},
+            {"name": "right", "body": {"side": [["py", "const", "right"]]}, "type": "dict"},
+            {"name": "joined", "body": {"n": [["py", "len"]]}, "type": "dict"},
         ]
     )
     run = start(story, "seed")
@@ -597,7 +609,7 @@ def test_a_task_string_next_that_names_nothing_is_e1016() -> None:
             },
             {
                 "name": "fan",
-                "body": {"items": [["const", [{"url": "a", "next": "gone"}]]]},
+                "body": {"items": [["py", "const", [{"url": "a", "next": "gone"}]]]},
                 "type": "RequestBatch",
                 "next": "sink",
             },
@@ -622,7 +634,7 @@ def test_a_receiving_step_may_itself_produce_a_request() -> None:
             },
             {
                 "name": "gather",
-                "body": {"items": [["const", [{"url": "a"}]]]},
+                "body": {"items": [["py", "const", [{"url": "a"}]]]},
                 "type": "RequestBatch",
                 "next": "page",
             },
@@ -675,7 +687,7 @@ def test_a_collect_step_that_matched_nothing_still_contributes() -> None:
                 "next": "record",
             },
             {"name": "record", "body": [["py", "getattr", "text"], ["css1", "text", "div.nope"]]},
-            {"name": "backup", "body": {"seen": [["const", "backup"]]}, "type": "dict"},
+            {"name": "backup", "body": {"seen": [["py", "const", "backup"]]}, "type": "dict"},
         ],
         entry="seed",
         collect="record",
@@ -686,7 +698,7 @@ def test_a_collect_step_that_matched_nothing_still_contributes() -> None:
 
 
 def test_a_failing_step_stops_the_run_with_its_code() -> None:
-    story = _bundle([{"name": "bad", "body": [["py", "int", ""]], "type": "int"}])
+    story = _bundle([{"name": "bad", "body": [["py", "int"]], "type": "int"}])
     assert _run_error(story, "not-a-number") == "UP2-E2005"
     with pytest.raises(Up2Error) as info:
         start(story, "not-a-number").go()
@@ -704,7 +716,7 @@ def test_an_unreadable_reference_stops_the_run() -> None:
     story = _bundle(
         [
             {"name": "gone", "body": [["css1", "text", "div.nope"]]},
-            {"name": "later", "body": {"u": [["ctx", "get", "locals.nope"], ["py", "strip", ""]]}},
+            {"name": "later", "body": {"u": [["ctx", "get", "locals.nope"], ["py", "strip"]]}},
         ]
     )
     assert _run_error(story, _DOC) == "UP2-E2001"
@@ -722,7 +734,7 @@ def test_a_receiving_step_produces_the_empty_value_and_the_run_continues() -> No
             },
             # `css1` matches nothing in the answer text, so this step produces no product at all.
             {"name": "read", "body": [["css1", "text", "div.nope"]], "type": "Record"},
-            {"name": "after", "body": {"seen": [["const", "after"]]}, "type": "dict"},
+            {"name": "after", "body": {"seen": [["py", "const", "after"]]}, "type": "dict"},
         ]
     )
     run = start(story, "https://x/list.html")
@@ -742,7 +754,7 @@ def test_a_batch_answer_of_the_wrong_size_is_a_host_error() -> None:
             },
             {
                 "name": "fan",
-                "body": {"items": [["const", [{"url": "a"}, {"url": "b"}]]]},
+                "body": {"items": [["py", "const", [{"url": "a"}, {"url": "b"}]]]},
                 "type": "RequestBatch",
                 "next": "page",
             },
@@ -761,7 +773,7 @@ def test_a_batch_product_without_items_is_a_story_error() -> None:
         [
             {
                 "name": "bad",
-                "body": {"nope": [["py", "len", ""]]},
+                "body": {"nope": [["py", "len"]]},
                 "type": "RequestBatch",
                 "next": "sink",
             },
@@ -784,7 +796,7 @@ def test_a_task_routing_to_an_unknown_step_fails() -> None:
             },
             {
                 "name": "fan",
-                "body": {"items": [["const", [{"url": "a", "next": "gone"}]]]},
+                "body": {"items": [["py", "const", [{"url": "a", "next": "gone"}]]]},
                 "type": "RequestBatch",
                 "next": "sink",
             },
@@ -802,7 +814,7 @@ def test_a_task_routing_to_an_unknown_step_fails() -> None:
 def test_a_request_product_that_is_not_an_object_is_a_story_error() -> None:
     story = _bundle(
         [
-            {"name": "bad", "body": [["const", 7]], "type": "Request", "next": "sink"},
+            {"name": "bad", "body": [["py", "const", 7]], "type": "Request", "next": "sink"},
             {"name": "sink", "body": {"seen": "$in"}, "type": "dict"},
         ],
         collect="bad",
@@ -815,7 +827,7 @@ def test_a_batch_task_that_is_not_an_object_is_a_story_error() -> None:
         [
             {
                 "name": "bad",
-                "body": {"items": [["const", [7]]]},
+                "body": {"items": [["py", "const", [7]]]},
                 "type": "RequestBatch",
                 "next": "sink",
             },
@@ -853,7 +865,7 @@ def test_a_field_map_holds_locals_and_keeps_empty_fields() -> None:
             {
                 "name": "a",
                 "body": {
-                    "_tmp": [["py", "upper", ""]],
+                    "_tmp": [["py", "upper"]],
                     "up": [["ctx", "get", "locals._tmp"]],
                     "gone": [["css1", "text", "div.nope"]],
                 },
@@ -920,8 +932,8 @@ def test_a_chain_reference_is_not_converted_by_the_next_stage() -> None:
                 "name": "a",
                 "body": {
                     "items": [
-                        ["const", ["x", "y"]],
-                        ["each", {"elem": [["py", "upper", ""]], "whole": "$in"}],
+                        ["py", "const", ["x", "y"]],
+                        ["each", {"elem": [["py", "upper"]], "whole": "$in"}],
                     ],
                 },
                 "type": "dict",
@@ -943,7 +955,7 @@ def test_a_chain_reference_is_not_converted_by_the_next_stage() -> None:
 def test_a_chain_reference_reads_a_step_product() -> None:
     story = _bundle(
         [
-            {"name": "a", "body": {"u": [["py", "upper", ""]]}, "type": "dict"},
+            {"name": "a", "body": {"u": [["py", "upper"]]}, "type": "dict"},
             {"name": "b", "body": {"seen": "$a.u"}, "type": "dict"},
         ]
     )
@@ -982,7 +994,7 @@ def test_a_chain_reference_to_its_own_step_is_rejected() -> None:
 def test_a_chain_reference_to_a_local_of_another_step_is_rejected() -> None:
     story = _bundle(
         [
-            {"name": "a", "body": {"_tmp": [["py", "strip", ""]]}},
+            {"name": "a", "body": {"_tmp": [["py", "strip"]]}},
             {"name": "b", "body": {"u": "$a._tmp"}},
         ]
     )
@@ -994,13 +1006,13 @@ def test_a_chain_reference_to_a_local_of_another_step_is_rejected() -> None:
 
 def test_dollar_in_names_the_step_input() -> None:
     scope = Scope(step_input="https://x/")
-    chain = [["const", "https://x/"], ["py", "==", "$in"]]
+    chain = [["py", "const", "https://x/"], ["py", "==", "$in"]]
     assert eval_field(compile_field(chain), None, scope=scope) == Ok(True)
 
 
 def test_dollar_in_reads_a_key_of_the_input() -> None:
     scope = Scope(step_input={"url": "https://x/"})
-    chain = [["const", "https://x/"], ["py", "==", "$in.url"]]
+    chain = [["py", "const", "https://x/"], ["py", "==", "$in.url"]]
     assert eval_field(compile_field(chain), None, scope=scope) == Ok(True)
 
 
@@ -1013,7 +1025,7 @@ def test_dollar_in_without_an_input_fails() -> None:
 
 def test_dollar_in_survives_a_child_scope() -> None:
     scope = Scope(step_input={"url": "https://x/"})
-    chain = [["const", "https://x/"], ["py", "==", "$in.url"]]
+    chain = [["py", "const", "https://x/"], ["py", "==", "$in.url"]]
     assert eval_field(compile_field(chain), None, scope=scope.child()) == Ok(True)
 
 

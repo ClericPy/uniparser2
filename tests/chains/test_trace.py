@@ -228,9 +228,9 @@ def test_the_parameters_are_the_compiled_ones() -> None:
 
 
 def test_a_function_with_no_argument_compiles_to_no_parameters() -> None:
-    """``["py","len",""]`` writes the empty placeholder, and the compiled parameters say so."""
+    """``["py","len"]`` writes the empty placeholder, and the compiled parameters say so."""
     trace = Trace()
-    assert eval_field(compile_field([["py", "len", ""]]), [1, 2], trace=trace) == Ok(2)
+    assert eval_field(compile_field([["py", "len"]]), [1, 2], trace=trace) == Ok(2)
     assert trace.events[0].params == {}
 
 
@@ -243,24 +243,24 @@ def test_a_container_parameter_is_walked_element_by_element() -> None:
         "container": [{"kind": "lit", "value": 200}, {"kind": "lit", "value": 301}]
     }
     named = Trace()
-    grouped = [["re", "group", {"pattern": "(a)", "group": 1}]]
+    grouped = [["re", "search", ["(a)", 1]]]
     assert eval_field(compile_field(grouped), "a", trace=named) == Ok("a")
     assert named.events[0].params == {
         "pattern": {"kind": "lit", "value": "(a)"},
         "group": {"kind": "lit", "value": 1},
     }
     nested = Trace()
-    fallback = [["py", "default", {"a": 1, "b": 2}]]
+    fallback = [["py", "or", [{"a": 1, "b": 2}]]]
     assert eval_field(compile_field(fallback), None, trace=nested) == Ok({"a": 1, "b": 2})
     assert nested.events[0].params == {
-        "value": {"a": {"kind": "lit", "value": 1}, "b": {"kind": "lit", "value": 2}}
+        "operands": [{"a": {"kind": "lit", "value": 1}, "b": {"kind": "lit", "value": 2}}]
     }
 
 
 def test_the_each_parameter_carries_its_compiled_field_map() -> None:
     """The sub-chains of a fan-out are part of the stage's compiled parameters, not a black box."""
     trace = Trace()
-    eval_field(compile_field([["each", {"n": [["py", "len", ""]]}]]), ["ab"], trace=trace)
+    eval_field(compile_field([["each", {"n": [["py", "len"]]}]]), ["ab"], trace=trace)
     assert len(trace.events) == 2
     inner, each = trace.events
     assert (inner.field, inner.item, inner.stage) == ("n", 0, 0)
@@ -281,7 +281,7 @@ def test_the_each_parameter_carries_its_compiled_field_map() -> None:
 def test_a_large_value_is_truncated_and_the_whole_one_is_fetched_by_seq() -> None:
     text = "a" * 300
     trace = Trace()
-    assert eval_field(compile_field([["py", "upper", ""]]), text, trace=trace) == Ok(text.upper())
+    assert eval_field(compile_field([["py", "upper"]]), text, trace=trace) == Ok(text.upper())
     event = trace.events[0]
     assert event.input.type == "str"
     assert event.input.size == len(text) + 2  # the JSON text of a string carries its quotes
@@ -305,7 +305,7 @@ def test_a_failing_stage_carries_its_code_and_reason() -> None:
         start(
             {
                 "entry": "bad",
-                "steps": [{"name": "bad", "body": [["py", "int", ""]], "type": "int"}],
+                "steps": [{"name": "bad", "body": [["py", "int"]], "type": "int"}],
                 "collect": "bad",
             },
             "not-a-number",
@@ -323,9 +323,7 @@ def test_a_failing_stage_carries_its_code_and_reason() -> None:
 
 def test_a_failed_stage_ends_its_chain_and_the_rest_is_not_evaluated() -> None:
     trace = Trace()
-    outcome = eval_field(
-        compile_field([["py", "strip_tags", ""], ["py", "strip", ""]]), 42, trace=trace
-    )
+    outcome = eval_field(compile_field([["py", "upper"], ["py", "strip"]]), 42, trace=trace)
     assert isinstance(outcome, Failed)
     assert [(event.stage, event.state) for event in trace.events] == [(0, "Failed")]
 
@@ -341,7 +339,7 @@ def test_a_run_without_a_trace_records_nothing_and_answers_the_same() -> None:
     assert untraced.trace is None
     assert traced.go() == untraced.go()
     assert len(stamped) == 1  # the request suspension (the seed's chain is a reference)
-    assert eval_field(compile_field([["py", "strip", ""]]), " a ") == Ok("a")
+    assert eval_field(compile_field([["py", "strip"]]), " a ") == Ok("a")
 
 
 def test_every_fan_out_numbers_its_own_elements() -> None:
@@ -353,8 +351,8 @@ def test_every_fan_out_numbers_its_own_elements() -> None:
     """
     trace = Trace()
     chain = [
-        ["each", {"n": [["py", "len", ""]]}],
-        ["each", {"m": [["py", "default", ""]]}],
+        ["each", {"n": [["py", "len"]]}],
+        ["each", {"m": [["py", "or", [""]]]}],
     ]
     assert eval_field(compile_field(chain), ["ab", "cd"], trace=trace) == Ok(
         [{"m": {"n": 2}}, {"m": {"n": 2}}]

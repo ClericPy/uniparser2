@@ -24,7 +24,7 @@ STORY = {
         {"name": "seed", "body": {"url": "$in"}, "type": "Request", "next": "record"},
         {
             "name": "record",
-            "body": {"title": [["py", "getattr", "text"], ["py", "upper", ""]]},
+            "body": {"title": [["py", "getattr", "text"], ["py", "upper"]]},
             "type": "dict",
         },
     ],

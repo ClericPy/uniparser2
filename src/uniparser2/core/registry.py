@@ -46,6 +46,7 @@ class Kind(StrEnum):
     LITERAL = "literal"
     REF_OR_LITERAL = "ref_or_literal"
     FIELDS = "fields"
+    FIELDS_OR_CHAIN = "fields_or_chain"
 
 
 class ParamForm(StrEnum):
@@ -53,7 +54,7 @@ class ParamForm(StrEnum):
 
     NONE = "none"
     VALUE = "value"
-    NAMED = "named"
+    ARRAY = "array"
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,7 +384,7 @@ def _param_form(instance: Op, action: str) -> ParamForm:
         return ParamForm.NONE
     if len(active) == 1:
         return ParamForm.VALUE
-    return ParamForm.NAMED
+    return ParamForm.ARRAY
 
 
 def report() -> tuple[OpReport, ...]:

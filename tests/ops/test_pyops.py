@@ -22,7 +22,7 @@ A stage always writes all 3 slots: ``["py", function, params]``, and a zero-para
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -40,8 +40,8 @@ from uniparser2.core import registry
 from uniparser2.ops import pyops
 
 COVERS_PAIRS = (
+    ("py", "const"),
     ("py", "strip"),
-    ("py", "strip_tags"),
     ("py", "normalize_space"),
     ("py", "html_to_markdown"),
     ("py", "replace"),
@@ -51,31 +51,35 @@ COVERS_PAIRS = (
     ("py", "lower"),
     ("py", "slice"),
     ("py", "getitem"),
+    ("py", "getattr"),
     ("py", "len"),
     ("py", "first"),
     ("py", "last"),
     ("py", "flatten"),
     ("py", "sort"),
+    ("py", "sort_desc"),
     ("py", "uniq"),
+    ("py", "find_jsons"),
+    ("py", "between"),
     ("py", "urljoin"),
     ("py", "urlsplit"),
-    ("py", "default"),
     ("py", "b64_encode"),
     ("py", "b64_decode"),
     ("py", "sha256"),
-    ("py", "parse_time"),
+    ("py", "md5"),
+    ("py", "strptime"),
     ("py", "strftime"),
+    ("py", "from_timestamp"),
+    ("py", "to_timestamp"),
     ("py", "str"),
     ("py", "int"),
     ("py", "float"),
     ("py", "bool"),
-    ("py", "list"),
     ("py", "items"),
     ("py", "from_json"),
-    ("py", "getattr"),
 )
 
-WHITELIST_SIZE = 42
+WHITELIST_SIZE = 46
 
 _SHA256_ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
@@ -117,8 +121,9 @@ _HOST_RESPONSE = _HostResponse(200, "body")
 
 
 CASES: tuple[tuple[str, object, object, Callable[[Outcome], bool]], ...] = (
+    ("const", "ignored", {"$lit": "$100"}, ok("$100")),
     ("strip", "  a \n", (), ok("a")),
-    ("strip_tags", "<b>a</b>c", (), ok("ac")),
+    ("strip", "xxaxx", "x", ok("a")),
     ("normalize_space", " a \n\t b ", (), ok("a b")),
     ("html_to_markdown", "<b>a</b>", (), markdown_result),
     ("replace", "a-b", ["-", "+"], ok("a+b")),
@@ -134,21 +139,35 @@ CASES: tuple[tuple[str, object, object, Callable[[Outcome], bool]], ...] = (
     ("first", [1, 2], (), ok(1)),
     ("last", [1, 2], (), ok(2)),
     ("flatten", [[1], [2, 3]], (), ok([1, 2, 3])),
-    ("sort", [3, 1, 2], {"key": "int"}, ok([1, 2, 3])),
+    ("sort", [3, 1, 2], (), ok([1, 2, 3])),
+    ("sort_desc", [1, 3, 2], (), ok([3, 2, 1])),
     ("uniq", [1, 1, 2], (), ok([1, 2])),
+    ("between", 3, [1, 5], ok(True)),
+    ("find_jsons", 'x{"a":1}y[2,3]z', (), ok([{"a": 1}, [2, 3]])),
     ("urljoin", "b", "/a/", ok("/a/b")),
     ("urlsplit", "https://x/y?z=1", "netloc", ok("x")),
-    ("default", "", "fallback", ok("fallback")),
     ("b64_encode", "abc", (), ok("YWJj")),
     ("b64_decode", "YWJj", (), ok("abc")),
     ("sha256", "abc", (), ok(_SHA256_ABC)),
-    ("parse_time", "2026-09-26 10:30:00", (), ok("2026-09-26 10:30:00")),
-    ("strftime", "2026-09-26 10:30:00", "%Y/%m/%d", ok("2026/09/26")),
+    ("md5", "abc", (), ok("900150983cd24fb0d6963f7d28e17f72")),
+    ("strptime", "2026-09-26 10:30:00", "%Y-%m-%d %H:%M:%S", ok(datetime(2026, 9, 26, 10, 30))),
+    ("strftime", datetime(2026, 9, 26, 10, 30), "%Y/%m/%d", ok("2026/09/26")),
+    (
+        "from_timestamp",
+        0,
+        (),
+        ok(datetime(1970, 1, 1, tzinfo=UTC)),
+    ),
+    (
+        "to_timestamp",
+        datetime(1970, 1, 1, tzinfo=UTC),
+        (),
+        ok(0),
+    ),
     ("str", 12, (), ok("12")),
     ("int", "42", (), ok(42)),
     ("float", "1.5", (), ok(1.5)),
-    ("bool", "false", (), ok(False)),
-    ("list", "[1,2]", (), ok([1, 2])),
+    ("bool", "false", (), ok(True)),
     ("items", {"a": 1, "b": 2}, (), ok([["a", 1], ["b", 2]])),
     ("from_json", '{"a":1}', (), ok({"a": 1})),
     ("getattr", _HOST_RESPONSE, "status", ok(200)),
@@ -160,11 +179,8 @@ def run(chain: Any, value: Any) -> Outcome:
 
 
 def _chain(name: str, params: Any) -> list[Any]:
-    """A zero-parameter action writes ``""`` in slot 3: ``py``'s arity is exactly 3.
-
-    Anything else reports ``UP2-E1004``.
-    """
-    return [["py", name, "" if params == () else params]]
+    """A parameter-less action omits slot 3 entirely (design D2)."""
+    return [["py", name]] if params == () else [["py", name, params]]
 
 
 @pytest.mark.parametrize(
@@ -210,7 +226,7 @@ def test_cover_declarations_match_cases() -> None:
 
 
 def test_alias_python_works() -> None:
-    assert run([["python", "strip", ""]], " a ") == Ok("a")
+    assert run([["python", "strip"]], " a ") == Ok("a")
 
 
 @pytest.mark.parametrize(
@@ -221,25 +237,13 @@ def test_alias_python_works() -> None:
     ],
 )
 def test_text_functions_reject_non_text(value: Any, checker: Callable[[Outcome], bool]) -> None:
-    assert checker(run([["py", "upper", ""]], value))
+    assert checker(run([["py", "upper"]], value))
 
 
 def test_unknown_function_is_e1003() -> None:
     with pytest.raises(Up2Error) as info:
         compile_field([["py", "definitely_not_a_function", ""]])
     assert info.value.diagnostic.code == "UP2-E1003"
-
-
-def test_default_replaces_none_and_empty() -> None:
-    """``py.default`` replaces ``None`` and the empty string; a failed stage is not caught."""
-    chain = [["re", "search", r"\d+"], ["py", "default", "none"]]
-    assert eval_field(compile_field(chain), "abc") == Ok("none")
-    assert run([["py", "default", "none"]], None) == Ok("none")
-    assert run([["py", "default", "none"]], "") == Ok("none")
-
-
-def test_default_keeps_present_value() -> None:
-    assert run([["py", "default", "none"]], "present") == Ok("present")
 
 
 def test_getitem_is_the_only_subscript_action() -> None:
@@ -304,7 +308,7 @@ def test_getitem_missing_key_is_e2018() -> None:
 
 
 def test_first_on_empty_list_yields_none() -> None:
-    assert run([["py", "first", ""]], []) == Ok(None)
+    assert run([["py", "first"]], []) == Ok(None)
 
 
 # ---------------------------------------------------------------- getattr (host objects)
@@ -384,17 +388,6 @@ def test_split_empty_separator_is_failed() -> None:
     assert outcome.code == "UP2-E2005"
 
 
-def test_zero_param_action_accepts_empty_placeholder() -> None:
-    """Draft `04` writes "no parameters" as `["py","strip",""]`, and that must stay compatible."""
-    assert run([["py", "strip", ""]], " a ") == Ok("a")
-
-
-def test_param_on_zero_param_action_is_rejected() -> None:
-    with pytest.raises(Up2Error) as info:
-        compile_field([["py", "strip", "oops"]])
-    assert info.value.diagnostic.code == "UP2-E1005"
-
-
 def test_unknown_param_name_is_rejected() -> None:
     with pytest.raises(Up2Error) as info:
         compile_field([["py", "split", {"sep": ",", "nope": 1}]])
@@ -414,9 +407,9 @@ def test_urlsplit_part_is_validated_at_compile_time() -> None:
         ([["py", "urljoin", []]], "/0/2/base"),
         ([["py", "slice", {"spec": "0:4"}]], "/0/2/spec"),
         ([["py", "split", {"sep": {}}]], "/0/2/sep"),
-        ([["py", "split", {"sep": ",", "maxsplit": {}}]], "/0/2/maxsplit"),
         ([["py", "getitem", {"at": {}}]], "/0/2/at"),
-        ([["py", "replace", {"old": {}, "new": ""}]], "/0/2/old"),
+        ([["py", "replace", {"old": {}, "new": ""}]], "/0/2"),
+        ([["py", "replace", [{}, ""]]], "/0/2/0"),
     ],
 )
 def test_scalar_parameter_rejects_a_container(chain: Any, pointer: str) -> None:
@@ -435,21 +428,13 @@ def test_scalar_fix_shows_the_accepted_writing() -> None:
     assert '["py", "urljoin", "…"]' in info.value.diagnostic.fix
 
 
-def test_sort_key_enum_is_validated_at_compile_time() -> None:
-    with pytest.raises(Up2Error) as info:
-        compile_field([["py", "sort", {"key": {}}]])
-    diagnostic = info.value.diagnostic
-    assert diagnostic.code == "UP2-E1005"
-    assert diagnostic.pointer == "/0/2/key"
-
-
 @pytest.mark.parametrize(
     ("chain", "pointer"),
     [
         ([["py", "urljoin", 42]], "/0/2/base"),
         ([["py", "slice", 42]], "/0/2/spec"),
-        ([["py", "split", {"sep": 42}]], "/0/2/sep"),
-        ([["py", "replace", [42, "x"]]], "/0/2/old"),
+        ([["py", "split", 42]], "/0/2/sep"),
+        ([["py", "replace", [42, "x"]]], "/0/2/0"),
         ([["py", "getattr", 42]], "/0/2/ref_or_literal"),
     ],
 )
@@ -467,7 +452,7 @@ def test_a_wrong_typed_literal_fails_at_compile_time(chain: Any, pointer: str) -
     ("chain", "pointer"),
     [
         ([["py", "slice", "bogus"]], "/0/2/spec"),
-        ([["py", "split", {"sep": ",", "maxsplit": "x"}]], "/0/2/maxsplit"),
+        ([["py", "strptime", "%Q"]], "/0/2/format"),
     ],
 )
 def test_a_string_the_runtime_cannot_parse_fails_at_compile_time(chain: Any, pointer: str) -> None:
@@ -478,15 +463,6 @@ def test_a_string_the_runtime_cannot_parse_fails_at_compile_time(chain: Any, poi
     assert diagnostic.code == "UP2-E1005"
     assert diagnostic.pointer == pointer
     assert diagnostic.fix
-
-
-def test_the_no_limit_spellings_of_maxsplit_still_compile() -> None:
-    for chain in (
-        [["py", "split", {"sep": ",", "maxsplit": None}]],
-        [["py", "split", {"sep": ",", "maxsplit": ""}]],
-        [["py", "split", {"sep": ",", "maxsplit": 3}]],
-    ):
-        compile_field(chain)
 
 
 def test_a_coerced_parameter_is_not_a_rejection() -> None:
@@ -501,21 +477,17 @@ def test_a_reference_for_a_scalar_parameter_is_still_deferred() -> None:
 
 def test_a_container_fallback_compiles_and_a_failure_is_not_caught() -> None:
     """``py.default.value`` accepts any JSON value; a failed stage is not a fallback case."""
-    chain = [["ctx", "get", "locals.nope"], ["py", "default", {"a": 1}]]
+    chain = [["ctx", "get", "locals.nope"], ["py", "or", [{"a": 1}]]]
     outcome = run(chain, "hi")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2001"
-    assert run([["const", ""], ["py", "default", {"a": 1}]], "hi") == Ok({"a": 1})
-
-
-def test_named_form_of_a_multi_parameter_action_is_unaffected() -> None:
-    assert run([["py", "split", {"sep": ",", "maxsplit": 1}]], "a,b,c") == Ok(["a", "b,c"])
+    assert run([["py", "const", ""], ["py", "or", [{"a": 1}]]], "hi") == Ok({"a": 1})
 
 
 def test_reference_parameter_is_not_checked_at_compile_time() -> None:
     """A reference's value is only known at runtime, so compilation must not reject it."""
     assert compile_field([["py", "urljoin", "$globals.base_url"]]) is not None
-    assert compile_field([["py", "replace", {"old": "$globals.a", "new": ""}]]) is not None
+    assert compile_field([["py", "replace", ["$globals.a", ""]]]) is not None
 
 
 def test_markdown_dependency_is_declared_per_action() -> None:
@@ -529,298 +501,15 @@ def test_markdown_dependency_is_declared_per_action() -> None:
 # ------------------------------------------------ time parsing (former time operator)
 
 
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("2026-09-26 10:30:00", "2026-09-26 10:30:00"),
-        ("2026-09-26T10:30:00", "2026-09-26 10:30:00"),
-        ("2026-09-26 10:30", "2026-09-26 10:30:00"),
-        ("2026-09-26", "2026-09-26 00:00:00"),
-        ("2026/09/26", "2026-09-26 00:00:00"),
-        ("2026.09.26", "2026-09-26 00:00:00"),
-        # The two rows below spell their CJK date units as escapes on purpose: those literal
-        # characters are part of the format ``py.parse_time`` must match, and this file stays ASCII.
-        ("2026\u5e749\u670826\u65e5", "2026-09-26 00:00:00"),
-        ("2026\u5e749\u670826\u65e5 10:30", "2026-09-26 10:30:00"),
-        ("20260926", "2026-09-26 00:00:00"),
-        ("26/09/2026", "2026-09-26 00:00:00"),
-        # Zone-bearing shapes: the two canonical feed timestamps (RSS 2.0 pubDate is RFC 822,
-        # Atom updated is ISO 8601 with a zone). The offset is consumed, never applied, so every
-        # row renders the same wall clock it wrote.
-        ("2026-09-26T10:30:00Z", "2026-09-26 10:30:00"),
-        ("2026-09-26T10:30:00+08:00", "2026-09-26 10:30:00"),
-        ("2026-09-26T10:30:00+0800", "2026-09-26 10:30:00"),
-        ("2026-09-26T10:30:00.000+08:00", "2026-09-26 10:30:00"),
-        ("2026-09-26 10:30:00 +0800", "2026-09-26 10:30:00"),
-        ("Sat, 26 Sep 2026 10:30:00 +0800", "2026-09-26 10:30:00"),
-        ("Sat, 26 Sep 2026 10:30:00 GMT", "2026-09-26 10:30:00"),
-    ],
-)
-def test_parse_time_stdlib_format_table(text: str, expected: str) -> None:
-    assert run([["py", "parse_time", ""]], text) == Ok(expected)
-
-
-def test_parse_time_offset_is_consumed_not_applied() -> None:
-    """A zone in the input must not shift the result: the wall clock is what comes back."""
-    chain = [["py", "parse_time", ""]]
-    assert run(chain, "2026-09-26T10:30:00Z") == Ok("2026-09-26 10:30:00")
-    assert run(chain, "2026-09-26T10:30:00+08:00") == Ok("2026-09-26 10:30:00")
-
-
-def test_parse_time_zone_bearing_shapes_agree_with_the_zone_less_shape() -> None:
-    chain = [["py", "parse_time", ""]]
-    texts = ("2026-09-26T10:30:00", "2026-09-26T10:30:00Z", "2026-09-26T10:30:00+00:00")
-    assert {run(chain, text) for text in texts} == {Ok("2026-09-26 10:30:00")}
-
-
-def test_parse_time_whitespace_is_trimmed() -> None:
-    assert run([["py", "parse_time", ""]], "  2026-09-26  ") == Ok("2026-09-26 00:00:00")
-    assert run([["py", "parse_time", ""]], "  2026-09-26T10:30:00Z  ") == Ok("2026-09-26 10:30:00")
-
-
-def test_parse_time_explicit_format_param() -> None:
-    chain = [["py", "parse_time", {"format": "%d.%m.%Y %H:%M"}]]
-    assert run(chain, "26.09.2026 08:05") == Ok("2026-09-26 08:05:00")
-
-
-def test_parse_time_explicit_format_mismatch_is_e2007() -> None:
-    chain = [["py", "parse_time", {"format": "%Y-%m-%d"}]]
-    outcome = run(chain, "26/09/2026")
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2007"
-    assert "format" in outcome.fix
-
-
-def test_parse_time_unparsable_text_is_e2007() -> None:
-    """With the engine installed, text nothing can read stays a coded failure."""
-    pytest.importorskip("dateparser")
-    outcome = run([["py", "parse_time", ""]], "not a timestamp at all")
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2007"
-    assert "format" in outcome.fix
-
-
-def test_parse_time_natural_language_without_lang_is_detected() -> None:
-    """The engine is reached with no parameter at all (the language is detected)."""
-    pytest.importorskip("dateparser")
-    assert run([["py", "parse_time", ""]], "24 septembre 2026") == Ok("2026-09-24 00:00:00")
-    assert run([["py", "parse_time", ""]], "24. September 2026") == Ok("2026-09-24 00:00:00")
-
-
-def test_parse_time_empty_text_yields_empty() -> None:
-    assert run([["py", "parse_time", ""]], "   ") == Ok("")
-
-
-def test_parse_time_none_value_yields_empty() -> None:
-    assert run([["py", "parse_time", ""]], None) == Ok("")
-
-
-def test_parse_time_non_text_input_is_type_failure() -> None:
-    outcome = run([["py", "parse_time", ""]], 20260926)
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2002"
-
-
-@pytest.mark.parametrize("fmt", ["%Q", "%Y%Q", "%Q%Y"])
-def test_parse_time_invalid_format_is_schema_error(fmt: str) -> None:
-    """A directive `strptime` does not know is a compile-time schema error.
-
-    The check must not depend on the platform: glibc's `strftime` passes an unknown directive
-    through while the Windows CRT raises, so validating with `strftime` rejected the chain on
-    Windows and accepted it on Linux — this test runs on Linux in CI, where that was caught.
-
-    A stray `%` (`"%"`, `"100%"`) is deliberately not in this list: 3.12's `strptime` reads it as a
-    literal (measured) and 3.13 added the `stray % in format` error, so the verdict follows the
-    interpreter on purpose — the check asks the same `strptime` the operator runs.
-    """
-    with pytest.raises(Up2Error) as info:
-        compile_field([["py", "parse_time", {"format": fmt}]])
-    assert info.value.diagnostic.code == "UP2-E1005"
-
-
-@pytest.mark.parametrize("fmt", ["%Y-%m-%d %H:%M:%S", "%d/%b/%Y:%H:%M:%S %z", "%%"])
-def test_parse_time_valid_format_still_compiles(fmt: str) -> None:
-    """The stricter probe must not reject a format `strptime` accepts.
-
-    Validating with `strftime` used to reject `%T` and `%-d` on Windows although `strptime` reads
-    them, so the probe now asks the parser instead of the formatter.
-    """
-    compile_field([["py", "parse_time", {"format": fmt}]])
-
-
-def test_parse_time_lang_with_machine_format_does_not_need_dateparser() -> None:
-    """A lang is given but the text is a machine format.
-
-    The stdlib then succeeds and dateparser is never hit.
-    """
-    assert run([["py", "parse_time", "en"]], "2026-09-26") == Ok("2026-09-26 00:00:00")
-
-
-def test_parse_time_natural_language_without_dateparser_is_e2008(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The missing engine is a coded error, with and without an explicit language."""
-
-    def boom() -> Any:
-        raise ImportError("no dateparser")
-
-    monkeypatch.setattr(pyops, "_import_dateparser", boom)
-    for chain in ([["py", "parse_time", ""]], [["py", "parse_time", "en"]]):
-        outcome = run(chain, "3pm the day before yesterday")
-        assert isinstance(outcome, Failed)
-        assert outcome.code == "UP2-E2008"
-        assert "uniparser2[time]" in outcome.fix
-
-
-def test_parse_time_detection_passes_the_documented_defaults(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With no parameters the engine detects the language, and reads dates day first."""
-    seen: dict[str, Any] = {}
-
-    def parse(text: str, languages: Any = None, settings: Any = None) -> datetime | None:
-        seen["languages"] = languages
-        seen["settings"] = settings
-        return datetime(2026, 9, 24, 15, 0, 0) if "day before yesterday" in text else None
-
-    monkeypatch.setattr(pyops, "_import_dateparser", lambda: parse)
-    assert run([["py", "parse_time", ""]], "3pm the day before yesterday") == Ok(
-        "2026-09-24 15:00:00"
-    )
-    assert seen["languages"] is None
-    assert seen["settings"] == {"DATE_ORDER": "DMY"}
-
-
-def test_parse_time_lang_restricts_the_detection(monkeypatch: pytest.MonkeyPatch) -> None:
-    def parse(text: str, languages: Any = None, settings: Any = None) -> datetime | None:
-        assert languages == ["en"]
-        return datetime(2026, 9, 24, 15, 0, 0)
-
-    monkeypatch.setattr(pyops, "_import_dateparser", lambda: parse)
-    assert run([["py", "parse_time", "en"]], "3pm the day before yesterday") == Ok(
-        "2026-09-24 15:00:00"
-    )
-
-
-def test_parse_time_date_order_reaches_the_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`date_order` is passed through, so a time-bearing ambiguous date follows the chain."""
-    seen: dict[str, Any] = {}
-
-    def parse(text: str, languages: Any = None, settings: Any = None) -> datetime | None:
-        seen["settings"] = settings
-        return datetime(2026, 3, 4, 15, 30, 0)
-
-    monkeypatch.setattr(pyops, "_import_dateparser", lambda: parse)
-    assert run([["py", "parse_time", {"date_order": "MDY"}]], "03/04/2026 15:30") == Ok(
-        "2026-03-04 15:30:00"
-    )
-    assert seen["settings"] == {"DATE_ORDER": "MDY"}
-
-
-def test_parse_time_now_pins_the_base_clock(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`now` is handed to the engine as the relative base, as a literal or from the environment."""
-    seen: dict[str, Any] = {}
-
-    def parse(text: str, languages: Any = None, settings: Any = None) -> datetime | None:
-        seen["settings"] = settings
-        return datetime(2026, 1, 2, 12, 0, 0)
-
-    monkeypatch.setattr(pyops, "_import_dateparser", lambda: parse)
-    assert run([["py", "parse_time", {"now": "2026-01-01 12:00:00"}]], "tomorrow") == Ok(
-        "2026-01-02 12:00:00"
-    )
-    assert seen["settings"]["RELATIVE_BASE"] == datetime(2026, 1, 1, 12, 0, 0)
-
-    compiled = compile_field([["py", "parse_time", {"now": "$globals.now"}]])
-    outcome = eval_field(compiled, "tomorrow", scope=Scope(globals={"now": "2026-01-01 12:00:00"}))
-    assert outcome == Ok("2026-01-02 12:00:00")
-    assert seen["settings"]["RELATIVE_BASE"] == datetime(2026, 1, 1, 12, 0, 0)
-
-
-def test_parse_time_dateparser_returning_none_is_e2007(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(pyops, "_import_dateparser", lambda: lambda text, **kw: None)
-    outcome = run([["py", "parse_time", "en"]], "a time nobody can parse")
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2007"
-
-
-def test_parse_time_dateparser_raising_is_e2007(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(text: str, **kwargs: Any) -> Any:
-        raise RuntimeError("dateparser internal error")
-
-    monkeypatch.setattr(pyops, "_import_dateparser", lambda: boom)
-    outcome = run([["py", "parse_time", "en"]], "3pm the day before yesterday")
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2007"
-    # The engine's own failure carries a fix line too (it used to be empty).
-    assert outcome.fix
-
-
-@pytest.mark.parametrize(
-    ("params", "pointer"),
-    [
-        ({"format": "%Y-%m-%d", "lang": "en"}, "/0/2/lang"),
-        ({"date_order": "YDM"}, "/0/2/date_order"),
-        ({"now": "next tuesday"}, "/0/2/now"),
-    ],
-)
-def test_parse_time_compile_time_rejections(params: dict[str, Any], pointer: str) -> None:
-    """A combination or a value that cannot have the intended effect fails before the run."""
-    with pytest.raises(Up2Error) as info:
-        compile_field([["py", "parse_time", params]])
-    assert info.value.diagnostic.code == "UP2-E1005"
-    assert info.value.diagnostic.pointer == pointer
-    assert info.value.diagnostic.fix
-
-
-@pytest.mark.parametrize(
-    ("order", "expected"),
-    [(None, "2026-04-03"), ("DMY", "2026-04-03"), ("MDY", "2026-03-04"), ("YMD", "2026-04-03")],
-)
-def test_parse_time_date_order_orders_the_table_pair(order: str | None, expected: str) -> None:
-    """A plain ambiguous date is decided by the table, in the requested order."""
-    if order is None:
-        chain: list[Any] = [["py", "parse_time", ""]]
-    else:
-        chain = [["py", "parse_time", {"date_order": order}]]
-    assert run(chain, "03/04/2026") == Ok(f"{expected} 00:00:00")
-
-
-def test_parse_time_plain_and_time_bearing_writings_agree() -> None:
-    """The same writing must not change meaning because a time part follows it (design D3).
-
-    The plain form is read by the table, the time-bearing one by the engine; both follow
-    ``date_order``, whose default is day first.
-    """
-    pytest.importorskip("dateparser")
-    assert run([["py", "parse_time", ""]], "03/04/2026") == Ok("2026-04-03 00:00:00")
-    assert run([["py", "parse_time", ""]], "03/04/2026 15:30") == Ok("2026-04-03 15:30:00")
-    assert run([["py", "parse_time", {"date_order": "MDY"}]], "03/04/2026") == Ok(
-        "2026-03-04 00:00:00"
-    )
-    assert run([["py", "parse_time", {"date_order": "MDY"}]], "03/04/2026 15:30") == Ok(
-        "2026-03-04 15:30:00"
-    )
-
-
-def test_real_dateparser_when_installed() -> None:
-    pytest.importorskip("dateparser")
-    assert run([["py", "parse_time", "en"]], "September 26, 2026") == Ok("2026-09-26 00:00:00")
-
-
 def test_strftime_renders_another_layout() -> None:
-    assert run([["py", "strftime", "%Y/%m/%d"]], "2026-09-24 15:30:00") == Ok("2026/09/24")
-    assert run([["py", "strftime", "%d.%m.%Y %H:%M"]], "2026-09-24 15:30:00") == Ok(
+    assert run(
+        [["py", "strptime", "%Y-%m-%d %H:%M:%S"], ["py", "strftime", "%Y/%m/%d"]],
+        "2026-09-24 15:30:00",
+    ) == Ok("2026/09/24")
+    assert run([["py", "strftime", "%d.%m.%Y %H:%M"]], datetime(2026, 9, 24, 15, 30)) == Ok(
         "24.09.2026 15:30"
     )
-    assert run([["py", "strftime", "100%% done"]], "2026-09-24 15:30:00") == Ok("100% done")
-
-
-def test_strftime_requires_the_canonical_shape() -> None:
-    outcome = run([["py", "strftime", "%Y/%m/%d"]], "24 septembre 2026")
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2007"
-    assert "parse_time" in outcome.fix
+    assert run([["py", "strftime", "100%% done"]], datetime(2026, 9, 24)) == Ok("100% done")
 
 
 def test_strftime_non_text_receiver_is_type_failure() -> None:
@@ -840,7 +529,6 @@ def test_strftime_non_text_receiver_is_type_failure() -> None:
         "%c",
         "%x",
         "%X",
-        "%z",
         "%Z",
         "%e",
         "%k",
@@ -872,63 +560,83 @@ def test_strftime_rendering_ignores_the_locale() -> None:
     saved = locale.setlocale(locale.LC_TIME)
     try:
         locale.setlocale(locale.LC_TIME, "C")
-        under_c = run([["py", "strftime", "%Y/%m/%d %H:%M:%S"]], "2026-09-24 15:30:00")
+        under_c = run(
+            [["py", "strptime", "%Y-%m-%d %H:%M:%S"], ["py", "strftime", "%Y/%m/%d %H:%M:%S"]],
+            "2026-09-24 15:30:00",
+        )
         try:
             locale.setlocale(locale.LC_TIME, "")
         except locale.Error:
             pytest.skip("the system locale is unavailable on this machine")
-        under_system = run([["py", "strftime", "%Y/%m/%d %H:%M:%S"]], "2026-09-24 15:30:00")
+        under_system = run(
+            [["py", "strptime", "%Y-%m-%d %H:%M:%S"], ["py", "strftime", "%Y/%m/%d %H:%M:%S"]],
+            "2026-09-24 15:30:00",
+        )
     finally:
         locale.setlocale(locale.LC_TIME, saved)
     assert under_c == under_system == Ok("2026/09/24 15:30:00")
-
-
-def test_parse_time_output_constant_is_documented_format() -> None:
-    assert pyops.TIME_FORMAT == "%Y-%m-%d %H:%M:%S"
 
 
 # ------------------------------------------------ type conversion (former cast operator)
 
 
 def test_py_str_uses_json_text_for_containers() -> None:
-    assert run([["py", "str", ""]], 12) == Ok("12")
-    assert run([["py", "str", ""]], True) == Ok("true")
-    assert run([["py", "str", ""]], None) == Ok("")
-    assert run([["py", "str", ""]], [1, 2]) == Ok("[1,2]")
+    assert run([["py", "str"]], 12) == Ok("12")
+    assert run([["py", "str"]], True) == Ok("true")
+    assert run([["py", "str"]], None) == Ok("")
+    assert run([["py", "str"]], [1, 2]) == Ok("[1,2]")
 
 
 def test_py_int_is_strict() -> None:
-    assert run([["py", "int", ""]], "42") == Ok(42)
-    assert run([["py", "int", ""]], 3.9) == Ok(3)
-    outcome = run([["py", "int", ""]], "x")
+    assert run([["py", "int"]], "42") == Ok(42)
+    assert run([["py", "int"]], 3.9) == Ok(3)
+    outcome = run([["py", "int"]], "x")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2005"
     assert outcome.reason.startswith("py.int conversion failed: ")
 
 
 def test_py_float_parses_text() -> None:
-    assert run([["py", "float", ""]], "1.5") == Ok(1.5)
-
-
-def test_py_bool_knows_falsey_text() -> None:
-    assert run([["py", "bool", ""]], "false") == Ok(False)
-    assert run([["py", "bool", ""]], "NO") == Ok(False)
-    assert run([["py", "bool", ""]], "yes") == Ok(True)
-    assert run([["py", "bool", ""]], 0) == Ok(False)
-    assert run([["py", "bool", ""]], []) == Ok(False)
-    assert run([["py", "bool", ""]], None) == Ok(False)
-
-
-def test_py_list_parses_json_array() -> None:
-    assert run([["py", "list", ""]], "[1,2]") == Ok([1, 2])
-    assert run([["py", "list", ""]], [3]) == Ok([3])
+    assert run([["py", "float"]], "1.5") == Ok(1.5)
 
 
 def test_py_from_json_parses_any_json_text() -> None:
-    assert run([["py", "from_json", ""]], '{"a":1}') == Ok({"a": 1})
+    assert run([["py", "from_json"]], '{"a":1}') == Ok({"a": 1})
 
 
 def test_py_from_json_failure_is_failed_not_exception() -> None:
-    outcome = run([["py", "from_json", ""]], "{oops")
+    outcome = run([["py", "from_json"]], "{oops")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2005"
+
+
+def test_strftime_renders_an_offset_for_an_aware_value() -> None:
+    from datetime import timedelta, timezone
+
+    aware = datetime(2026, 9, 24, 15, 30, tzinfo=timezone(timedelta(hours=8)))
+    chain = [["py", "strftime", "%Y-%m-%dT%H:%M:%S%z"]]
+    assert run(chain, aware) == Ok("2026-09-24T15:30:00+0800")
+    assert run([["py", "strftime", "%z"]], datetime(2026, 9, 24)) == Ok("")
+
+
+def test_timestamp_tz_rules() -> None:
+    from datetime import timedelta, timezone
+
+    plus_eight = timezone(timedelta(hours=8))
+    assert run([["py", "from_timestamp", 8]], 0) == Ok(datetime(1970, 1, 1, 8, tzinfo=plus_eight))
+    aware = datetime(1970, 1, 1, 8, tzinfo=plus_eight)
+    assert run([["py", "to_timestamp"]], aware) == Ok(0)
+    outcome = run([["py", "to_timestamp", 9]], aware)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2002"
+    assert run([["py", "to_timestamp"]], datetime(1970, 1, 1)) == Ok(0)
+
+
+def test_find_jsons_survives_an_unmatched_brace() -> None:
+    """The donor implementation loops forever here; the single pass simply finds nothing."""
+    assert run([["py", "find_jsons"]], '{unclosed and "a { b') == Ok([])
+
+
+def test_between_is_half_open() -> None:
+    assert run([["py", "between", [1, 5]]], 1) == Ok(True)
+    assert run([["py", "between", [1, 5]]], 5) == Ok(False)

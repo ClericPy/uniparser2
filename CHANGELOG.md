@@ -10,6 +10,34 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — one stage shape, one parameter rule** (change `simplify-dsl-syntax`): a stage is
+  `[operator]`, `[operator, parameter]` or `[operator, action, parameter]`, and a parameter slot is
+  **omitted** when nothing required remains (`["py","strip"]`, `["json"]`) instead of carrying an
+  empty-string placeholder. Two or more fixed parameters are **one positional array**
+  (`["py","replace",["old","new"]]`, `["re","search",["(\\d+)",1]]`,
+  `["xpath","text",["//x",{"dc":"…"}]]`); a named object is a data map only. The `const` operator is
+  gone — a literal is `["py","const",value]` — and `$obj` names the value a stage received, usable in
+  any parameter (`["py","or",["$locals.a","$obj"]]`).
+- **BREAKING — the `py` table is trimmed and Python-shaped**: removed `list`, `strip_tags`,
+  `default`, `parse_time`, `split.maxsplit` and `sort`'s key/reverse object; added `const`, `md5`,
+  `between`, `find_jsons`, `strptime`, `from_timestamp`, `to_timestamp` and `sort_desc`. `bool` is
+  Python's `bool` (`"false"` is true), `strip` takes an optional `chars`, `uniq` is O(n), and
+  `or`/`and` include the upstream value as the first operand.
+- **BREAKING — time is Python's pair on real datetimes**: `parse_time` and the `[time]` extra are
+  deleted (with `UP2-E2007` / `UP2-E2008`); `strptime` parses text with an explicit literal format
+  into a `datetime`, `strftime` renders one, and `from_timestamp` / `to_timestamp` convert epoch
+  seconds at a fixed offset. A `datetime` may flow between stages but is not exportable — the exit
+  names `py.strftime`.
+- **BREAKING — operator surfaces**: `re` drops `group` (`search` takes `[pattern, group]`), encodes
+  `findall`'s tuples as arrays, and gains `sub` (`[pattern, replacement]`); `each`'s array parameter
+  is one chain over every element; `ctx` gains the read-only `obj` root; `code` is `["code", src]`
+  with `obj`/`ctx` built-ins, silenced `print` and an `UP2_CODE=off` gate; `udf` is
+  `["udf","f"]` unary or nullary with compile-time signature checks and no `ctx` injection.
+- `param_form` tokens are `value` / `array` / `none`, and a JSON Pointer inside a positional
+  parameter array is `/0/2/<index>`.
+
 ### Added
 
 - **The snapshot runner answers a story's requests from the request cache** (change
@@ -60,7 +88,7 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - **A non-finite float is no longer a JSON value** (change `reject-non-finite-floats`): `inf` / `-inf`
   / `nan` passed `is_json_value`, so they survived the single exit and reached the serializers —
   `up2 trial --json` printed `{"state": "ok", "value": Infinity}`, which **no strict JSON parser
-  accepts**, and `dumps` wrote `[["const",Infinity]]`. The predicate now requires a finite float, so a
+  accepts**, and `dumps` wrote `[["py","const",Infinity]]`. The predicate now requires a finite float, so a
   product carrying one (nested included) fails with `UP2-E2003` at the step that produced it, and
   chain text obeys the same rule: `loads` rejects the constants Python's decoder permits and `dumps`
   refuses to write them, both with `UP2-E1004`. The computation is untouched — `py.float("1e999")`
@@ -148,7 +176,7 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - **A chain may be a reference, and that is the only identity** (`03` §2, §12.6): wherever a chain is
   expected — a field-map value, or a step's `body` — a **string beginning with `$`** means "the value the
   reference names, unchanged": `"url": "$in"` is the step's own input, `"$in.url"` is a field of it, and a
-  chain may open with one (`["$globals.base", ["py","strip",""]]`). It is the same spelling `args` already
+  chain may open with one (`["$globals.base", ["py","strip"]]`). It is the same spelling `args` already
   uses for an argument, and it is the **only** way to express identity: no single-element stage form was
   added. `py.id` is **deleted** with its two uses in the samples — `py` now holds 41 functions and the
   registry 72 pairs (from 42 and 73) — and a chain that opened with the identity stage simply drops it,
@@ -214,7 +242,7 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   `chains` table is gone, because a parse rule is a step; a request step declares **`next`**, the step
   that receives the answers (a single task may override it, and the kernel strips it before the host
   sees the request); and a top-level **`collect`** names the step whose products are the run's output.
-  `$in` names this step's own input, so `["py","id",""]` replaces the `["py","str",""]` workaround.
+  `$in` names this step's own input, so `["py","id",""]` replaces the `["py","str"]` workaround.
   `up2 lint` and `up2 trial` accept a story file and report a suspension as such.
 
 - **A host object is a value**: a value that flows through a chain may be an object — an HTTP
@@ -525,7 +553,7 @@ contract assertions (selectolax / lxml) pass, and `core/` coverage is 98%.
     slot-3 object, `ctx` is injected by function signature and is a reserved name)
   - `ctx`: `["ctx", "get", "locals.x"]` (`get`/`set`/`del`/`map`, with writes hard-limited to
     `locals`/`fields`)
-  - `const`: `["const", "article"]` (two slots; emits the literal as-is)
+  - `const`: `["py","const", "article"]` (two slots; emits the literal as-is)
 - **Host integration**: explicit `register_udf` registration plus automatic discovery through the
   `entry_points` group `uniparser2.udfs` (IO is confined to the `host` layer)
 - **Command line** `up2`: `ops --json` (operator capability self-description with full
@@ -567,7 +595,7 @@ contract assertions (selectolax / lxml) pass, and `core/` coverage is 98%.
 - **The slot shape is unified as `[operator, mode, argument]`**: slot 2 is the behavior enum declared
   by that operator (`py` / `udf` use a function name), slot 3 is any value (CSS selector / XPath /
   regex / function argument); operators with a single mode take two slots
-  (`["json", "data.html"]` / `["const", "article"]`). The **enumeration strength increases** across the
+  (`["json", "data.html"]` / `["py","const", "article"]`). The **enumeration strength increases** across the
   three positions: operator (registry) → mode (declared by each operator) → argument (any value).
   `up2 ops` prints the slot roles of every operator.
   > Midway, `css` / `xpath` were flipped to "selector first" and then **reverted**, because it broke

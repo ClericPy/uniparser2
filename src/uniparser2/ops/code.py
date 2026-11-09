@@ -36,7 +36,7 @@ import contextlib
 import importlib
 import os
 import sysconfig
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -52,7 +52,6 @@ from . import pyops
 _MONTY: Final = "pydantic_monty"
 _EXTRA: Final = 'uv add "uniparser2[code]"'
 _RUN: Final = "run"
-_RESERVED: Final = ("obj", "ctx")
 _FROZEN_INSTANT: Final = datetime(2000, 1, 1)
 _UNLIMITED_HINT: Final = (
     "limits are configured by the host (uniparser2.ops.code.configure); "
@@ -280,16 +279,6 @@ def _literal_text(params: Mapping[str, Param], name: str, *, pointer: str = "") 
     return text
 
 
-def _input_names(params: Mapping[str, Param]) -> Sequence[str]:
-    raw = params.get("inputs")
-    if raw is None:
-        return ()
-    value = raw.value if isinstance(raw, Lit) else raw
-    if not isinstance(value, Mapping):
-        return ()
-    return tuple(str(key) for key in value)
-
-
 def _sandbox_failure(exc: Exception) -> Failed:
     """Translate a sandbox exception into our tri-state error codes.
 
@@ -368,15 +357,12 @@ class Code(Op):
     summary = "In-chain code (sandboxed; optional dependency [code])"
     requires = (_MONTY,)
     arity = 2
-    slot_roles = ("source & inputs",)
+    slot_roles = ("source",)
     actions: ClassVar[Mapping[str, ActionSpec]] = {
         _RUN: ActionSpec(
             _RUN,
             "run src once and take the value of the last expression",
-            (
-                ParamSpec("src", Kind.LITERAL),
-                ParamSpec("inputs", Kind.REF_OR_LITERAL, required=False, default=None),
-            ),
+            (ParamSpec("src", Kind.LITERAL),),
         )
     }
 
@@ -386,44 +372,31 @@ class Code(Op):
 
     def precompile(self, action: str, params: Mapping[str, Param], *, pointer: str = "") -> Any:
         del action
+        if not _code_enabled():
+            raise Up2Error(
+                diag(
+                    "UP2-E1107",
+                    "the code operator is disabled by UP2_CODE=off",
+                    fix="set UP2_CODE=on (or unset it) to run in-chain code, or use a udf",
+                    pointer=pointer,
+                )
+            )
         _literal_text(params, "src", pointer=f"{pointer}/src")
-        reserved = sorted(name for name in _input_names(params) if name in _RESERVED)
-        if reserved:
-            raise Up2Error(
-                diag(
-                    "UP2-E1005",
-                    f"reserved names cannot be used in inputs: {reserved}",
-                    fix="obj and ctx are bound by the operator; pick another name",
-                    pointer=f"{pointer}/inputs",
-                    allowed=tuple(f"not {name}" for name in _RESERVED),
-                )
-            )
-        inputs = params.get("inputs")
-        raw = inputs.value if isinstance(inputs, Lit) else inputs
-        if raw is not None and not isinstance(raw, Mapping):
-            raise Up2Error(
-                diag(
-                    "UP2-E1005",
-                    f"inputs must be a name → value object, got {type_name(raw)}",
-                    fix='write a named object such as {"x": "$locals.n"}',
-                    pointer=f"{pointer}/inputs",
-                )
-            )
         return None
 
     def evaluate(self, call: Call) -> Outcome:
+        if not _code_enabled():  # pragma: no cover - compile time already refused it
+            return Failed(
+                code="UP2-E1107",
+                reason="the code operator is disabled by UP2_CODE=off",
+                fix="set UP2_CODE=on (or unset it), or use a udf",
+            )
         src = call.params["src"]
         if not isinstance(src, str):  # pragma: no cover - guaranteed at compile time
             return Failed(code="UP2-E2002", reason=f"src must be a string, got {type_name(src)}")
-        inputs = call.params.get("inputs") or {}
-        if not isinstance(inputs, Mapping):
-            return Failed(
-                code="UP2-E2002", reason=f"inputs must be an object, got {type_name(inputs)}"
-            )
-        for name, value in [("obj", call.value), *inputs.items()]:
-            problem = _bad_value(name, value)
-            if problem is not None:
-                return problem
+        problem = _bad_value("obj", call.value)
+        if problem is not None:
+            return problem
         try:
             module = importlib.import_module(_MONTY)
         except ImportError as exc:
@@ -440,7 +413,17 @@ class Code(Op):
                 reason=f"the sandbox pool failed to start: {exc}",
                 fix=f"make sure the optional dependency is installed: {_EXTRA}",
             )
-        return _run_in_sandbox(module, pool, src, call.value, inputs, call.scope.json_view())
+        return _run_in_sandbox(module, pool, src, call.value, call.scope.json_view())
+
+
+def _code_enabled() -> bool:
+    """``UP2_CODE=off`` disables the operator before any sandbox work (design D9)."""
+    return os.environ.get("UP2_CODE", "on").strip().lower() not in ("off", "0", "false", "no")
+
+
+def _silence_print(stream: str, text: str) -> None:
+    """In-chain ``print`` output is dropped: the product is the channel, not stdout (D9)."""
+    del stream, text
 
 
 def _bad_value(name: str, value: Any) -> Failed | None:
@@ -468,18 +451,17 @@ def _run_in_sandbox(
     pool: Any,
     src: str,
     obj: Any,
-    inputs: Mapping[str, Any],
     data: Mapping[str, Any],
 ) -> Outcome:
     """Run the snippet after the ``ctx`` prelude and translate the outcome to the tri-state."""
-    extra = {key: value for key, value in inputs.items() if key not in _RESERVED}
     try:
         with pool.checkout(limits=_limits(), os_policy=_os_policy()) as session:
             session.feed_run(_PRELUDE, inputs={"data": data})
             result = session.feed_run(
                 src,
-                inputs={"obj": obj, **extra},
+                inputs={"obj": obj},
                 external_lookup=sandbox_functions(),
+                print_callback=_silence_print,
             )
     except module.MontyError as exc:
         return _sandbox_failure(exc)

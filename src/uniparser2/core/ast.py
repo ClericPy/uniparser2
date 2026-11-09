@@ -13,7 +13,7 @@ from typing import Any, Final
 from .errors import Up2Error, diag
 from .values import dumps_json, loads_json
 
-MIN_STAGE_LEN = 2
+MIN_STAGE_LEN = 1
 MAX_STAGE_LEN = 3
 REF_OPERATOR = "$"
 TRY_OPERATOR = "try"
@@ -49,7 +49,7 @@ class Lit:
     value: Any
 
 
-type Param = Lit | Ref | list[Param] | dict[str, Param] | dict[str, CompiledField]
+type Param = Lit | Ref | list[Param] | dict[str, Param] | dict[str, CompiledField] | CompiledField
 """Parameter carrier: scalars are ``Lit``/``Ref``; containers are walked recursively (02 §4).
 
 The last member is the **structured** carrier: a compiled field map (``each``'s argument), whose
@@ -59,16 +59,16 @@ values are chains rather than other carriers.
 
 @dataclass(frozen=True, slots=True)
 class Stage:
-    """The **raw slots** of one stage: ``[operator, action, parameter]`` (design doc 02 §1).
+    """The **raw slots** of one stage: ``[operator]``, ``[operator, parameter]`` or
+    ``[operator, action, parameter]`` (design doc 02 §1).
 
-    The slot shape is **uniform across all operators**: slot 2 = action (the action enum declared
-    by that operator, or the function name for ``py``/``udf``), slot 3 = parameter (selector /
-    XPath / regex / argument, any value); an operator with a single action is written with two
-    slots ``[operator, parameter]``. This class keeps only the raw text and the length; semantics
-    are left to compile time (``compile_stage`` reads them through ``Op.action_slot`` /
-    ``Op.param_slot``).
+    Slot 2 is the action for a multi-action operator and the parameter for a single-action one;
+    slot 3 is the parameter. A parameter slot is **omitted** — never written empty — when the
+    action has nothing left to require, so a stage can be one slot long (``["json"]``) and the
+    maximum is three. This class keeps only the raw text and the length; semantics are left to
+    compile time (``compile_stage`` reads them through ``Op.action_slot`` / ``Op.param_slot``).
 
-    ``length`` records the **raw array length** (2 or 3); serialization must restore it exactly,
+    ``length`` records the **raw array length** (1, 2 or 3); serialization must restore it exactly,
     otherwise the round-trip does not hold.
     """
 
@@ -78,7 +78,9 @@ class Stage:
     length: int = MAX_STAGE_LEN
 
     def to_list(self) -> list[Any]:
-        if self.length == MIN_STAGE_LEN:
+        if self.length == 1:
+            return [self.op]
+        if self.length == 2:
             return [self.op, self.slot1]
         return [self.op, self.slot1, self.slot2]
 
@@ -129,7 +131,7 @@ def parse_stage(raw: Any, /, *, pointer: str = "") -> Stage:
             diag(
                 "UP2-E1004",
                 f"a stage must be an array, got {type(raw).__name__}",
-                fix='write ["operator", "action", "value"], for example ["py", "strip"]',
+                fix='write ["operator", action, parameter], e.g. ["py", "strip"] or ["json"]',
                 pointer=pointer,
             )
         )
@@ -138,9 +140,10 @@ def parse_stage(raw: Any, /, *, pointer: str = "") -> Stage:
         raise Up2Error(
             diag(
                 "UP2-E1004",
-                f"stage length is {length}, only 2 or 3 is allowed",
-                fix='follow the declared arity: 3 slots is ["operator", slot2, slot3]; '
-                '2 slots is ["operator", parameter]',
+                f"stage length is {length}, only 1 to 3 is allowed",
+                fix='follow the declared arity: 3 slots is ["operator", action, parameter]; '
+                '2 slots is ["operator", parameter] or ["operator", action]; '
+                "1 slot is a single-action operator whose parameter is omitted",
                 pointer=pointer,
             )
         )
@@ -154,7 +157,7 @@ def parse_stage(raw: Any, /, *, pointer: str = "") -> Stage:
                 pointer=f"{pointer}/0",
             )
         )
-    action = raw[1]
+    action = raw[1] if length >= 2 else None
     value = raw[2] if length == MAX_STAGE_LEN else None
     return Stage(op=op, slot1=action, slot2=value, length=length)
 

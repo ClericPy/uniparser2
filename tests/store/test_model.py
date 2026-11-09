@@ -11,7 +11,7 @@ from uniparser2.store import canonical_graph, graph_hash, new_chain_id, utc_now
 from uniparser2.store.model import Source, Status, Template
 
 HEX32 = re.compile(r"^[0-9a-f]{32}$")
-GRAPH = [["css1", "text", "h1"], ["py", "strip", ""]]
+GRAPH = [["css1", "text", "h1"], ["py", "strip"]]
 
 
 def test_new_chain_id_is_uuid4_hex_and_unique() -> None:

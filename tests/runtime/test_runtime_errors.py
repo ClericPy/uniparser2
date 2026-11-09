@@ -130,7 +130,7 @@ def test_e2002_re_on_non_text() -> None:
 
 
 def test_e2002_text_function_on_non_text() -> None:
-    outcome = run([["py", "upper", ""]], [1, 2])
+    outcome = run([["py", "upper"]], [1, 2])
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2002"
 
@@ -190,7 +190,7 @@ def test_e2004_lazy_import_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """find_spec passes but the real import fails (broken install): this must report E2004."""
     monkeypatch.setattr(registry, "action_missing_deps", _no_missing_deps)
     monkeypatch.setattr(pyops, "_import_html_to_markdown", _boom_import)
-    outcome = run([["py", "html_to_markdown", ""]], "<b>a</b>")
+    outcome = run([["py", "html_to_markdown"]], "<b>a</b>")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2004"
     assert "html_to_markdown" in outcome.reason
@@ -207,14 +207,14 @@ class _FakeConversion:
 def test_real_html_to_markdown_converts(monkeypatch: pytest.MonkeyPatch) -> None:
     """With the real library installed, ``convert(...).content`` is the Markdown text."""
     pytest.importorskip("html_to_markdown")
-    outcome = run([["py", "html_to_markdown", ""]], "<h1>T</h1><p>a <b>b</b></p>")
+    outcome = run([["py", "html_to_markdown"]], "<h1>T</h1><p>a <b>b</b></p>")
     assert isinstance(outcome, Ok)
     assert "# T" in outcome.value and "**b**" in outcome.value
 
 
 def test_non_text_conversion_result_is_e2005(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pyops, "_import_html_to_markdown", lambda: lambda html: _FakeConversion(7))
-    outcome = run([["py", "html_to_markdown", ""]], "<b>a</b>")
+    outcome = run([["py", "html_to_markdown"]], "<b>a</b>")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2005"
     assert "non-text" in outcome.reason
@@ -234,6 +234,6 @@ def test_e2099_unexpected_exception_becomes_failed(monkeypatch: pytest.MonkeyPat
     from uniparser2.ops.pyops import Py
 
     monkeypatch.setattr(Py, "evaluate", _boom_evaluate)
-    outcome = run([["py", "strip", ""]], " a ")
+    outcome = run([["py", "strip"]], " a ")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2099"

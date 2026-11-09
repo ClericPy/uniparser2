@@ -33,7 +33,7 @@ _DEL: Final = "del"
 _DICT: Final = "dict"
 _LIST: Final = "list"
 _WRITABLE_PREFIXES: Final = ("locals", "public")
-_READABLE_ROOTS: Final = ("globals", "locals", "public")
+_READABLE_ROOTS: Final = ("globals", "locals", "public", "obj")
 
 
 @op("ctx")
@@ -91,7 +91,7 @@ class Ctx(Op):
 
     def evaluate(self, call: Call) -> Outcome:
         if call.action == _GET:
-            return call.scope.read_text(call.payload)
+            return _read(call, call.payload)
         if call.action == _SET:
             call.scope.write_text(call.payload, call.value)
             return Ok(call.value)
@@ -101,20 +101,27 @@ class Ctx(Op):
         return _build(call)
 
 
+def _read(call: Call, path: str) -> Outcome:
+    """Read a ctx path: ``obj`` is the value the stage received, every other root is a scope."""
+    if path == "obj":
+        return Ok(call.value)
+    return call.scope.read_text(path)
+
+
 def _build(call: Call) -> Outcome:
     """``dict`` / ``list``: collect the values of several paths into the payload's shape."""
     spec = call.payload
     if isinstance(spec, list):
         values: list[Any] = []
         for path in spec:
-            outcome = call.scope.read_text(path)
+            outcome = _read(call, path)
             if not isinstance(outcome, Ok):
                 return outcome
             values.append(outcome.value)
         return Ok(values)
     mapped: dict[str, Any] = {}
     for name, path in spec.items():
-        outcome = call.scope.read_text(path)
+        outcome = _read(call, path)
         if not isinstance(outcome, Ok):
             return outcome
         mapped[name] = outcome.value
@@ -178,6 +185,16 @@ def _write_fix(path: str) -> str:
 
 def _check_readable(path: str, *, action: str, pointer: str = "") -> None:
     root = path.split(".", 1)[0]
+    if root == "obj" and path != "obj":
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"ctx.{action} path {path!r} walks into obj",
+                fix='obj names the whole value: read ["ctx","get","obj"], then a field with '
+                '["py","getitem",…]',
+                pointer=pointer,
+            )
+        )
     if root not in _READABLE_ROOTS:
         raise Up2Error(
             diag(

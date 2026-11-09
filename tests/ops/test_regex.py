@@ -26,15 +26,24 @@ def test_match_returns_group_zero_or_empty() -> None:
     assert run([["re", "search", r"\d+"]], "abc") == Ok("")
 
 
-@pytest.mark.covers("re", "group")
+@pytest.mark.covers("re", "search")
 def test_group_by_index_and_by_name() -> None:
-    assert run([["re", "group", {"pattern": r"(\d+)-(\d+)", "group": 2}]], "1-2") == Ok("2")
-    assert run([["re", "group", {"pattern": r"(?P<y>\d{4})", "group": "y"}]], "x2026") == Ok("2026")
+    assert run([["re", "search", [r"(\d+)-(\d+)", 2]]], "1-2") == Ok("2")
+    assert run([["re", "search", [r"(?P<y>\d{4})", "y"]]], "x2026") == Ok("2026")
 
 
-@pytest.mark.covers("re", "group")
+@pytest.mark.covers("re", "search")
 def test_group_unmatched_yields_empty() -> None:
-    assert run([["re", "group", {"pattern": r"(\d+)", "group": 1}]], "abc") == Ok("")
+    assert run([["re", "search", [r"(\d+)", 1]]], "abc") == Ok("")
+
+
+@pytest.mark.covers("re", "sub")
+def test_sub_replaces_every_match() -> None:
+    assert run([["re", "sub", [r"(\d{4})-(\d{2})", r"\2/\1"]]], "2026-09 x 2027-01") == Ok(
+        "09/2026 x 01/2027"
+    )
+    assert run([["re", "sub", ["x", "y"]]], "abc") == Ok("abc")
+    assert compile_error([["re", "sub", ["(a)", r"\2"]]]) == "UP2-E1005"
 
 
 @pytest.mark.covers("re", "findall")
@@ -54,11 +63,11 @@ def test_bad_regex_is_schema_error() -> None:
 
 
 def test_group_out_of_range_is_schema_error() -> None:
-    assert compile_error([["re", "group", {"pattern": "(a)", "group": 3}]]) == "UP2-E1005"
+    assert compile_error([["re", "search", ["(a)", 3]]]) == "UP2-E1005"
 
 
 def test_unknown_group_name_is_schema_error() -> None:
-    assert compile_error([["re", "group", {"pattern": "(a)", "group": "nope"}]]) == "UP2-E1005"
+    assert compile_error([["re", "search", ["(a)", "nope"]]]) == "UP2-E1005"
 
 
 def test_nested_quantifier_is_rejected() -> None:
@@ -77,3 +86,9 @@ def test_missing_pattern_is_schema_error() -> None:
     That leaves the required pattern missing.
     """
     assert compile_error([["re", "search", None]]) == "UP2-E1005"
+
+
+@pytest.mark.covers("re", "findall")
+def test_findall_encodes_tuples_as_arrays() -> None:
+    """Python's ``findall`` answers tuples for two or more groups; the value domain has no tuple."""
+    assert run([["re", "findall", r"(\d+)-(\d+)"]], "1-2 3-4") == Ok([["1", "2"], ["3", "4"]])

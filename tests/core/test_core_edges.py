@@ -93,15 +93,15 @@ def test_ref_and_compiled_stage_expose_helpers() -> None:
     ref = parse_ref("$globals.base_url")
     assert str(ref) == "$globals.base_url"
 
-    compiled = compile_field([["py", "strip", ""]])
+    compiled = compile_field([["py", "strip"]])
     stage: CompiledStage = compiled.stages[0]
     assert stage.pointer == "/0"
-    assert compiled.dumps() == '[["py","strip",""]]'
+    assert compiled.dumps() == '[["py","strip"]]'
 
 
 def test_compile_field_accepts_already_compiled_field() -> None:
     """``compile_field`` is idempotent: an already compiled field chain must not error."""
-    once = compile_field([["py", "strip", ""]])
+    once = compile_field([["py", "strip"]])
     twice = compile_field(once)
     assert twice.stages == once.stages
 
@@ -127,7 +127,7 @@ def test_loads_rejects_stage_list_with_non_list_items() -> None:
 def test_arity_is_checked_before_action_resolution() -> None:
     """Arity precedes action resolution: a short 3-slot stage reports E1004, not E1003/E1107."""
     with pytest.raises(Up2Error) as info:
-        compile_field([["py", "no_such_fn"]])
+        compile_field([["py"]])
     assert info.value.diagnostic.code == "UP2-E1004"
     assert info.value.diagnostic.pointer == "/0"
 
@@ -146,18 +146,18 @@ def test_lit_directive_escapes_inside_a_container() -> None:
 
     in_array = compile_field([["py", "or", [{"$lit": "$a"}, "fallback"]]])
     assert in_array.stages[0].params["operands"] == [Lit("$a"), Lit("fallback")]
-    in_object = compile_field([["py", "default", {"a": {"$lit": "$k"}}]])
-    assert in_object.stages[0].params["value"] == {"a": Lit("$k")}
-    deep = compile_field([["py", "default", {"a": {"b": [{"$lit": "$c"}]}}]])
-    assert deep.stages[0].params["value"] == {"a": {"b": [Lit("$c")]}}
+    in_object = compile_field([["py", "or", [{"a": {"$lit": "$k"}}]]])
+    assert in_object.stages[0].params["operands"] == [{"a": Lit("$k")}]
+    deep = compile_field([["py", "or", [{"a": {"b": [{"$lit": "$c"}]}}]]])
+    assert deep.stages[0].params["operands"] == [{"a": {"b": [Lit("$c")]}}]
 
 
 def test_an_escaped_container_keeps_its_own_dollars() -> None:
     """Quoting a literal object must not resolve anything inside it."""
     from uniparser2.core.ast import Lit
 
-    quoted = compile_field([["py", "default", {"$lit": {"a": "$x"}}]])
-    assert quoted.stages[0].params["value"] == Lit({"a": "$x"})
+    quoted = compile_field([["py", "or", [{"$lit": {"a": "$x"}}]]])
+    assert quoted.stages[0].params["operands"] == [Lit({"a": "$x"})]
 
 
 def test_the_escaped_dollar_reaches_the_result() -> None:
@@ -211,23 +211,12 @@ def test_lit_cannot_fill_a_ref_only_parameter(monkeypatch: pytest.MonkeyPatch) -
 def test_list_valued_reference_param_descends(monkeypatch: pytest.MonkeyPatch) -> None:
     """References inside a container are resolved one by one (``_resolve_param`` list branch)."""
 
-    def tag(value: Any, **kwargs: Any) -> Any:
-        return kwargs
-
-    monkeypatch.setattr(registry, "action_missing_deps", lambda instance, action: ())
-    udfs.register_udf("up2_test_edge_tag", tag)
-    try:
-        outcome = eval_field(
-            compile_field([["udf", "up2_test_edge_tag", ["$globals.x"]]]),
-            "v",
-            scope=Scope(globals={"x": 1}),
-        )
-    finally:
-        udfs.unregister_udf("up2_test_edge_tag")
-    # A list is not a named-parameter object ⇒ runtime E2002; all that is required here is that
-    # the reference was resolved instead of crashing at compile time.
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2002"
+    outcome = eval_field(
+        compile_field([["py", "or", ["$globals.x"]]]),
+        "",
+        scope=Scope(globals={"x": 1}),
+    )
+    assert outcome == Ok(1)
 
 
 def test_reference_inside_list_is_validated(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -238,7 +227,7 @@ def test_reference_inside_list_is_validated(monkeypatch: pytest.MonkeyPatch) -> 
     udfs.register_udf("up2_test_edge_tag2", tag)
     try:
         with pytest.raises(Up2Error) as info:
-            compile_field([["udf", "up2_test_edge_tag2", ["$nope.x"]]])
+            compile_field([["py", "or", ["$nope.x"]]])
     finally:
         udfs.unregister_udf("up2_test_edge_tag2")
     assert info.value.diagnostic.code == "UP2-E1006"
@@ -315,15 +304,15 @@ def test_the_scope_view_merges_the_chain() -> None:
 
 def test_a_query_that_matched_nothing_flows_on() -> None:
     """A no-match is a value, so the chain continues with it."""
-    chain = [["re", "search", r"\d+"], ["py", "strip", ""]]
+    chain = [["re", "search", r"\d+"], ["py", "strip"]]
     assert eval_field(compile_field(chain), "abc") == Ok("")
 
 
 def test_failed_short_circuits_the_rest_of_the_chain() -> None:
     """A failed stage stops the chain and is reported with its own code (never settled)."""
-    # The former ``cast`` operator has been merged into ``py``: ``["py","int",""]`` is its
+    # The former ``cast`` operator has been merged into ``py``: ``["py","int"]`` is its
     # equivalent spelling.
-    chain = [["py", "int", ""], ["py", "strip", ""]]
+    chain = [["py", "int"], ["py", "strip"]]
     outcome = eval_field(compile_field(chain), "not-a-number")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2005"
@@ -339,7 +328,7 @@ def test_system_errors_are_not_swallowed(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(Py, "evaluate", boom)
     with pytest.raises(OSError, match="disk exploded"):
-        eval_field(compile_field([["py", "strip", ""]]), " a ")
+        eval_field(compile_field([["py", "strip"]]), " a ")
 
 
 # ---------------------------------------------------------------- registry boundaries
@@ -433,3 +422,15 @@ def test_dumps_accepts_raw_stage_lists() -> None:
     """``Stage`` keeps only the raw slots: ``slot1`` is the 2nd slot, ``slot2`` is the 3rd."""
     assert dumps([Stage(op="py", slot1="strip", slot2=None, length=2)]) == '[["py","strip"]]'
     assert dumps([Stage(op="py", slot1="strip", slot2="", length=3)]) == '[["py","strip",""]]'
+
+
+def test_a_datetime_product_names_strftime() -> None:
+    """A datetime is internal; the exit names the operator that renders it (design D14)."""
+    from datetime import datetime
+
+    from uniparser2.core.export import pack
+
+    outcome = pack(datetime(2026, 9, 24, 15, 30))
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2003"
+    assert "strftime" in outcome.fix

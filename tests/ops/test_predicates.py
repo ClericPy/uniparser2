@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Ok, Up2Error, compile_field, eval_field
+from uniparser2 import Failed, Ok, compile_field, eval_field
 
 HTML = '<ul class="list"><li>x</li></ul>'
 
@@ -66,7 +66,7 @@ def test_greater_or_equal() -> None:
 
 @pytest.mark.covers("py", "==")
 def test_a_reference_is_accepted_as_the_second_operand() -> None:
-    chain = [["const", 5], ["ctx", "set", "locals._n"], ["py", "==", "$locals._n"]]
+    chain = [["py", "const", 5], ["ctx", "set", "locals._n"], ["py", "==", "$locals._n"]]
     assert run(chain, 5) == Ok(True)
 
 
@@ -93,11 +93,9 @@ def test_ordering_rejects_a_boolean_operand() -> None:
 
 
 @pytest.mark.covers("py", "==")
-def test_a_bare_null_operand_is_a_compile_error_and_in_is_the_way_round() -> None:
-    """A written `null` is indistinguishable from an omitted parameter (compile.py)."""
-    with pytest.raises(Up2Error) as caught:
-        compile_field([["py", "==", None]])
-    assert caught.value.diagnostic.code == "UP2-E1005"
+def test_a_written_null_is_a_real_operand() -> None:
+    """A parameter slot that is written takes the value it carries, even when it is ``null``."""
+    assert run([["py", "==", None]], None) == Ok(True)
     assert run([["py", "in", [None]]], None) == Ok(True)
 
 
@@ -125,9 +123,9 @@ def test_in_accepts_a_list_of_allowed_values() -> None:
 def test_in_asks_whether_a_literal_is_a_substring() -> None:
     """`the URL contains /public/` keeps Python's order: the element goes in front."""
     chain = [
-        ["const", "/public/1681/a.html"],
+        ["py", "const", "/public/1681/a.html"],
         ["ctx", "set", "locals._url"],
-        ["const", "/public/"],
+        ["py", "const", "/public/"],
         ["py", "in", "$locals._url"],
     ]
     assert run(chain, "in") == Ok(True)
@@ -152,9 +150,9 @@ def test_in_membership_is_deep_equality() -> None:
 @pytest.mark.covers("py", "or")
 def test_or_picks_the_first_non_empty_candidate() -> None:
     chain = [
-        ["const", ""],
+        ["py", "const", ""],
         ["ctx", "set", "locals._a"],
-        ["const", "/p/1"],
+        ["py", "const", "/p/1"],
         ["ctx", "set", "locals._b"],
         ["py", "or", ["$locals._a", "$locals._b"]],
     ]
@@ -164,18 +162,18 @@ def test_or_picks_the_first_non_empty_candidate() -> None:
 @pytest.mark.covers("py", "or")
 def test_or_answers_the_last_operand_when_every_candidate_is_falsy() -> None:
     """Python's answer, and the reason this action is not called `any`."""
-    chain = [["const", 0], ["ctx", "set", "locals._b"], ["py", "or", ["", "$locals._b"]]]
+    chain = [["py", "const", 0], ["ctx", "set", "locals._b"], ["py", "or", ["", "$locals._b"]]]
     assert run(chain, "in") == Ok(0)
 
 
 @pytest.mark.covers("py", "or")
 def test_or_over_an_empty_array() -> None:
-    assert run([["py", "or", []]], "in") == Ok(False)
+    assert run([["py", "or", []]], "in") == Ok("in")
 
 
 @pytest.mark.covers("py", "or")
 def test_or_rejects_a_parameter_that_is_not_an_array() -> None:
-    chain = [["const", "x"], ["ctx", "set", "locals._a"], ["py", "or", "$locals._a"]]
+    chain = [["py", "const", "x"], ["ctx", "set", "locals._a"], ["py", "or", "$locals._a"]]
     outcome = run(chain, "in")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2002"
@@ -184,22 +182,26 @@ def test_or_rejects_a_parameter_that_is_not_an_array() -> None:
 
 @pytest.mark.covers("py", "and")
 def test_and_answers_the_first_falsy_operand() -> None:
-    chain = [["const", ""], ["ctx", "set", "locals._b"], ["py", "and", [{"t": 1}, "$locals._b"]]]
+    chain = [
+        ["py", "const", ""],
+        ["ctx", "set", "locals._b"],
+        ["py", "and", [{"t": 1}, "$locals._b"]],
+    ]
     assert run(chain, "in") == Ok("")
 
 
 @pytest.mark.covers("py", "and")
 def test_and_over_an_empty_array() -> None:
-    assert run([["py", "and", []]], "in") == Ok(True)
+    assert run([["py", "and", []]], "in") == Ok("in")
 
 
 @pytest.mark.covers("py", "or")
 def test_a_boolean_pair_still_answers_a_boolean() -> None:
     """Selection and judgement are the same action: booleans in, boolean out."""
     chain = [
-        ["const", False],
+        ["py", "const", False],
         ["ctx", "set", "locals._a"],
-        ["const", True],
+        ["py", "const", True],
         ["ctx", "set", "locals._b"],
         ["py", "or", ["$locals._a", "$locals._b"]],
     ]
@@ -221,7 +223,7 @@ def test_an_unreadable_candidate_fails_before_or_runs() -> None:
     outcome = run(absent, "in")
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2001"
-    present = [["const", ""], ["ctx", "set", "locals._a"], *absent]
+    present = [["py", "const", ""], ["ctx", "set", "locals._a"], *absent]
     assert run(present, "in") == Ok("fallback")
 
 

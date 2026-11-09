@@ -24,14 +24,14 @@ STORY = {
         {
             "name": "record",
             "body": {
-                "title": [["py", "normalize_space", ""], ["py", "upper", ""]],
+                "title": [["py", "normalize_space"], ["py", "upper"]],
             },
             "type": "dict",
         }
     ],
     "collect": "record",
 }
-CHAIN = [["py", "normalize_space", ""], ["py", "upper", ""]]
+CHAIN = [["py", "normalize_space"], ["py", "upper"]]
 INPUT = "  hello   world  "
 EXPECTED = [{"title": "HELLO WORLD"}]
 

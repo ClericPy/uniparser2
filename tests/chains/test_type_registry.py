@@ -134,7 +134,7 @@ def test_a_dataclass_validates_a_product_and_the_product_stays_json() -> None:
         [
             {
                 "name": "book",
-                "body": {"title": [["const", "T"]], "price": [["const", "12.00"]]},
+                "body": {"title": [["py", "const", "T"]], "price": [["py", "const", "12.00"]]},
                 "type": "Book",
             }
         ]
@@ -148,7 +148,7 @@ def test_the_exit_product_is_json_even_when_the_constructor_returns_an_object() 
         [
             {
                 "name": "book",
-                "body": {"title": [["const", "T"]], "price": [["const", "P"]]},
+                "body": {"title": [["py", "const", "T"]], "price": [["py", "const", "P"]]},
                 "type": "Book",
             }
         ]
@@ -166,9 +166,9 @@ def test_a_nested_registered_type_rejects_a_misshapen_record() -> None:
             {
                 "name": "books",
                 "body": {
-                    "title": [["const", "T"]],
-                    "price": [["const", "P"]],
-                    "extra": [["const", 1]],
+                    "title": [["py", "const", "T"]],
+                    "price": [["py", "const", "P"]],
+                    "extra": [["py", "const", 1]],
                 },
                 "type": "Strict",
             }
@@ -186,7 +186,7 @@ def test_a_nested_registered_type_rejects_a_misshapen_record() -> None:
 
 def test_a_missing_required_field_is_reported_by_the_constructor() -> None:
     """A field that must exist is enforced at the step that produced it (01 §4.2)."""
-    bundle = _story([{"name": "book", "body": {"title": [["const", "T"]]}, "type": "Book"}])
+    bundle = _story([{"name": "book", "body": {"title": [["py", "const", "T"]]}, "type": "Book"}])
     diagnostic = _run_error(bundle)
     assert diagnostic.code == "UP2-E2019"
     assert "missing 1 required positional argument: 'price'" in diagnostic.message
@@ -199,7 +199,7 @@ def test_a_constructor_keeps_its_own_exception_text() -> None:
 
     register_type("Boom", Boom)
     try:
-        bundle = _story([{"name": "b", "body": {"title": [["const", "T"]]}, "type": "Boom"}])
+        bundle = _story([{"name": "b", "body": {"title": [["py", "const", "T"]]}, "type": "Boom"}])
         diagnostic = _run_error(bundle)
     finally:
         unregister_type("Boom")
@@ -211,12 +211,12 @@ def test_a_constructor_keeps_its_own_exception_text() -> None:
 
 def test_a_list_product_is_built_from_its_items() -> None:
     """`Cls(*items)`: one registered name turns a list product into a typed collection (03 §3.2)."""
-    bundle = _story([{"name": "shelf", "body": [["const", ["a", "b"]]], "type": "Shelf"}])
+    bundle = _story([{"name": "shelf", "body": [["py", "const", ["a", "b"]]], "type": "Shelf"}])
     assert _run(bundle) == ("done", [["a", "b"]])
 
 
 def test_a_list_product_of_objects_is_json_at_the_exit() -> None:
-    bundle = _story([{"name": "rows", "body": [["const", ["a", "b"]]], "type": "list"}])
+    bundle = _story([{"name": "rows", "body": [["py", "const", ["a", "b"]]], "type": "list"}])
     assert _run(bundle) == ("done", [["a", "b"]])
 
 
@@ -225,7 +225,7 @@ def test_a_batch_of_objects_is_json_at_the_exit() -> None:
         [
             {
                 "name": "rows",
-                "body": {"items": [["const", [{"url": "a"}, {"url": "b"}]]]},
+                "body": {"items": [["py", "const", [{"url": "a"}, {"url": "b"}]]]},
                 "type": "dict",
             }
         ]
@@ -234,7 +234,7 @@ def test_a_batch_of_objects_is_json_at_the_exit() -> None:
 
 
 def test_an_unregistered_name_fails_with_the_registered_names() -> None:
-    bundle = _story([{"name": "a", "body": {"u": [["const", 1]]}, "type": "NoticeList"}])
+    bundle = _story([{"name": "a", "body": {"u": [["py", "const", 1]]}, "type": "NoticeList"}])
     diagnostic = _run_error(bundle)
     assert diagnostic.code == "UP2-E1011"
     assert diagnostic.message == ("the step declares type 'NoticeList', which no host registered")
@@ -251,7 +251,7 @@ def test_a_constructor_never_carries_an_object_into_the_product() -> None:
 
     register_type("Digging", digging)
     try:
-        bundle = _story([{"name": "d", "body": {"u": [["const", 1]]}, "type": "Digging"}])
+        bundle = _story([{"name": "d", "body": {"u": [["py", "const", 1]]}, "type": "Digging"}])
         diagnostic = _run_error(bundle)
     finally:
         unregister_type("Digging")
@@ -261,18 +261,18 @@ def test_a_constructor_never_carries_an_object_into_the_product() -> None:
 def test_builtin_names_need_no_registration() -> None:
     """The JSON basics and the effect types are known to the kernel (03 §3.1)."""
     assert unregister_type("dict") is False
-    bundle = _story([{"name": "n", "body": [["const", "2026"]], "type": "int"}])
+    bundle = _story([{"name": "n", "body": [["py", "const", "2026"]], "type": "int"}])
     assert _run(bundle) == ("done", [2026])
 
 
 def test_the_null_builtin_answers_nothing() -> None:
     register_type("Gone", lambda **payload: None)
     try:
-        bundle = _story([{"name": "g", "body": {"u": [["const", 1]]}, "type": "Gone"}])
+        bundle = _story([{"name": "g", "body": {"u": [["py", "const", 1]]}, "type": "Gone"}])
         assert _run(bundle) == ("done", [None])
     finally:
         unregister_type("Gone")
-    bundle = _story([{"name": "n", "body": {"u": [["const", 1]]}, "type": "null"}])
+    bundle = _story([{"name": "n", "body": {"u": [["py", "const", 1]]}, "type": "null"}])
     assert _run(bundle) == ("done", [None])
 
 
@@ -280,7 +280,7 @@ def test_a_constructor_may_answer_its_own_json_shape() -> None:
     """A constructor that answers JSON built from the product decides the product (`03` §3.3)."""
     register_type("Padded", lambda *items: [*items, "extra"])
     try:
-        bundle = _story([{"name": "p", "body": [["const", ["a"]]], "type": "Padded"}])
+        bundle = _story([{"name": "p", "body": [["py", "const", ["a"]]], "type": "Padded"}])
         assert _run(bundle) == ("done", [["a", "extra"]])
     finally:
         unregister_type("Padded")
@@ -289,21 +289,21 @@ def test_a_constructor_may_answer_its_own_json_shape() -> None:
 def test_a_host_registration_may_shadow_a_builtin_name() -> None:
     register_type("int", lambda product: len(str(product)))
     try:
-        bundle = _story([{"name": "n", "body": [["const", "2026"]], "type": "int"}])
+        bundle = _story([{"name": "n", "body": [["py", "const", "2026"]], "type": "int"}])
         assert _run(bundle) == ("done", [4])
     finally:
         unregister_type("int")
 
 
 def test_a_step_without_a_type_builds_nothing() -> None:
-    bundle = _story([{"name": "n", "body": {"u": [["const", "x"]]}}])
+    bundle = _story([{"name": "n", "body": {"u": [["py", "const", "x"]]}}])
     assert _run(bundle) == ("done", [{"u": "x"}])
 
 
 def test_compiling_a_story_does_not_need_the_registry() -> None:
     """The bundle is data and compiles without host state; only the run builds the declared type."""
     story = compile_story(
-        _story([{"name": "a", "body": {"u": [["const", 1]]}, "type": "NeverRegistered"}])
+        _story([{"name": "a", "body": {"u": [["py", "const", 1]]}, "type": "NeverRegistered"}])
     )
     assert story.steps[0].type == "NeverRegistered"
     assert _run_error(story.source).code == "UP2-E1011"

@@ -134,9 +134,9 @@ def test_chain_uses_local_across_steps() -> None:
     That is the only use of locals within L1 (``locals._up``).
     """
     chain = [
-        ["py", "upper", ""],
+        ["py", "upper"],
         ["ctx", "set", "locals._up"],
-        ["py", "lower", ""],
+        ["py", "lower"],
         ["ctx", "get", "locals._up"],
     ]
     assert run(chain, "Ab") == Ok("AB")
@@ -154,3 +154,27 @@ def test_scope_read_indexes_a_list() -> None:
     outcome = run([["ctx", "get", "locals.a.first"]], None, scope=scope)
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2001"
+
+
+def test_obj_names_the_value_the_stage_received() -> None:
+    """``ctx.get "obj"`` is the value this stage received, not the chain's input."""
+    assert run([["py", "strip"], ["ctx", "get", "obj"]], "  a  ") == Ok("a")
+
+
+def test_obj_path_is_a_compile_error() -> None:
+    assert compile_error([["ctx", "get", "obj.x"]]) == "UP2-E1005"
+
+
+def test_obj_is_not_writable() -> None:
+    assert compile_error([["ctx", "set", "obj"]]) == "UP2-E1015"
+
+
+def test_dollar_obj_is_the_stage_value_not_the_chain_input() -> None:
+    """``$obj`` on the parameter side names the same value; whitespace was stripped already."""
+    chain = [["py", "strip"], ["py", "or", ["$obj", "fallback"]]]
+    assert run(chain, "  ") == Ok("fallback")
+    assert run(chain, "  a  ") == Ok("a")
+
+
+def test_a_dollar_obj_path_is_a_compile_error() -> None:
+    assert compile_error([["py", "or", ["$obj.x"]]]) == "UP2-E1006"

@@ -18,7 +18,7 @@
         "items": [
           ["py", "getattr", "text"],
           ["css", "@href", "div.quote a[href^='/author/']"],
-          ["py", "uniq", ""],
+          ["py","uniq"],
           [
             "each",
             {
@@ -37,22 +37,22 @@
         "name": [
           ["py", "getattr", "text"],
           ["css1", "text", "h3.author-title"],
-          ["py", "normalize_space", ""]
+          ["py","normalize_space"]
         ],
         "born_date": [
           ["py", "getattr", "text"],
           ["css1", "text", "span.author-born-date"],
-          ["py", "strip", ""]
+          ["py","strip"]
         ],
         "born_location": [
           ["py", "getattr", "text"],
           ["css1", "text", "span.author-born-location"],
-          ["py", "strip", ""]
+          ["py","strip"]
         ],
         "description": [
           ["py", "getattr", "text"],
           ["css1", "text", "div.author-description"],
-          ["py", "normalize_space", ""]
+          ["py","normalize_space"]
         ]
       },
       "type": "Author"

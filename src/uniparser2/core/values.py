@@ -110,6 +110,14 @@ def dumps_json(
     value outside the domain raises ``TypeError``. Both are ``UP2-E1004``: what a text boundary
     writes must be what it would accept back. ``subject`` is the noun the diagnostic names.
     """
+    if not _dict_keys_are_strings(value):
+        raise Up2Error(
+            diag(
+                "UP2-E1004",
+                f"{subject} contains an object key that is not a string",
+                fix='JSON object keys are strings: write {"1": …} rather than {1: …}',
+            )
+        )
     try:
         return json.dumps(
             value,
@@ -123,6 +131,22 @@ def dumps_json(
         raise Up2Error(
             diag("UP2-E1004", f"{subject} cannot be written as JSON: {exc}", fix=NON_JSON_FIX)
         ) from exc
+
+
+def _dict_keys_are_strings(value: object) -> bool:
+    """Every object key is a string, recursively.
+
+    ``json.dumps`` **coerces** an int key to ``"1"`` instead of raising, which would change the
+    value silently; the writer refuses it instead. Tuples are accepted: ``json.dumps`` writes them
+    as arrays, which is the JSON value they stand for.
+    """
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _dict_keys_are_strings(item) for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return all(_dict_keys_are_strings(item) for item in value)
+    return True
 
 
 def loads_json(text: str | bytes, *, subject: str = "the text") -> Any:

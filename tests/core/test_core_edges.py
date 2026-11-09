@@ -434,3 +434,14 @@ def test_a_datetime_product_names_strftime() -> None:
     assert isinstance(outcome, Failed)
     assert outcome.code == "UP2-E2003"
     assert "strftime" in outcome.fix
+
+
+def test_a_nested_datetime_product_still_names_strftime() -> None:
+    from datetime import datetime
+
+    from uniparser2.core.export import pack
+
+    outcome = pack({"when": [datetime(2026, 9, 24)]})
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2003"
+    assert "strftime" in outcome.fix

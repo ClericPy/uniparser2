@@ -92,3 +92,9 @@ def test_missing_pattern_is_schema_error() -> None:
 def test_findall_encodes_tuples_as_arrays() -> None:
     """Python's ``findall`` answers tuples for two or more groups; the value domain has no tuple."""
     assert run([["re", "findall", r"(\d+)-(\d+)"]], "1-2 3-4") == Ok([["1", "2"], ["3", "4"]])
+
+
+@pytest.mark.covers("re", "search")
+def test_a_numeric_string_group_runs_as_an_index() -> None:
+    """The compiler accepts "1" as an index; the runtime must not re-read it as a group name."""
+    assert run([["re", "search", [r"(\d+)-(\d+)", "2"]]], "1-2") == Ok("2")

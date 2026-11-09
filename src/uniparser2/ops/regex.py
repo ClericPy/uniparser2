@@ -133,6 +133,10 @@ def _search(compiled: re.Pattern[str], text: str, group: Any) -> Outcome:
     found = compiled.search(text)
     if found is None:
         return Ok("")
+    if isinstance(group, str) and group.lstrip("-").isdigit():
+        # `_check_group` accepts a numeric string as an index; Python's `group()` would read it
+        # as a *name*. Normalize so the spelling the compiler validated is the one that runs.
+        group = int(group)
     return Ok(found.group(0 if group is None else group))
 
 

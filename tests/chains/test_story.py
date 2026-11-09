@@ -887,6 +887,17 @@ def test_a_call_argument_reference_is_resolved() -> None:
     assert start(story, "ignored").go() == ("call", "host.fn", {"seen": "ignored"})
 
 
+def test_obj_is_not_readable_in_a_call_argument() -> None:
+    """``$obj`` names a stage's value; a call step's arguments are not a stage (design D11)."""
+    story = _bundle(
+        [
+            {"name": "a", "body": {"u": "$in"}, "type": "dict"},
+            {"name": "b", "call": "host.fn", "args": {"seen": "$obj"}, "type": "dict"},
+        ]
+    )
+    assert _run_error(story, "ignored") == "UP2-E2001"
+
+
 # ---------------------------------------------------------------- a whole-chain reference
 
 

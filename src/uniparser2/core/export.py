@@ -155,6 +155,27 @@ def render_difference(difference: ProductDifference) -> str:
     )
 
 
+def _datetime_export(value: Any) -> Failed:
+    """A datetime is internal: the fix names the operator that renders it (design D14)."""
+    return Failed(
+        code="UP2-E2003",
+        reason=f"export contains a datetime ({preview(value, 80)})",
+        fix='a datetime is an internal value: render it first with ["py","strftime","%Y-%m-%d '
+        '%H:%M:%S"]',
+    )
+
+
+def _contains_datetime(value: Any) -> bool:
+    """Whether a product carries a datetime anywhere inside it (only asked after a pack failure)."""
+    if isinstance(value, datetime):
+        return True
+    if isinstance(value, Mapping):
+        return any(_contains_datetime(item) for item in value.values())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return any(_contains_datetime(item) for item in value)
+    return False
+
+
 def pack(value: Any, /, *, pointer: str = "") -> Outcome:
     """Pack the chain product; every value that cannot be exported turns into ``Failed``."""
     if is_opaque(value):
@@ -164,13 +185,10 @@ def pack(value: Any, /, *, pointer: str = "") -> Outcome:
             fix=_SERIALIZE_FIX,
         )
     if isinstance(value, datetime):
-        return Failed(
-            code="UP2-E2003",
-            reason=f"export contains a datetime ({preview(value, 80)})",
-            fix='a datetime is an internal value: render it first with ["py","strftime","%Y-%m-%d '
-            '%H:%M:%S"]',
-        )
+        return _datetime_export(value)
     if not is_json_value(value):
+        if _contains_datetime(value):
+            return _datetime_export(value)
         return Failed(
             code="UP2-E2003",
             reason=f"export contains a value that cannot be serialized: {type_name(value)} "

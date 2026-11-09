@@ -26,7 +26,7 @@ enumeration; for a single-action operator it is the parameter itself), slot 3 is
 | `re` | 3 | `search` / `findall` / `sub` | pattern, or `[pattern, group]` / `[pattern, replacement]` | `["re", "search", ["(\d{4})", 1]]` |
 | `ctx` | 3 | `get` / `set` / `del` / `dict` / `list` | path / list / object | `["ctx", "get", "locals.x"]` |
 | `py` | 3 | function name (allowlist) | the function's parameter(s) | `["py", "urljoin", "$globals.base_url"]` |
-| `udf` | 3 | function name (host-registered) | — (the call is unary or nullary) | `["udf", "my_fn"]` |
+| `udf` | 3 | function name (host-registered) | — omitted (the stage writes 2 slots; the call is unary or nullary) | `["udf", "my_fn"]` |
 | `json` | 2 | jmespath expression | — | `["json", "data.html"]` |
 | `each` | 2 | field map, or one chain | — | `["each", {"title": [["css1","text","a"]]}]` |
 | `code` | 2 | the source text | — | `["code", "len(obj)"]` |

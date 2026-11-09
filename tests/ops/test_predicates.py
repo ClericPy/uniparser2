@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from uniparser2 import Failed, Ok, compile_field, eval_field
+from uniparser2 import Failed, Ok, Up2Error, compile_field, eval_field
 
 HTML = '<ul class="list"><li>x</li></ul>'
 
@@ -254,3 +254,10 @@ def test_nodes_yields_an_empty_list() -> None:
     """`exists` is a boolean view of the same fact; `nodes` answers the shape's empty value."""
     pytest.importorskip("selectolax")
     assert run([["css", "nodes", ".nope"]], HTML) == Ok([])
+
+
+@pytest.mark.covers("py", "or")
+def test_an_object_operand_list_is_a_compile_error() -> None:
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "or", {"a": 1}]])
+    assert info.value.diagnostic.code == "UP2-E1005"

@@ -34,15 +34,16 @@ import calendar
 import hashlib
 import importlib
 import json
+import math
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Final
 from urllib.parse import urljoin as _urljoin
 from urllib.parse import urlsplit as _urlsplit
 
-from ..core.ast import Lit, Param
+from ..core.ast import Lit, Param, Ref
 from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
 from ..core.refs import Scope
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
@@ -91,13 +92,6 @@ def _items(value: Any, who: str) -> list[Any] | Failed:
         fix='cut out a list first with ["py","split",","] / ["css","nodes",S], or take the list '
         'apart with ["each",{...}]',
     )
-
-
-def _int_param(params: Mapping[str, Any], name: str) -> int:
-    raw = params.get(name)
-    if isinstance(raw, bool) or raw is None:
-        raise ValueError(f"parameter {name} must be an integer")
-    return int(raw)
 
 
 def _py_strip(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
@@ -283,31 +277,25 @@ def _py_flatten(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
 def _py_sort(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     """Python's ``sorted``, with no key and no coercion."""
     del params, scope
-    items = _items(value, "sort")
-    if isinstance(items, Failed):
-        return items
-    try:
-        return Ok(sorted(items))
-    except TypeError as exc:
-        return Failed(
-            code="UP2-E2005",
-            reason=f"sort failed: {exc}",
-            fix="sort comparable values only; convert the elements first with each + int/float",
-        )
+    return _sorted(value, "sort", reverse=False)
 
 
 def _py_sort_desc(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
     """Python's ``sorted(..., reverse=True)``."""
     del params, scope
-    items = _items(value, "sort_desc")
+    return _sorted(value, "sort_desc", reverse=True)
+
+
+def _sorted(value: Any, who: str, *, reverse: bool) -> Outcome:
+    items = _items(value, who)
     if isinstance(items, Failed):
         return items
     try:
-        return Ok(sorted(items, reverse=True))
+        return Ok(sorted(items, reverse=reverse))
     except TypeError as exc:
         return Failed(
             code="UP2-E2005",
-            reason=f"sort_desc failed: {exc}",
+            reason=f"{who} failed: {exc}",
             fix="sort comparable values only; convert the elements first with each + int/float",
         )
 
@@ -569,7 +557,14 @@ def _py_from_timestamp(value: Any, params: Mapping[str, Any], scope: Scope) -> O
     tz = _tz_hours(params)
     if isinstance(tz, Failed):
         return tz
-    return Ok(datetime.fromtimestamp(value, timezone(timedelta(hours=tz))))
+    try:
+        return Ok(datetime.fromtimestamp(value, timezone(timedelta(hours=tz))))
+    except (OverflowError, OSError, ValueError) as exc:
+        return Failed(
+            code="UP2-E2005",
+            reason=f"the epoch {value!r} is out of range: {exc}",
+            fix="check the timestamp: it is seconds, not milliseconds, and must fit datetime",
+        )
 
 
 def _py_to_timestamp(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
@@ -591,7 +586,16 @@ def _py_to_timestamp(value: Any, params: Mapping[str, Any], scope: Scope) -> Out
                 reason="the datetime already carries its own offset, and tz asks for another",
                 fix="drop the tz parameter: an aware value converts with its own offset",
             )
-        return Ok(int(value.timestamp()))
+        try:
+            # floor, not int(): a pre-epoch fractional second must agree with the
+            # naive path (calendar.timegm floors by dropping the fraction).
+            return Ok(math.floor(value.timestamp()))
+        except (OverflowError, OSError, ValueError) as exc:
+            return Failed(
+                code="UP2-E2005",
+                reason=f"the datetime is out of range for epoch seconds: {exc}",
+                fix="check the year of the value before converting",
+            )
     return Ok(int(calendar.timegm(value.timetuple())) - int(tz * 3600))
 
 
@@ -890,18 +894,22 @@ def _py_find_jsons(value: Any, params: Mapping[str, Any], scope: Scope) -> Outco
 def _scan_jsons(text: str) -> list[Any]:
     """One stack-based pass: balanced spans only, string literals skipped, no backtracking."""
     found: list[Any] = []
+    for start, end in _balanced_spans(text):
+        parsed = _load_json_candidate(text[start : end + 1])
+        if parsed is not None:
+            found.append(parsed)
+    return found
+
+
+def _balanced_spans(text: str) -> Iterator[tuple[int, int]]:
+    """Yield the ``(start, end)`` of each balanced ``{…}`` / ``[…]`` span, skipping strings."""
     stack: list[str] = []
     start = 0
     in_string = False
     escaped = False
     for index, char in enumerate(text):
         if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
+            in_string, escaped = _string_step(char, escaped)
             continue
         if char == '"':
             in_string = True
@@ -909,18 +917,32 @@ def _scan_jsons(text: str) -> list[Any]:
             if not stack:
                 start = index
             stack.append(char)
-        elif char in _JSON_CLOSERS:
-            if not stack:
-                continue
-            if _JSON_BRACKETS[stack[-1]] != char:
-                stack.clear()
-                continue
-            stack.pop()
-            if not stack:
-                parsed = _load_json_candidate(text[start : index + 1])
-                if parsed is not None:
-                    found.append(parsed)
-    return found
+        elif char in _JSON_CLOSERS and _close_bracket(stack, char):
+            yield start, index
+
+
+def _string_step(char: str, escaped: bool) -> tuple[bool, bool]:
+    """Advance the in-string state; a raw newline means the quote was prose (recover)."""
+    if char == "\n":
+        return False, False
+    if escaped:
+        return True, False
+    if char == "\\":
+        return True, True
+    if char == '"':
+        return False, False
+    return True, False
+
+
+def _close_bracket(stack: list[str], char: str) -> bool:
+    """Pop a matching closer; answer whether the span closed (a mismatch abandons it)."""
+    if not stack:
+        return False
+    if _JSON_BRACKETS[stack[-1]] != char:
+        stack.clear()
+        return False
+    stack.pop()
+    return not stack
 
 
 def _load_json_candidate(candidate: str) -> Any:
@@ -1012,17 +1034,17 @@ def _scalar_fix(action: str, name: str) -> str:
 def _check_operands(params: Mapping[str, Param], *, pointer: str = "") -> None:
     """A literal operand list must be an array; a reference is decided at runtime."""
     raw = params["operands"]
-    if isinstance(raw, Lit):
-        raise Up2Error(
-            diag(
-                "UP2-E1005",
-                f"or/and need an array of operands, got {type_name(raw.value)}",
-                fix='write the operands as one array: ["py","or",["$locals.a","fallback"]]',
-                pointer=pointer or "/2/operands",
-            )
-        )
-    if isinstance(raw, list):
+    if isinstance(raw, (list, Ref)):
         return
+    got = type_name(raw.value) if isinstance(raw, Lit) else type_name(raw)
+    raise Up2Error(
+        diag(
+            "UP2-E1005",
+            f"or/and need an array of operands, got {got}",
+            fix='write the operands as one array: ["py","or",["$locals.a","fallback"]]',
+            pointer=pointer or "/2/operands",
+        )
+    )
 
 
 def _check_between(params: Mapping[str, Param], *, pointer: str = "") -> None:

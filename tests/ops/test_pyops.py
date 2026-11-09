@@ -143,6 +143,8 @@ CASES: tuple[tuple[str, object, object, Callable[[Outcome], bool]], ...] = (
     ("sort_desc", [1, 3, 2], (), ok([3, 2, 1])),
     ("uniq", [1, 1, 2], (), ok([1, 2])),
     ("between", 3, [1, 5], ok(True)),
+    ("const", None, {"a": [1, 2]}, ok({"a": [1, 2]})),
+    ("const", None, None, ok(None)),
     ("find_jsons", 'x{"a":1}y[2,3]z', (), ok([{"a": 1}, [2, 3]])),
     ("urljoin", "b", "/a/", ok("/a/b")),
     ("urlsplit", "https://x/y?z=1", "netloc", ok("x")),
@@ -640,3 +642,24 @@ def test_find_jsons_survives_an_unmatched_brace() -> None:
 def test_between_is_half_open() -> None:
     assert run([["py", "between", [1, 5]]], 1) == Ok(True)
     assert run([["py", "between", [1, 5]]], 5) == Ok(False)
+
+
+def test_from_timestamp_out_of_range_is_a_value_error() -> None:
+    outcome = run([["py", "from_timestamp"]], 10**30)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2005"
+    assert "milliseconds" in outcome.fix
+
+
+def test_find_jsons_recovers_from_a_prose_quote() -> None:
+    """An unmatched double quote in surrounding prose must not hide the JSON on later lines."""
+    assert run([["py", "find_jsons"]], 'He said "hi\n{"a": 1}') == Ok([{"a": 1}])
+
+
+def test_to_timestamp_floors_a_pre_epoch_fraction() -> None:
+    """An aware and a naive value agree: the fraction is dropped, so both answer -1."""
+
+    aware = datetime(1969, 12, 31, 23, 59, 59, 500000, tzinfo=UTC)
+    naive = datetime(1969, 12, 31, 23, 59, 59, 500000)
+    assert run([["py", "to_timestamp"]], aware) == Ok(-1)
+    assert run([["py", "to_timestamp"]], naive) == Ok(-1)

@@ -37,16 +37,16 @@ LIT_DIRECTIVE: Final = "$lit"
 RESERVED_ROOTS: Final = ("globals", "locals", "public", "in", "obj")
 WRITABLE_ROOTS: Final = ("locals", "public")
 INPUT_ROOT: Final = "in"
+"""The root naming **this step's own input** (``$in.url``, design doc 03 §2.1).
+
+A story step's input is the value the step was handed (the previous step's product, a host answer,
+or the run's own input for the first step), and it has no ``locals`` round-trip: ``$in`` names it.
+"""
 OBJ_ROOT: Final = "obj"
 """The root naming **the value the current stage received** (design D11/D14).
 
 It is not a scope: it takes no path and is resolved from the stage's ``Call`` rather than from a
 ``Scope``. The same value is readable through ``ctx`` as ``obj``.
-"""
-"""The root naming **this step's own input** (``$in.url``, design doc 03 §2.1).
-
-A story step's input is the value the step was handed (the previous step's product, a host answer,
-or the run's own input for the first step), and it has no ``locals`` round-trip: ``$in`` names it.
 """
 PUBLIC_ROOT: Final = "public"
 """The root naming the **run's shared scope** (``$public.page``, change `public-scope-and-try`).

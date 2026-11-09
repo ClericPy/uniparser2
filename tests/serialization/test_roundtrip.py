@@ -103,3 +103,13 @@ def test_dumps_refuses_a_non_finite_parameter() -> None:
     with pytest.raises(Up2Error) as info:
         dumps([["py", "const", float("inf")]])
     assert info.value.diagnostic.code == "UP2-E1004"
+
+
+def test_dumps_json_refuses_a_non_string_key() -> None:
+    """``json.dumps`` would coerce ``1`` to ``"1"``; the writer refuses instead of changing data."""
+    from uniparser2.core.values import dumps_json
+
+    with pytest.raises(Up2Error) as info:
+        dumps_json({1: "a"})
+    assert info.value.diagnostic.code == "UP2-E1004"
+    assert dumps_json((1, 2)) == "[1, 2]"  # a tuple is written as the array it stands for

@@ -324,7 +324,7 @@ The LLM (or a person) produces the chain JSON, **using only operators and action
 1. what the run's input is (the **`entry` step's input**; there is no `seed` and no input field, `03` §2) and that materialization is on demand (`03` §6);
 2. whether per-item parsing is needed (an `each` stage inside the chain that holds the list);
 3. each step's `type` (`03` §3), the `entry` the run starts at and the `collect` it declares;
-4. how a value that may be absent is handled: a field whose chain ends in a miss is simply **absent** from the product (`01` §4.2), so a fallback is written at the action level (`py.default` / `py.or`), not configured for the whole run.
+4. how a value that may be absent is handled: a field whose chain ends in a miss is simply **absent** from the product (`01` §4.2), so a fallback is written at the action level (`py.or`), not configured for the whole run.
 
 **Acceptance**: a parsable JSON file is produced.
 
@@ -445,8 +445,8 @@ up2 doctor [--fix]                           # chains and audit correspond? --fi
 | 6 | a misspelt value mode (css: `["css","innerHTML","div.c"]`; xpath: `["xpath","innerText","//item"]`) | `UP2-E1002` | use `["css","html","div.c"]` / `["xpath","text","//item"]` (slot 2 = mode, slot 3 = selector); read `up2 ops --json` first |
 | 7 | a bundle with no `entry` | `UP2-E1005` | name the step the run starts at: `"entry": "<step name>"` (`03` §2) |
 | 8 | forgetting the `each` stage, so the fields run once over the whole page (or `each` receives something that is not a list) | the list version fails loudly with `UP2-E2002`; the "ran once over the page" version is a wrong product at runtime | only S3's `trace` can reveal the latter; the `tpl_key` name and the samples should hint that this is a list page |
-| 9 | `["py","int"]` (a 3-ary operator written with two positions) | `UP2-E1004` | a stage's length equals its arity exactly: for a function without arguments write `""` in position 3, i.e. `["py","int",""]`; `datetime` is not on the allowlist, so parse time with `["py","parse_time","zh"]` |
-| 10 | `["re","group","<pattern>"]` missing the group name | `UP2-E1005` | use a named object `["re","group",{"pattern":"…","group":1}]` |
+| 9 | `["py","int",""]` (a parameter written for a function that has none) | `UP2-E1004` | a parameter slot is omitted, never written empty: `["py","int"]`; a time string is parsed with `["py","strptime","%Y-%m-%d"]` and rendered with `py.strftime` |
+| 10 | `["re","search",["<pattern>",1]]` with a group the pattern does not have | `UP2-E1005` | check the group index or name against the pattern; `search` takes `[pattern, group]` |
 | 11 | putting a node handle straight into the product (forgetting `text`/`@attr`) | `UP2-E2003` | serialize the `Opaque` handle into text first |
 | 12 | a step nothing reaches (nothing falls through to it and no `next` names it) | `UP2-E1018` | point a `next` at it, take it out of the flow, or make it the `entry` |
 | 13 | a step key using a reserved name (`globals`) or duplicated | `UP2-E1009` | change the key |

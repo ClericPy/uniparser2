@@ -95,7 +95,7 @@ other root (a mapping by key, a sequence by index, a host object by `getattr`), 
 **A chain may be a reference, and that is the only identity.** Wherever a chain is expected — the value of a
 field-map entry, or a step's `body` — a **string beginning with `$`** is accepted and means "the value the
 reference names, unchanged": `"url": "$in"` is the step's own input, `[["py","urljoin","$in.url"]]` roots a
-chain in a field of it, and a chain may also **open** with a reference (`["$globals.base", ["py","strip",""]]`).
+chain in a field of it, and a chain may also **open** with a reference (`["$globals.base", ["py","strip"]]`).
 This is the same spelling `args` already uses for an argument, and it is the **only** way to express identity
 — there is deliberately no single-element stage form. Reference rules are unchanged: an unknown root is
 `UP2-E1006`, and a step may not name itself.
@@ -575,7 +575,7 @@ by the batch itself.
 Draft `01`'s `Q44` says they are "products of list parsing, passed down with the item", while `01 §2.3`
 treats them as "product fields of a collection-style seed"; the two are mutually exclusive.
 
-**Ruling: always produce them inside a step's field map with `["const", …]`.** Reasons: they really are
+**Ruling: always produce them inside a step's field map with `["py","const", …]`.** Reasons: they really are
 values each product carries itself; when one story serves several channels, different steps can give
 different `const` values; and putting another copy in the run's input creates the ambiguity of "which one
 is the truth", which is exactly where draft `02` got stuck while walking the example.
@@ -708,7 +708,7 @@ the same run continues after each (§4–§5).
       "body": { "items": [
           ["py","getattr","text"],                        // the answer is a host object; read its body
           ["css","@href","a[href*='/public/1681/']"],     // every match, as a list
-          ["py","uniq",""],
+          ["py","uniq"],
           ["py","slice",":20"],
           ["each", {                                      // one request per link
               "url": [ ["py","urljoin","$globals.base_url"] ]
@@ -719,11 +719,11 @@ the same run continues after each (§4–§5).
     { "name": "record",
       "body": {
           "url":      [ ["py","getattr","url"] ],
-          "title":    [ ["py","getattr","text"], ["css1","text","h1"], ["py","normalize_space",""] ],
+          "title":    [ ["py","getattr","text"], ["css1","text","h1"], ["py","normalize_space"] ],
           "pub_time": [ ["py","getattr","text"],
-                        ["css1","@content","meta[name=\"PubDate\"]"], ["py","strip",""] ],
+                        ["css1","@content","meta[name=\"PubDate\"]"], ["py","strip"] ],
           "content":  [ ["py","getattr","text"], ["css","remove","script,style,noscript"],
-                        ["css1","html","div.j-fontContent"], ["py","html_to_markdown",""] ]
+                        ["css1","html","div.j-fontContent"], ["py","html_to_markdown"] ]
       },
       "type": "Article" }
   ],
@@ -792,7 +792,7 @@ register the types and answer the effects. **Six constraints were found by runni
 - **An `each` field map always produces dictionaries, and `flatten` only unrolls list elements.** So a
   step that must pass a **plain list** on to the next step cannot unwrap one out of a field map that way:
   the books sample's `shelf_page` therefore stays a **chain** (which yields the list itself), the batch
-  aggregates the shelves' lists, and `shelf` unrolls that one level with `["py","flatten",""]`.
+  aggregates the shelves' lists, and `shelf` unrolls that one level with `["py","flatten"]`.
 - **A chain's first stage already receives the element**, so an `each` field map that must resolve a link
   writes `["py","urljoin","$globals.base_url"]` and nothing else — the identity stage both samples used to
   open with was doing no work (§13 O5).
@@ -816,7 +816,7 @@ the record step:
 { "name": "store", "call": "host.store_articles", "args": { "table": "articles", "rows": "$in" }, "type": "dict" }
 ```
 
-Two of the old flow's needs disappear here: `channel` / `source` / `region` are ordinary `["const", …]`
+Two of the old flow's needs disappear here: `channel` / `source` / `region` are ordinary `["py","const", …]`
 fields of the record step (§8.1), and "which of the two detail rules applies" is the **host's** question
 (§11.3, item M) — the story never guesses.
 
@@ -845,10 +845,10 @@ fields of the record step (§8.1), and "which of the two detail rules applies" i
 | **A** missing node-splitting semantics | all of it is one chain: `["css","nodes",…]` → `["py","slice",":20"]` → `["each", {…}]` (§7) |
 | **B** can an argument position reference an earlier product | yes: the parameter kind is `ref_or_literal` (`02` §3.2), so `["py","urljoin","$globals.base_url"]` holds, and so does a reference to an earlier step's field |
 | **C** a non-empty `headers` has nowhere to land | the host's request layer; when a story must describe one, the `Request` product carries `headers` (§4.1) |
-| **D** mutually exclusive sources for `channel`/`source`/`region` | always `["const", …]` inside a step's field map (§8.1) |
+| **D** mutually exclusive sources for `channel`/`source`/`region` | always `["py","const", …]` inside a step's field map (§8.1) |
 | **E/F/G** propagation container / single route / per-item semantics | propagation = fields without `_` are visible to later steps; there is no routing to write; per-item is switched on explicitly by an `each` stage (§7) |
 | **M** the old "2 detail rules + `url_patterns`" | the **host** picks the story by URL (`07` §3); the story no longer guesses. `variants` (v0.1 §12) is dissolved with it |
-| **N** `cast datetime` conflicts with the export encoding | the `py` vocabulary has no `datetime`; time goes through `py.parse_time`, which outputs `str` |
+| **N** `cast datetime` conflicts with the export encoding | a `datetime` is produced by `py.strptime` / `py.from_timestamp` and consumed by `py.strftime` / `py.to_timestamp`; it may flow between stages but the exit refuses it (`UP2-E2003`) |
 | **O** `parser="none"` conflicts with the dispatch table | there is no dispatch table and no `parser` field: a run ends when execution passes its last step, and `collect` says which step's products it returns |
 | **P** `list_title` has nowhere to go | it is an ordinary field of the step that produced it, or the host carries it in the next run's input |
 | **Q** `ctx.globals` idles empty | `globals` holds only static constants; the run's input travels as the first step's input (§2) |
@@ -857,7 +857,7 @@ fields of the record step (§8.1), and "which of the two detail rules applies" i
 
 | Legacy element | New landing place |
 |---|---|
-| `task_name` / `channel` / `region` | a `["const", …]` field inside a step, or the caller's input |
+| `task_name` / `channel` / `region` | a `["py","const", …]` field inside a step, or the caller's input |
 | `request` / `request.url` | a task's own keys (§4.1), or the host's own request layer |
 | `input_format` | deleted: the consuming operator decides the format, under the run-scoped cache (§6) |
 | `nodes` (splitting + truncation) | one chain: `["css","nodes",…]` → `["py","slice",":20"]` → `["each", {…}]` |
@@ -912,7 +912,7 @@ sites through the first executor exposed why each of those could not stand:
 | J3 | `next` on a request step names the step that receives the responses, and a task item may override it; **the kernel resolves it and the host never sees it** | the host mapping `next` onto a chain: that is the hand-off `R14` already rejected, and it puts a story concern into host code |
 | J4 | `collect` is required and names one step, whose products are the run's output collected in order as a list | "the last step": with a jump a step can be visited more than once, so the last step is not unique; and a batch makes the exit step's products plural |
 | J5 | `$in` names the step's own input | `["ctx","set","locals._page"]`: a measured pass-through that reads as a side effect, and it only exists if the step remembered to write it |
-| J6 | `py.id` is the identity action (superseded by §12.6: the whole-chain reference replaced it) | `["py","str",""]`: the identity on a string and a conversion on anything else, so a seed value's type depended on the workaround |
+| J6 | `py.id` is the identity action (superseded by §12.6: the whole-chain reference replaced it) | `["py","str"]`: the identity on a string and a conversion on anything else, so a seed value's type depended on the workaround |
 | J7 | a `call`'s arguments are the `args` keys, and the step's input travels explicitly (`"rows": "$in"`) | an effect carrying the input implicitly: the host function's signature would then depend on the step's position, not on what the bundle says |
 | J8 | what a step product may be is unchanged: **JSON** (`03` §3.3) — the executor packs every product at the step boundary | letting a product be an object: snapshots, the exit and the request dictionary would all have to accept something the host cannot serialize |
 
@@ -980,7 +980,7 @@ argument shape of `each`.
 | O2 | how `call`'s arguments are written (`args` on the step; bound at registration; or both with the step overriding) | **half settled** (change `story-jump-and-naming`): `args` is the written form, its values are `ref_or_literal` leaves resolved in the step's scope, and the step's input travels as an explicit `"$in"`; what stays open is whether a registration may bind them instead |
 | O3 | is `name` required on every step, or only when something references it? | **settled: required** — `next` and `collect` name steps, and `collect` is required, so a name is never optional in practice; a missing or duplicated name is `UP2-E1009` |
 | O4 | may a step override the chain-level `policy`? | **settled: the question is gone** — the settlement policy is retired (`01` `D-01-1`, `02` §5), so there is no chain-level policy and nothing to override; a field-level fallback is written at the action level |
-| O5 | an explicit "return the input unchanged" action | **settled the other way** (change `entry-and-input`): `py.id` is **deleted**, and identity is written as a whole-chain reference — `"$in"` for the value itself, `"$in.url"` for a field of it, `["$in", ["py","strip",""]]` for a chain that opens with one. The action was the second spelling of a concept the reference already had (§2, §12.6 E4) |
+| O5 | an explicit "return the input unchanged" action | **settled the other way** (change `entry-and-input`): `py.id` is **deleted**, and identity is written as a whole-chain reference — `"$in"` for the value itself, `"$in.url"` for a field of it, `["$in", ["py","strip"]]` for a chain that opens with one. The action was the second spelling of a concept the reference already had (§2, §12.6 E4) |
 | O6 | how far the trace goes (`06` §5.1's structure) and whether a recorded run is the replay format | **settled** (change `add-story-trace`): the trace is **a debugging aid, not the replay format**. It records one event per evaluated stage (plus one per suspension), and it is lossy by construction — every value is a `type` / `preview` / `size` view whose whole value is read back by `seq` from the trace object's memory — so it can neither replay a run nor serve as a contract; what replays a run is the host's own log of the suspensions it answered (the request it sent, the answer it got, the receipt returned) together with the run's input, which belongs to the host (`01` §1) and is not defined here. How far it goes is settled the same way: the **evaluated** stage is the unit, because a step's field map hides which chain failed, and a suspension is a second event kind because "it handed the host these 20 tasks here" is not a stage's product |
 | O7 | the name of the batch product type | **settled**: `RequestBatch` (v0.1's name, and its items *are* requests); the coinage `TaskList` was dropped |
 | O8 | how a task's receiving step is chosen when it **varies per item** | **settled** (change `story-jump-and-naming`): the task's own `next` overrides the step's, so a chain can compute one from the item's own data and one step can route several channels; "route by URL shape" still needs a mechanism or stays a host table |

@@ -16,34 +16,31 @@
 ```
 
 **The slot order is unified across all operators** — `[operator, action, parameter]`: slot 2 is the **behaviour** declared by that operator (a closed
-enumeration), slot 3 is an **arbitrary value** (CSS selector / XPath / regex / actual argument). The positions do not vary with the operator: `Op.slot_roles`
-only gives the two positions their **names** (`up2 ops` prints them out for humans), and `Op.action_slot` is likewise derived from the arity (in JSON indexing a
-3-element array always has it at 1, i.e. slot 2; a 2-element array gives `null` — there is no action slot).
+enumeration; for a single-action operator it is the parameter itself), slot 3 is an **arbitrary value** (CSS selector / XPath / regex / actual argument).
+`Op.slot_roles` only gives the positions their **names** (`up2 ops` prints them), and `Op.action_slot` is derived from the arity.
 
-| Operator | Arity | Slot 2 (action) | Slot 3 (parameter) | Example |
+| Operator | Arity | Slot 2 | Slot 3 | Example |
 |---|---|---|---|---|
 | `css` / `css1` | 3 | accessor | CSS selector | `["css1", "@href", "a.download"]` |
-| `xpath` | 3 | accessor | XPath expression | `["xpath", "text", "//item/title"]` |
-| `re` | 3 | `search` / `group` / `findall` | regex | `["re", "search", "\\d+"]` |
-| `ctx` | 3 | `get` / `set` / `del` / `map` | path / list / object | `["ctx", "get", "locals.x"]` |
-| `py` | 3 | function name (allowlist) | function arguments | `["py", "urljoin", "$globals.base_url"]` |
-| `udf` | 3 | function name (host-registered) | kwargs | `["udf", "my_fn", {"strict": true}]` |
-| `json` | 2 | jmespath path | — | `["json", "data.html"]` |
-| `const` | 2 | arbitrary JSON value | — | `["const", "article"]` |
-| `each` | 2 | field map (field name → chain) | — | `["each", {"title": [["css1","text","a"]]}]` |
-| `code` | 2 | source and inputs | — | `["code", {"src": "len(obj)"}]` |
+| `xpath` | 3 | accessor | XPath expression, or `[expression, ns]` | `["xpath", "text", ["//dc:creator", {"dc": "…"}]]` |
+| `re` | 3 | `search` / `findall` / `sub` | pattern, or `[pattern, group]` / `[pattern, replacement]` | `["re", "search", ["(\d{4})", 1]]` |
+| `ctx` | 3 | `get` / `set` / `del` / `dict` / `list` | path / list / object | `["ctx", "get", "locals.x"]` |
+| `py` | 3 | function name (allowlist) | the function's parameter(s) | `["py", "urljoin", "$globals.base_url"]` |
+| `udf` | 3 | function name (host-registered) | — (the call is unary or nullary) | `["udf", "my_fn"]` |
+| `json` | 2 | jmespath expression | — | `["json", "data.html"]` |
+| `each` | 2 | field map, or one chain | — | `["each", {"title": [["css1","text","a"]]}]` |
+| `code` | 2 | the source text | — | `["code", "len(obj)"]` |
 
-> **The enumeration strength of the three positions increases step by step**: slot 1 = an operator in the registry (closed enumeration); slot 2 = the behaviour
-> declared by that operator itself (closed enumeration; the only parameterisable member is `css`'s `@<attribute name>`); slot 3 = an arbitrary value (it may be
-> a literal, a reference, a positional array or a named object). `udf`'s slot 2 is a function name the host leaves open — that is a deliberate extension point.
->
-> **An operator with only one behaviour is written with two positions** (`json` / `const` / `code`): the second of those two positions is the one and only
-> parameter slot.
+> **The enumeration strength of the positions increases step by step**: slot 1 = an operator in the registry (closed); slot 2 = the behaviour declared by that
+> operator (closed, except `css`'s `@<attribute>` and `udf`'s host-registered names); slot 3 = an arbitrary value (a literal, a reference, or a positional
+> array of parameters). `udf`'s slot 2 is a function name the host leaves open — a deliberate extension point.
 
 ### 1.1 Length rule
 
-A stage's length is **exactly equal** to the operator's arity (2 or 3); getting it wrong is `UP2-E1004`: for a 3-element operator whose action takes no
-arguments, the third position is written as `""` (a placeholder meaning "no argument is passed"). There is no such thing as "omitting the tail".
+A stage is `[operator]`, `[operator, parameter]` or `[operator, action, parameter]`. A **parameter slot is omitted** when the action has nothing required
+left to fill (`["py","strip"]`, `["json"]`); it is never written as an empty placeholder. A missing required parameter is `UP2-E1005`; an extra slot is
+`UP2-E1004`. There is no "one stage shape per operator": the operator's declaration says which slots mean what, and the parameter slot's shape is `value`,
+`array` or `none` (`up2 ops` prints it).
 
 > **Deviation record D-02-13 (the slot order of the triple)**: §1 of the `04` draft writes "all parsers are unified as `[parser, action, value]`", and its
 > example `["css", "@href", "a.title"]` puts the action first; whereas the css spelling in the `01` data-structure draft / the `02` worked example is
@@ -109,7 +106,7 @@ needs a field of its own input writes `$in.url` rather than a `locals` round-tri
 **A chain may be a reference.** Wherever a chain is expected — a field-map value, or a step's `body` when it
 is an array — a **string beginning with `$`** is a whole-chain reference: the value it names, unchanged.
 `"$in"` is identity, `"$in.url"` is a field of the step's input, and a chain may open with one
-(`["$globals.base", ["py","strip",""]]`). This is the same spelling a `ref_or_literal` parameter uses, and it
+(`["$globals.base", ["py","strip"]]`). This is the same spelling a `ref_or_literal` parameter uses, and it
 is the only way to express identity — there is no single-element stage form (`03` §2, §12.6 E4).
 
 - **Only dotted paths are supported, not array indices** (settled by Q24 in `01`). To take an index, use the explicit operator `["py","getitem",0]`.
@@ -134,7 +131,7 @@ Every parameter of every operator declares a **kind** in its Schema:
 |---|---|---|
 | `ref` | must be a reference; a literal is a compile error | the path of `ctx.get` |
 | `literal` | always a literal; a leading `$` does not make it a reference | `css`'s selector, `re`'s regex, URL templates other than `py.urljoin` |
-| `ref_or_literal` | a string starting with `$` ⇒ a reference; otherwise a literal | `py`'s parameter slot (`["py","parse_time",{"now":"$globals.now"}]`) |
+| `ref_or_literal` | a string starting with `$` ⇒ a reference; otherwise a literal | `py`'s parameter slot (`["py","urljoin","$globals.base"]`) |
 | `fields` | a **field map** (`field name → chain`), compiled recursively | `each`'s single argument |
 
 **Why it has to be designed this way**: `$` is a legal character in regexes and CSS (`a[href$=".pdf"]`, the regex `$foo`). Deciding references by "scan the
@@ -156,8 +153,8 @@ plain literal) were all guesswork. This design's rule can be stated in one sente
 > **A leading `$` ⇒ a reference; a literal starting with `$` uses `{"$lit": …}`; everything else is a literal.**
 
 **The escape applies at every depth**, not only at the parameter slot: an object with exactly one `$`-prefixed key is a
-directive wherever a `ref_or_literal` value is read, so `["py","or",[{"$lit":"$a"},"fallback"]]` and
-`["code",{"src":"…","inputs":{"a":{"$lit":"$k"}}}]` both quote the text. Leaving it slot-only made such a literal
+directive wherever a `ref_or_literal` value is read, so `["py","or",[{"$lit":"$a"},"fallback"]]` quotes the text inside
+the operand array too. Leaving it slot-only made such a literal
 unwritable inside a container, and one failure mode was silent: a single-key object whose key is a directive the chain
 did not mean came back as **data** — `{"$lit": "plain"}` in an array answered with the object itself. A `$`-prefixed
 single-key object is therefore the escape or an error (`UP2-E1005`), never a value, and a `literal` parameter keeps a
@@ -167,51 +164,39 @@ leading `$` as text as before.
 
 ---
 
-## 4. The four forms of a parameter slot (slot 3)
+## 4. The parameter slot (slot 3)
 
-> Terminology: below, "the position that carries the parameters" is called the **parameter slot** — for a 3-element operator it is slot 3; for a 2-element
-> operator (`json` / `const` / `code`) it is the one and only position. Which position it is in a given case is derived from `Op.param_slot` (= arity − 1), see
-> §1.
+> Terminology: the **parameter slot** is the position that carries the parameters — slot 3 of a 3-slot operator, or slot 2 of a single-action operator
+> (`json` / `each` / `code`). Its position is `Op.param_slot` (= arity − 1), see §1.
 
-| Form | Example | When to use |
+| Form | Example | When |
 |---|---|---|
-| **Scalar** | `"a.title"` / `1` / `true` / `null` | a single parameter |
-| **Reference** | `"$globals.base_url"` | the parameter comes from a scope (only in `ref` / `ref_or_literal` positions) |
-| **Positional array** | `["\u65e7", "\u65b0"]` (old, new) | several parameters passed positionally (`py.replace` / `py.split`) |
-| **Named object** | `{"pattern": "…", "group": 1}` | many parameters, or self-documentation needed (`re.group` / `py.parse_time`) |
+| **Scalar / value** | `"a.title"` / `1` / `true` / `null` | the action's one parameter |
+| **Reference** | `"$globals.base_url"` / `"$obj"` | the parameter comes from a scope or the stage value (only in `ref` / `ref_or_literal`) |
+| **Positional array** | `["old", "new"]` | two or more fixed parameters, in declaration order |
+| **Data object** | `{"pattern": …}` is **not** this | only where the parameter *is* a map: `each`'s field map, `ctx.dict`, xpath's namespace map |
 
-**Decision order for the object form** (fixed at compile time):
+**Decision order, fixed at compile time**:
 
-1. The object has **exactly one key and that key starts with `$`** ⇒ a **directive object** (`$lit`), handled according to the directive's semantics.
-2. Otherwise ⇒ a **named argument object**, each value resolved independently by kind (it may be a literal or a reference). An action whose single parameter is a
-   **field map** (`each`) takes the object as that one value instead, and compiles every value in it as a chain (§6.9).
-3. A parameter name **never** starts with `$` (a parameter name is an identifier), so rule 1 and rule 2 can never conflict.
+1. A `$`-prefixed single-key object is a **directive** (`{"$lit": …}`), at every depth of a `ref_or_literal` parameter (§3.3).
+2. **Zero parameters** left after the action slot's preset ⇒ the slot must be **omitted**; writing it is `UP2-E1004`.
+3. **Exactly one** parameter left ⇒ the slot value **is** that parameter's value, a container included. An object written here is ordinary data,
+   so an action whose parameter needs a scalar rejects it at compile time (`["py","urljoin",{"base":"…"}]` is `UP2-E1005` at `/0/2/base`; the accepted
+   writing is `["py","urljoin","…"]`).
+4. **Two or more** left ⇒ one **positional array** whose length is the declared arity (`["py","replace",["old","new"]]`); a trailing optional parameter
+   may be omitted, a missing required one is `UP2-E1005` at `/0/2/<index>`. A bare scalar binds the first parameter (xpath's expression without a
+   namespace map), and an object is `UP2-E1005` — an object is a data map, never a parameter list.
 
-Rule 1 is not limited to this position: the same object shape is read as a directive at every depth of a
-`ref_or_literal` parameter (§3.3), which is what makes a literal starting with `$` writable inside an array or an object.
-
-Elements/values inside arrays and objects are resolved **leaf by leaf, each by its own parameter's kind**: a `ref_or_literal` leaf may hold a reference (`code`'s
-`inputs`, `["code",{"src":"x","inputs":{"x":"$locals.n"}}]`), while a `literal` leaf keeps a leading `$` as text — measured, `["py","replace",["$locals.old","X"]]`
-replaces the literal text `$locals.old` and leaves the input unchanged, because both of `replace`'s parameters are `literal` (§3).
-
-**Which form an action accepts is decided by how many parameters it still has to fill** (a parameter the action slot itself provides — `css`'s `@href` filling `attr` — does not count). The order is fixed:
-
-1. the empty placeholder passes nothing;
-2. a `$`-prefixed single-key object is a directive;
-3. **zero** parameters left ⇒ any value is `UP2-E1005` (write two positions or `""`);
-4. **exactly one** left ⇒ the slot value **is** that parameter's value, a container included. A named object is therefore *not* a parameter binding here: `{"base": "…"}` means "the object `{"base": "…"}` as the value of `base`", so an action whose parameter needs a scalar rejects it at compile time — `["py","urljoin",{"base":"…"}]` reports `UP2-E1005` at `/0/2/base`, and the accepted writing is `["py","urljoin","…"]`;
-5. **two or more** left ⇒ a named object, a positional array, or a scalar bound to the first parameter.
-
-A container that the parameter genuinely accepts stays legal (`py.default`'s fallback can be an object); `{"$lit": …}` is the explicit literal escape. `up2 ops` reports this decision per action as `param_form` (`none` / `value` / `named`, see `01` §7), so a chain writer does not have to infer it from the table above.
-
----
+`up2 ops` reports the shape per action as `param_form` (`none` / `value` / `array`, see `01` §7), so a chain writer does not infer it from this table.
+A parameter that genuinely accepts any JSON value keeps accepting containers (`["py","in",[200,301]]`; an array that is a *value* is distinguished from a
+parameter list by the action's declaration, never by the shape alone).
 
 ## 5. Evaluation semantics of a field chain
 
 A field = one ordered chain, written in one form:
 
 ```jsonc
-"title": [["css","text","h1"], ["py","first",""], ["py","strip",""]]
+"title": [["css","text","h1"], ["py","first"], ["py","strip"]]
 ```
 
 Evaluation rules:
@@ -228,8 +213,8 @@ Evaluation rules:
 **A query that matches nothing is a value, not a state.** There is no third outcome and no per-action
 flag (`empty-value-semantics`): every accessor answers the empty value of the shape it produces —
 `""` for text, `[]` for a list, `None` for a node handle or a JSON query — and the chain keeps
-evaluating. `py.default` replaces `None` or `""` in one field; a stage that *fails* is never caught by
-it.
+evaluating. `py.or` is the fallback, because the upstream value is its first operand; a stage that
+*fails* is never caught by it.
 
 **A `try` directive guards the next stage** (`public-scope-and-try`): `["try","skip"]` /
 `["try","break"]` / `["try","raise"]` protect **the stage immediately after them** and nothing else. On
@@ -316,140 +301,108 @@ registry still keeps one action name (`get`) to declare the parameter table and 
 
 ### 6.3 `re` — regex
 
-**Slots**: `["re", action, regex]` — the action is in position 2 and the regex in position 3.
+**Slots**: `["re", action, pattern]` — the action is in position 2 and the pattern in position 3.
 
 | Action | Slot 3 | Product |
 |---|---|---|
-| `search` | regex (literal) | the whole `group(0)` of the first match; no hit ⇒ `""` |
-| `group` | `{"pattern": "…", "group": <index\|group name>}` | the named capture group of that match; no hit ⇒ `""` |
-| `findall` | regex (literal) | `list[str]` (`re.findall`); no hit ⇒ `[]` |
+| `search` | the pattern, or `[pattern, group]` | `group(0)` of the first match, or the named/ numbered group; no hit ⇒ `""` |
+| `findall` | the pattern | `re.findall`; Python's tuples are encoded as **arrays**; no hit ⇒ `[]` |
+| `sub` | `[pattern, replacement]` | every match replaced (`re.sub`), `\N` / `\g<name>` supported; no hit ⇒ unchanged |
 
-- **The action is called `search` rather than `match`**: the implementation is `re.search(...).group(0)` (find the first one from the start), whereas Python's
-  `re.match` is **anchored at the start** — the two have different semantics. The `04` draft's description of `$match` says "whole-match group(0)", i.e. search
-  semantics. Using `findall` rather than `$all` has the same reason (it reads against `re.findall`).
-- **What `group` is for**: `search` can only give the whole match, while `group` takes a sub-fragment out of the match (for example take only the month out of
-  `2026-09-24`).
+- **`search`, not `match`**: the implementation is `re.search(...).group(0)` (find the first one from the start), whereas Python's `re.match` is **anchored**.
+- `group` is folded into `search`: a pattern with no capture group needs no second element, and multi-group reformatting composes `search` with `sub`
+  (`["re","search","(\\d{4})-(\\d{2})"]` then `["re","sub",["-","/"]]`).
+- **`findall` follows Python exactly**: zero or one group answers the group values, two or more answer one tuple per match — the only change is that a tuple
+  becomes an array, because the value domain is JSON.
+- **`sub` replaces every match** (no `count`: a count is exotic and belongs in `code`). Every `\N` / `\g<name>` is checked against the pattern at compile
+  time, so a bad reference is `UP2-E1005` before any text is touched.
 - Regexes are always **pre-compiled at compile time**; nested quantifiers (the ReDoS shape) are rejected at compile time (`UP2-E1013`).
-- **Measured correction (found while implementing L1)**: Python's `re` **has no `timeout` parameter in either 3.14 or 3.13** (`inspect.signature(re.search)` =
-  `(pattern, string, flags=0)`), so **there is no runtime regex timeout as a backstop**. ReDoS defence consists of exactly two things: the compile-time static
-  detection of nested quantifiers (`UP2-E1013`) plus the input-size limit (L2's `MAX_TEXT_BYTES`). The static detection **catches only the most classic shapes**
-  (`(a+)+` / `(\w*)*` / `(?:[a-z]+)+`); shapes such as overlapping alternations are not caught — this is an explicitly recorded gap, not an oversight.
-- **Only these three actions**: replacement and splitting go to `py.replace` / `py.split` (the `04` draft also had only these three).
-- `group` must use the named-object form — it needs both pattern and group, which a single value position cannot hold, and that is precisely why §4 exists.
+- **Measured correction**: Python's `re` has **no `timeout` parameter** (3.13/3.14), so there is no runtime regex timeout. ReDoS defence is the compile-time
+  static check plus the input-size limit (`MAX_TEXT_BYTES`); the static check catches only the classic nested-quantifier shapes — an explicitly recorded gap.
 
 ### 6.4 `py` — allowlisted functions
 
-Shape: `["py", "<function name>", <scalar | positional array | named object>]` (3 elements; for a function that takes no arguments the third position is written
-as `""`).
+Shape: `["py", "<function name>", <value | positional array>]`. A parameter-less function omits slot 3 (`["py","strip"]`); an action with two or more fixed
+parameters takes **one positional array** (`["py","replace",["old","new"]]`, `["py","between",[200,300]]`). An object is a data map, never a parameter list.
 
-**Which parameters are validated at compile time** (the same `UP2-E1005` + pointer + fix shape as `css` / `re` / `ctx` / `json`): a parameter that only accepts a
-scalar rejects a JSON container before the chain runs, because the function's own runtime path either type-guards it or raises inside `int()`. A **literal of
-another type** is the same mistake one step later, and so is a string the runtime parses and refuses, so both fail at compile time too — "bad chains fail at
-compile time" is the invariant, not "at the first run". A reference is only known during evaluation, so nothing is claimed about it:
+**Which parameters are validated at compile time** (`UP2-E1005` + pointer + fix): a parameter that only accepts a scalar rejects a JSON container, a literal of
+another type, and a string the runtime parses and refuses. A reference is only known during evaluation, so nothing is claimed about it. A **single-parameter**
+function written with an object (`["py","urljoin",{"base": …}]`) is a compile-time `UP2-E1005`: the object is the *value*, see §4.
 
-| Function | Parameter | Accepted | Runtime path on a container |
+| Function | Parameter | Accepted |
+|---|---|---|
+| `urljoin` | `base` | a string |
+| `slice` | `spec` | a slice notation (`":20"` / `"1:5"` / `"::-1"`) |
+| `split` | `sep` | a string |
+| `strip` | `chars` (optional) | a string |
+| `getitem` | `at` | an integer or a string |
+| `replace` | `old` / `new` | strings |
+| `urlsplit` | `part` | the URL-part enum |
+| `strftime` | `layout` | a non-empty, locale-free layout |
+| `strptime` | `format` | a non-empty, locale-free format |
+| `from_timestamp` / `to_timestamp` | `tz` | a number of hours (a bool is rejected) |
+| `between` | `bounds` | a two-element array of numbers |
+
+Deliberately not checked: `join.sep` (the runtime coerces it with `str()`), and a parameter that genuinely accepts any JSON value (`in`'s container,
+`or`'s operand array). `or`/`and` also refuse a literal that is not an array at compile time; a reference to one is decided at run time (`UP2-E2002`).
+
+**Function table (46 functions, a closed set; anything outside is `UP2-E1003`)**:
+
+> **Dependencies are declared per action**: `html_to_markdown` needs `html-to-markdown`; when it is missing that **action** is unavailable (`UP2-E1107`)
+> while the operator's other actions keep working. It accepts **no arguments** and has no base_url — complete relative links with `py.urljoin`.
+
+| Category | Function | Arguments | Semantics |
 |---|---|---|---|
-| `urljoin` | `base` | a string | `isinstance(base, str)` guard ⇒ `UP2-E2002` |
-| `slice` | `spec` | a string holding a slice notation (`":20"` / `"1:5"`) | `isinstance(spec, str)` guard, then `_parse_slice_spec` raises `ValueError` ⇒ `UP2-E2005` |
-| `split` | `sep` | a string | `isinstance(sep, str)` guard ⇒ `UP2-E2002` |
-| `split` | `maxsplit` | an integer, a numeric string, or `null` / `""` (no limit) | `int(container)` raises `TypeError` |
-| `getitem` | `at` | an integer or a string | `value[at]` raises `TypeError` (an unhashable key, a str index on a list) ⇒ `UP2-E2002` |
-| `replace` | `old` / `new` | strings | `isinstance(..., str)` guard ⇒ `UP2-E2002` |
-| `sort` | `key` | `""` / `"str"` / `"int"` / `"float"` | enum check ⇒ `UP2-E2005` |
-| `urlsplit` | `part` | the URL-part enum | enum check, already at compile time |
-| `parse_time` | `format` | a non-empty string | a `strptime` directive check, already at compile time (`UP2-E1005`) |
-| `parse_time` | `date_order` | `"MDY"` / `"DMY"` / `"YMD"` | enum check (`UP2-E1005`), and it may not be combined with `format` + `lang` |
-| `parse_time` | `now` | the canonical time `%Y-%m-%d %H:%M:%S` | shape check (`UP2-E1005`); a reference is resolved at run time |
-| `strftime` | `layout` | a non-empty string | directive allowlist (locale-free and platform-stable, `UP2-E1005`) |
+| Literal | `const` | any JSON value | return the value verbatim (the former `const` operator) |
+| Text | `strip` | `chars`? | strip whitespace, or the given characters |
+| Text | `normalize_space` | — | collapse runs of whitespace into one space and trim |
+| Text | `html_to_markdown` | — | HTML → Markdown (optional `[md]`; no options exposed) |
+| Text | `replace` | `[old, new]` | replace all occurrences |
+| Text | `split` | `separator` | split into a list (no `maxsplit`; truncate with `slice`/`first`) |
+| Text | `join` | `separator` | list → str |
+| Text | `upper` / `lower` | — | case conversion |
+| Collections | `slice` | `":20"` / `"1:5"` / `"::-1"` | slice a string or a list |
+| Collections | `getitem` | `at` | a sequence by index, a mapping by key, a str by character; no coercion; a missing subscript is `UP2-E2018` |
+| Host object | `getattr` | attribute name | read a host object's own attribute; never calls a method; an absent one is `UP2-E2002` |
+| Collections | `len` / `first` / `last` / `flatten` | — | size, first/last element, one-level flatten |
+| Collections | `sort` / `sort_desc` | — | Python's `sorted` / `sorted(reverse=True)`; no key, no coercion |
+| Collections | `uniq` | — | deduplicate while preserving order (a set plus a list) |
+| Collections | `find_jsons` | — | every JSON object/array embedded in the text, parsed, in document order |
+| URL | `urljoin` | `base` | relative → absolute |
+| URL | `urlsplit` | `"netloc"` / `"path"` / `"query"` / … | take a URL apart |
+| Encoding | `b64_encode` / `b64_decode` | — | Base64 |
+| Encoding | `sha256` / `md5` | — | hexadecimal digest (checksums; md5 is not for security) |
+| Time | `strptime` | `format` | text + explicit format → a `datetime` (naive, or aware with `%z`) |
+| Time | `strftime` | `layout` | a `datetime` + layout → text (`%z` renders an aware offset, empty on a naive value) |
+| Time | `from_timestamp` | `tz`? | epoch seconds → an aware `datetime` at a fixed offset (default UTC) |
+| Time | `to_timestamp` | `tz`? | a `datetime` → epoch seconds; a naive value is read at `tz` (default UTC, never the machine's zone) |
+| Conversion | `str` / `int` / `float` / `bool` | — | type conversion (`bool` follows Python: `"false"` is true); failure is `UP2-E2005` |
+| Conversion | `items` | — | a dict → `[[key, value], …]` |
+| Conversion | `from_json` | — | JSON text → JSON tree |
+| Predicate | `==` / `!=` / `<` / `<=` / `>` / `>=` | `to` | comparison; ordering takes two numbers or two strings, otherwise `UP2-E2002` |
+| Predicate | `in` | `container` | Python's `in`: the parameter is the container |
+| Predicate | `between` | `[lo, hi]` | `lo <= value < hi`, numbers only, half-open |
+| Predicate | `or` / `and` | operand array | Python's `or`/`and` over `[value, *operands]`; an empty array answers the upstream value |
 
-**Deliberately not checked**, because a container is either a legal value or coerced by the operator: `default.value` (any JSON value — `["py","default",{"a":1}]`
-returns `{"a":1}`), `join.sep` and `parse_time.lang` (both `str()`-coerced). A **single-parameter** function written with the named-object form
-(`["py","urljoin",{"base": …}]`) is a compile-time `UP2-E1005`: the object is the *value* of `base`, see §4.
+**Time is Python's pair on real values.** `strptime` produces a `datetime`, `strftime` consumes one, and `from_timestamp` / `to_timestamp` convert epoch
+seconds. A `datetime` may flow between stages (the value model allows host objects) but it is **not exportable**: the exit reports `UP2-E2003` and names
+`py.strftime` as the way out. There is no format guessing: the format is explicit and validated at compile time, so `03/04/2026` needs `"%d/%m/%Y"` or
+`"%m/%d/%Y"`. Relative and natural-language dates are out of scope (a host `udf` or `code`). The layout allowlist is locale-free and platform-stable: `%a` /
+`%A` / `%b` / `%B` / `%p` / `%c` / `%x` / `%X` are locale-decided, `%Z` is platform-decided, `%e` / `%k` / `%l` / `%G` / `%V` are platform-specific and `%s`
+would assume a zone, so each is `UP2-E1005` at compile time. `%z` is allowed.
 
-The `parse_time.format` check asks **`strptime`**, never `strftime`: the parser's directive table lives in Python's `_strptime` and is the same on every platform, while `strftime` delegates unknown directives to the C library — glibc passes `%Q` through verbatim and the Windows CRT raises, so a `strftime` probe gave the same chain two verdicts on two operating systems. Asking the parser also means the verdict matches what the operator does at run time: the set therefore follows the interpreter (measured on 3.12.11 / 3.13.12 / 3.14.3, `%T` / `%e` / `%-d` are accepted from 3.13 on, and a stray `%` is read as a literal by 3.12 but rejected by 3.13+).
-
-**Function table (42 functions, a closed set; anything outside the table is `UP2-E1003`)**:
-
-> **Dependencies are declared per action** (a convergence made while implementing L1): `requires` can hang not only off an operator but also off a **single
-> action** — `html_to_markdown` needs `html-to-markdown`, whereas `strip` in the same operator needs nothing at all. When a dependency is missing, that
-> **action** is unavailable (`UP2-E1107`, with the install command attached) while the operator's other actions remain usable as usual.
->
-> **The actual contract of `html_to_markdown`** (measured after installing the package): the dependency package is **`html-to-markdown`** (not `markdownify`),
-> its entry point is `convert(html) -> ConversionResult`, and the Markdown text is in `.content`; it has **no** notion of a base_url, so this function **accepts
-> no arguments at all**, and completing relative links is left to an explicit `py.urljoin` in the chain.
-
-| Category | Function | Arguments | Semantics | Origin (the internal source material) |
-|---|---|---|---|---|
-| Text | `strip` | — | strip leading and trailing whitespace | `04` |
-| Text | `strip_tags` | — | remove HTML tags | `04` |
-| Text | `normalize_space` | — | collapse runs of whitespace into a single space | `04` |
-| Text | `html_to_markdown` | `{"base_url"?}` | HTML → Markdown | `04` |
-| Text | `replace` | `[\u65e7, \u65b0]` (old, new) | replace all occurrences | `04` (argument form changed) |
-| Text | `split` | `separator` or `[separator, maxsplit?]` | split into a `list` | `04` |
-| Text | `join` | `separator` | `list` → `str` | `04` |
-| Text | `upper` / `lower` | — | upper/lower case | `04` |
-| Collections | `slice` | `":20"` / `"1:5"` / `"::-1"` | slice a string or a list | `04` |
-| Collections | `getitem` | `at` (`ref_or_literal`) | take a subscript — a sequence by index, a mapping by key, a str by character, **no coercion**; a subscript that is not there is `UP2-E2018` (an error, not an empty value) | `04` (merged with `get`) |
-| Host object | `getattr` | `ref_or_literal` (the attribute name, required, no default) | read an attribute of the value that flows in (a response object, a library node); an absent attribute is `UP2-E2002` whose `reason` begins with the exception's own class (`AttributeError: 'Response' object has no attribute 'txet'`), and an attribute that is **callable** is refused — a method is never called, and never becomes a value | new (host objects may flow, `03` §3.3) |
-| Collections | `len` | — | length | `04` |
-| Collections | `first` / `last` | — | take the first/last element | `dsl-design` §3.4 |
-| Collections | `flatten` | — | flatten one level | `dsl-design` §3.4 |
-| Collections | `sort` | `{"key"?, "reverse"?}` | stable sort | `dsl-design` §3.4 |
-| Collections | `uniq` | — | deduplicate while preserving order | new (deduplicating a list page) |
-| URL | `urljoin` | `base` (`ref_or_literal`) | relative → absolute | `04` |
-| URL | `urlsplit` | `"netloc"\|"path"\|"query"` | take a URL apart (to obtain the site identity) | new |
-| Fallback | `default` | the fallback value | empty string / `null` → the fallback value (a failed stage is not caught) | `essence` §B6 |
-| Encoding | `b64_encode` / `b64_decode` | — | Base64 | `essence` §3.4 |
-| Encoding | `sha256` | — | hexadecimal digest (idempotency key/fingerprint) | new |
-| Time | `parse_time` | `{"lang"?, "format"?, "date_order"?, "now"?}` | a time string → the canonical format `%Y-%m-%d %H:%M:%S`, in the order **explicit `format`** → **built-in table** (`dateparser` is never loaded) → **natural-language detection** → `UP2-E2007`; the table reads zone-less calendar shapes, **the two canonical feed timestamps** (RFC 822 `pubDate`, zone-bearing ISO 8601 `updated`) and the CJK patterns, so the machine path still has **no required dependency**; the engine is optional and its absence at that point reports `UP2-E2008`; `lang` restricts the detection instead of enabling it, `date_order` (`MDY`/`DMY`/`YMD`, default **`DMY`**) decides the ambiguous slash writings in the table **and** in the engine, and `now` (`ref_or_literal`, e.g. `"$globals.now"`) pins the base clock of a relative expression (without it the wall clock is used) | the former `time` operator (D-02-14) |
-| Time | `strftime` | `layout` | the canonical time string → another layout (`%Y/%m/%d`); the allowlist is locale-free and platform-stable (`%a`/`%A`/`%b`/`%B`/`%p`/`%c`/`%x`/`%X` are locale-decided, `%z`/`%Z` are empty on a zone-less value, `%e`/`%k`/`%l`/`%G`/`%V` are platform-dependent and `%s` would have to assume a zone, so each is `UP2-E1005` at compile time) | new (the output side of time handling) |
-| Conversion | `str` / `int` / `float` / `bool` | — | type conversion (cannot convert ⇒ `UP2-E2005`) | the former `cast` operator (D-02-14) |
-| Conversion | `list` | — | JSON array text → `list`; if it is already a `list`, unchanged | the former `cast` operator |
-| Conversion | `items` | — | a `dict` → `[[key, value], …]` in the mapping's own order (a pair is a two-element **list**, never a tuple); index a half with the literal `0` / `1`, because `getitem` does not coerce | new (`ctx-dict-list-and-py-table`); the zero-dependency way to iterate an object |
-| Conversion | `from_json` | — | JSON text → JSON tree | the former `cast json` (**it cannot be called `json`**: that would share a name with the `json` operator while meaning something different) |
-| Predicate | `==` / `!=` | `to` (`ref_or_literal`) | equality / inequality with the parameter; **no type coercion** (`200` is not `"200"`), containers compare deeply | new (the chain layer's predicates) |
-| Predicate | `<` / `<=` / `>` / `>=` | `to` (`ref_or_literal`) | ordering; a **comparable pair only** (two numbers or two strings), any other pair is `UP2-E2002` naming both types — a Python `TypeError` never escapes as `UP2-E2099` | new |
-| Predicate | `in` | `container` (`ref_or_literal`) | Python's `in`: the **parameter is the container** (a `str` substring, a `list` member, a `dict` key); to ask whether the value contains something, write the element in front (`[["const","/public/"],["py","in","$locals.url"]]`) | new |
-| Predicate | `or` / `and` | `operands` (`ref_or_literal`, an **array**) | Python's `or`/`and` over operands that were **already computed** (typically `_` locals): `or` answers with the first truthy operand, else the last, `and` with the first falsy, else the last; an empty array is `false` / `true`. Truthiness is Python's, so the answer is an operand rather than a boolean. The operand array is resolved **before** the operator runs, so a reference that cannot be read fails the stage — these actions select among values, they do not rescue a missing one | new (the L2 `match` needs these) |
-
-**Functions removed from the `04` parser-syntax draft and the reasons**:
-
-| Removed | Reason |
-|---|---|
-| `const` | it is already a standalone operator, `["const", v]` (more visible in the operator table, and it avoids mixing "function name vs type name") |
-| ~~`getattr`~~ | **restored** (`allow-object-values`): the reason it was dropped — "the new value domain has no attribute object" — no longer holds, because a value that flows may be a **host object** (`03` §3.3), and reading one of its own attributes is the one thing no JSON action can do. It refuses callable attributes, so it is not a method call |
-
-> **The output of `parse_time` is not a `datetime`**: the value domain is a JSON tree and a `datetime` cannot leave the chain (the exit rejects it), so the
-> product is a normalised **string**; for another layout use `py.strftime` in the next stage, which re-parses that canonical string
-> (`["py","strftime","%Y/%m/%d"]`) — a `to_datetime` action is deliberately absent, because the canonical string is a lossless representation of the value
-> while an object inside the chain would break the JSON value domain (the store, a UDF argument, and what `up2 trial` prints). `format` is validated at compile
-> time (an illegal strptime directive ⇒ `UP2-E1005`).
->
-> **A zone in the input is consumed, not applied**: `Z`, `+0800`, `+08:00` (ISO) and `GMT`/`UTC` (RFC 822) are read so that the string parses, and the
-> rendered result stays the wall clock — `2026-09-24T15:30:00Z` and `2026-09-24T15:30:00+08:00` both give `2026-09-24 15:30:00`, never a shift to UTC.
-> The accepted shapes are the zone-less calendar formats, RFC 822, and ISO 8601 with a zone and optional fractional seconds; anything else still reports
-> `UP2-E2007` (give an explicit `format`, or install `[time]` for the natural-language path).
->
-> **An ambiguous numeric writing has one documented default**: `03/04/2026` (and the same date with a time part) follows `date_order`, whose default is
-> **`DMY`** — what the built-in table has always done for the plain shape; `MDY` turns both writings month-first. `format` and `lang` together are
-> `UP2-E1005`: the explicit format wins, so the language could never have an effect.
->
-> **A relative expression is clock-dependent unless `now` is given**: `yesterday` / `3 days ago` resolve against the wall clock, and `{"now": "$globals.now"}`
-> pins that base so a pipeline is reproducible.
-
-**Side by side with `udf` / `code`** (the same call convention, different trust levels):
+**Side by side with `udf` / `code`** (trust levels):
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (42 named functions) | "this chain can do at most these 42 things" — statically checkable, portable across deployments |
-| `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
-| `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
+| `py` | in the engine, already audited | **closed** (46 named functions) | "this chain can do at most these 46 things" |
+| `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | deployment-bound |
+| `code` | **in the chain itself** | a **single** behaviour | visible in the chain itself |
 
-The relationship among the three is covered in §6.10 (`udf`, including the unified argument convention shared with `code`) and §6.12 (`code`).
+### 6.5 `py.const` — literal
 
-### 6.5 `const` — literal
-
-`["const", <arbitrary JSON value>]` (2 elements). Used for fixed source identifiers (`channel` / `source` / `region`, see `03` §8.1) and for any constant a step needs. **The
+`["py","const", <arbitrary JSON value>]`. Used for fixed source identifiers (`channel` / `source` / `region`, see `03` §8.1) and for any constant a step needs.
+The former `const` operator is gone (D0): a literal is an action of the `py` table, so there is one fewer operator and the stage shape stays uniform. **The
 structure is not copied** (it is treated as immutable and must not be modified in place at runtime).
 
 ### 6.6 ~~`cast`~~ — merged into `py`
@@ -459,36 +412,29 @@ structure is not copied** (it is treated as immutable and must not be modified i
 
 - they are Python builtins to begin with, and turning them into an operator would only drag in another set of slot conventions about "which position holds the
   target type";
-- `["cast", "int"]` and `["py", "int", ""]` have exactly the same expressive power, and one operator fewer means one document fewer and one conformance
+- `["cast", "int"]` and `["py","int"]` have exactly the same expressive power, and one operator fewer means one document fewer and one conformance
   declaration fewer;
-- **`datetime` is still not in the conversion vocabulary** (the value domain is a JSON tree, and introducing `datetime` would make "intermediate state inside
-  the chain" and "encodability at the exit" fight forever) — time parsing belongs to `py.parse_time`;
+- **`datetime` is an internal value only**: `strptime` / `from_timestamp` produce one, `strftime` / `to_timestamp` consume one, and the exit refuses it
+  (`UP2-E2003`); it never enters the stored JSON value domain;
 - when the business side wants `str`, it writes `"str"` in the business schema instead of relying on a forced conversion at the end of the chain.
 
-### 6.7 ~~`time`~~ — merged into `py.parse_time`
+### 6.7 ~~`time`~~ — absorbed into `py`'s `strptime` / `strftime`
 
-**This section is obsolete** (D-02-14): time parsing no longer has an operator of its own; it becomes `py`'s `parse_time`, see §6.4.
+**This section is obsolete**: time parsing no longer has an operator of its own, and it no longer guesses a format. It is Python's pair on real `datetime`
+values inside the chain:
 
 ```jsonc
-["py", "parse_time", ""]                                // the built-in table, then natural-language detection (no parameter needed)
-["py", "parse_time", {"lang": "zh"}]                    // restrict the detection to one language (needs dateparser)
-["py", "parse_time", {"format": "%Y-%m-%d %H:%M:%S"}]   // an explicit layout (takes precedence)
-["py", "parse_time", {"date_order": "MDY"}]             // read the ambiguous slash writings month first
-["py", "parse_time", {"now": "$globals.now"}]           // pin the base clock of a relative expression
-["py", "strftime", "%Y/%m/%d"]                          // render the canonical string in another layout
+["py", "strptime", "%Y-%m-%d %H:%M:%S"]   // text + explicit format -> datetime
+["py", "strftime", "%Y/%m/%d"]            // datetime + layout -> text
+["py", "from_timestamp", 8]               // epoch seconds -> aware datetime at +08:00
+["py", "to_timestamp"]                    // datetime -> epoch seconds
 ```
 
-- The output-format constant is `TIME_FORMAT = "%Y-%m-%d %H:%M:%S"` (the same as the old v3's `TIME_OUTPUT`, which makes behaviour dictionaries easy to compare
-  against).
-- **There is no required dependency**: the built-in format table uses `datetime.strptime` to handle common machine formats (ISO, `YYYY/MM/DD`,
-  `"YYYY\u5e74M\u6708D\u65e5"` — the Chinese year–month–day pattern — `YYYYMMDD`, and so on); only when `lang` is given (natural-language dates) is `dateparser`
-  needed, and its absence reports `UP2-E2008`.
-- A parse failure ⇒ `Failed` (`UP2-E2007`; the `fix` text offers two routes, "add a `format`" or "add a `lang`"); an empty input ⇒ `""`.
-- `format` is validated at **compile time** (an illegal strptime directive ⇒ `UP2-E1005`).
-- **The `tz` parameter is not implemented** (YAGNI): the value domain is `str`, and time-zone conversion needs `datetime` semantics, so it is left until there
-  is a real need.
-- **Why it was an operator in the first place**: the `04` parser-syntax draft lists it as one of the 7 parsers. But its only behaviour is "body" — in essence
-  it is a function, and by the principle that "an operator with only one behaviour writes only its parameter" it belongs in the `py` table.
+- `parse_time`, its built-in format table, `lang` / `date_order` / `now`, the `[time]` extra and `UP2-E2007` / `UP2-E2008` are all deleted: an action that
+  guesses a shape, or reads the wall clock, makes the same chain answer differently on different days, and `dateparser` was its only dependency.
+- A text that does not match the explicit format is `UP2-E2005`, naming the format. Ambiguous writings must name their order in the format
+  (`"%d/%m/%Y"` / `"%m/%d/%Y"`), and relative / natural-language dates go to a host `udf` or to `code`.
+- A zone in the text (`Z`, `+0800`, `%z`) is kept on the value when the format parses it; `strftime` renders it only when the layout asks for `%z`.
 
 ### 6.8 `ctx` — scope reads and writes
 
@@ -518,21 +464,24 @@ structure is not copied** (it is treated as immutable and must not be modified i
 > value in the same scope. The former is used to "switch the input source in the middle of a chain", the latter to "pass some value to an operator as an
 > argument". Neither introduces a new scope concept.
 
-### 6.9 `each` — one dictionary per element of a list
+### 6.9 `each` — one pass per element of a list
 
 ```jsonc
-["each", {"title": [["css1","text","a"]], "href": [["css1","@href","a"]]}]
+["each", {"title": [["css1","text","a"]], "href": [["css1","@href","a"]]}]   // one dictionary per element
+["each", [["py","strip"]]]                                                  // one value per element
 ```
 
-`each` is a 2-slot operator with a single action, so the stage is `["each", <field map>]` and slot 2 carries the whole argument. The **field map** is an object
-mapping a field name to a chain — exactly the shape a step's field map has (`03` §7), one level down.
+`each` is a 2-slot operator with a single action, so slot 2 carries the whole argument. **The argument's shape selects the mode** (D8): an **object** is a
+field map (exactly the shape a step's field map has, `03` §7, one level down); an **array** is one chain run over every element, answering a list of its
+products. Anything else is `UP2-E1005`.
 
-| Position | Meaning |
+| Argument | Result |
 |---|---|
-| the argument | an object of field name → chain, compiled **recursively**; a value that is not an object is `UP2-E1005` |
+| an object of field name → chain, compiled recursively | `list[dict]`, one dictionary per element |
+| one chain | `list`, one product per element |
 
-- **The input must be a list**: one dictionary per element, in input order, so `list[dict]` comes out. An empty list yields `[]` (not a missing value); anything
-  that is not a list reports `UP2-E2002`. A missing input keeps the shared short-circuit (the operator does not accept a missing value).
+- **The input must be a list**: one product per element, in input order. An empty list yields `[]` (not a missing value); anything that is not a list reports
+  `UP2-E2002`. A missing input keeps the shared short-circuit (the operator does not accept a missing value).
 - **Every field chain starts from the element**: the element is the first stage's input (the current element is a value, not a named root).
 - **Fields are evaluated in declaration order against one element at a time**, so a later field reads what an earlier field of the same element stored.
 - **A `_`-prefixed field name is a per-element local**: it never becomes a key of the element's dictionary, and later fields of the same element read it as
@@ -554,58 +503,41 @@ mapping a field name to a chain — exactly the shape a step's field map has (`0
 ### 6.10 `udf` — a host-registered named function
 
 ```jsonc
-["udf", "ah_normalize_title", {"strict": true}]
+["udf", "ah_normalize_title"]
 ```
 
 - The function must be in the host registry (the `entry_points` group `uniparser2.udfs`, or `register_udf(name, fn)` at runtime).
 - Not registered ⇒ **compile-time** `UP2-E1010` (it does not blow up halfway through a run).
-- Contract: `fn(value: Value, **params) -> Value`; returning a value that cannot be a product ⇒ runtime `Failed` (`UP2-E2009`).
-- **Parameter names are not Schema-validated**: the keys in `{"strict": true}` are simply the host function's kwargs and their names are decided by the host, so
-  the compiler has nothing to validate against — this is the key difference between `udf` and the built-in operators (`py`/`re` have closed parameter tables).
-  When the host function rejects a kwarg, the exception lands on `UP2-E2099`.
-- **The action space is dynamic**: `udf`'s "action" is the function name itself (in slot 2), so `up2 conformance` declares it as **`("udf", "*")`** — what is
-  required is **contract coverage** (an unregistered name reports `UP2-E1010`, a registered one can be called, and the return value must be serialisable) rather
-  than every function name (otherwise every function the host adds would require changing a test in this repository). Because this open action space is modelled as
-  a **single** parameter on the compilation side, `up2 ops` reports `param_form: "value"` for it (§4): the object in slot 3 is that parameter's value, and the
-  operator's own evaluation then additionally requires it to be an object (`{"strict": true}`), reporting `UP2-E2002` otherwise.
+- **The call is unary or nullary** (D10): the upstream value is the only positional argument, `f(value)`, or there is none when the function declares no
+  positional parameter, `f()`. A function that requires a second argument — or a required keyword-only argument — is `UP2-E1005` at compile time, because the
+  signature is known when the chain compiles. An optional second parameter is ignored; bind it at registration (`functools.partial`).
+- **The stage writes no parameter slot**: `["udf", "f"]` is two slots, and `["udf", "f", …]` is `UP2-E1004`. Configuration a host function needs travels in a
+  **payload the chain builds with `ctx`**:
+
+  ```jsonc
+  ["ctx", "dict", {"value": "obj", "lang": "globals.lang"}]
+  ["udf", "translate"]
+  ```
+
+- **`ctx` is no longer injected**: a parameter named `ctx` is an ordinary parameter of the host function. A host function that needs the scope takes the
+  payload the chain hands it; writing the scope stays `ctx.set`'s job.
+- Returning a value that cannot be a product ⇒ runtime `Failed` (`UP2-E2009`). A host function that raises ⇒ `UP2-E2099`.
+- **The action space is dynamic**: `udf`'s "action" is the function name itself (in slot 2), so `up2 conformance` declares it as **`("udf", "*")`**, and
+  `up2 ops` reports `param_form: "none"` (there is no parameter slot).
 - **Security boundary**: there is no `eval`/`exec` in the chain; `udf` can only reference functions the host has reviewed and registered in advance. This is the
-  replacement form for the old v3 `udf` (arbitrary source through `exec`/`eval`, escapable via `__class__.__mro__`, no resource limits; see `essence` §5-R10)
-  and the implementation of Q42 in `01`.
-
-**Unified argument convention shared with `code`** (design D13): `udf` and `code` differ only in "where the code lives and under whose authority it runs"; **the
-call shape is completely identical** — the chain syntax gains nothing from it:
-
-- **the first positional argument = the upstream value** (for `udf` it is the first positional argument of `fn(value, **params)`; in `code` it is called `obj`);
-- **named configuration travels in the object in the third position** (`udf`'s `{"strict": true}` is exactly the host function's kwargs; `code` uses the
-  optional `inputs`);
-- **`ctx` is injected according to the function signature**: if the function declares a `ctx` parameter, the scope object is injected (`ctx.locals.x` /
-  `ctx.globals.y`, read in exactly the same way as in `code`); **if it does not, nothing is injected** — existing single-argument functions and
-  `lambda value: …` stay unchanged, character for character;
-- **`ctx` is a reserved parameter name**: passing it in the chain as an ordinary argument (`["udf", "f", {"ctx": 1}]`) ⇒ compile-time `UP2-E1005`; it will not
-  be handed to the function as an ordinary kwarg.
-
-The two **read `ctx` the same way and write differently** (the direct consequence of "where the code runs"): `udf` runs on the host CPython, so writes to
-`ctx.locals` **land directly back** in the scope of this evaluation (`ctx.globals` is structurally read-only); `code` runs in the sandbox and is v1
-**read-only** — assignments to `ctx` inside the sandbox do not flow back, and writing to the scope must go through `ctx.set` in the chain (the technical reason
-is in §6.12).
-
-| Operator | Where the code lives | Action space | Auditability |
-|---|---|---|---|
-| `py` | in the engine, already audited | **closed** (42 named functions) | "this chain can do at most these 42 things" — statically checkable, portable across deployments |
-| `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
-| `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
+  replacement form for the old v3 `udf` (arbitrary source through `exec`/`eval`, no resource limits; see `essence` §5-R10) and the implementation of Q42 in `01`.
 
 Registration is trust: `udf` functions run with the host's full authority, so "what a chain can do" = what this deployment registered; scope and trust
 boundaries are in `04` §11.
 
 ### 6.11 `xpath` — XPath query (XML)
 
-**Slots**: `["xpath", accessor, XPath expression]` — the accessor is in position 2 and the expression in position 3. The expression may be written as a bare
-string or as a `{"expr": …, "ns": {…}}` object (the object likewise lives in slot 3).
+**Slots**: `["xpath", accessor, XPath expression]` — the accessor is in position 2 and the expression in position 3. A namespace map makes the expression
+a two-element array `[expression, ns]` (D3).
 
 ```jsonc
 ["xpath", "text", "//item/title"]
-["xpath", "text", {"expr": "//dc:creator", "ns": {"dc": "http://purl.org/dc/elements/1.1/"}}]
+["xpath", "text", ["//dc:creator", {"dc": "http://purl.org/dc/elements/1.1/"}]]
 ```
 
 | Accessor | Expression kind | Product | Notes |
@@ -635,95 +567,55 @@ string or as a `{"expr": …, "ns": {…}}` object (the object likewise lives in
 
 ### 6.12 `code` — code inside the chain (sandbox)
 
-**Slots**: `["code", {"src": "…", "inputs": {…}}]` — **2 elements**: it has only one behaviour (run this source once), so by §1's rule the action position is
-not written (the same shape as `json` / `const`). `src` is required and must be a non-empty string: missing ⇒ compile-time `UP2-E1005`; a whitespace-only string
-is likewise `UP2-E1005` (Pointer `/0/1/src`). `inputs` is optional; writing an extra third position ⇒ compile-time `UP2-E1004`.
+**Slots**: `["code", <source>]` — 2 elements, and the source **is** the parameter (D9). `src` must be a non-empty string: missing ⇒ `UP2-E1005`; a
+whitespace-only string is likewise `UP2-E1005`. There is no `inputs` parameter and no third slot (`UP2-E1004`).
 
 ```jsonc
-["code", {"src": "len(obj)"}]                            // minimal form: only obj and the allowlisted functions
-["code", {"src": "ctx.locals.n + 1"}]                    // read this step's temporary variable (locals.n = 41 ⇒ 42)
-["code", {"src": "ctx.globals.base_url"}]                // read the chain-level environment
-["code", {"src": "x + 1", "inputs": {"x": "$locals.n"}}] // named input: one extra compile-time reference check
+["code", "len(obj)"]                         // minimal form: obj and the allowlisted functions
+["code", "ctx.locals.n + 1"]                 // read this step's temporary variable (locals.n = 41 ⇒ 42)
+["code", "ctx.globals.base_url"]             // read the chain-level environment
+["code", "1 / 0"]                            // an exception ⇒ UP2-E2017
 ```
 
-**Return-value semantics: the value of the last expression is the return value** (REPL semantics). If the end is an assignment, a `print(...)`, a pure comment
-or an empty string ⇒ `None` is returned (what `print` writes goes to the output channel, not to the return value); `x = 1 + 1; x * 3` ⇒ `6`.
+**Return-value semantics: the value of the last expression is the return value** (REPL semantics). If the end is an assignment, a pure comment or an empty
+string ⇒ `None`; `x = 1 + 1; x * 3` ⇒ `6`. **`print` is silenced** (the host passes a no-op `print_callback`): the product is the channel, not stdout.
 
-**Fixed input parameters `obj` and `ctx`** (the same convention as `udf`, see §6.10): `obj` = the upstream value; `ctx` = the **scope object** (not a JSON
-dict), used attribute-wise:
+**Fixed names `obj` and `ctx`**: `obj` = the upstream value; `ctx` = the **scope object** (not a JSON dict), read attribute-wise (`ctx.locals.x` /
+`ctx.globals.y`). A missing attribute is an observable failure (`AttributeError` ⇒ `UP2-E2017`). Configuration goes through a payload built with `ctx`, the
+same pattern `udf` uses.
 
-| Form | Meaning |
-|---|---|
-| `ctx.locals.<name>` | this step's locals: **every temporary variable produced by any parsing behaviour in the current step** is automatically here |
-| `ctx.globals.<name>` | the story-level environment (consistent across steps) |
+**`ctx` contains JSON values only**: handles (DOM / XPath nodes) do not appear in `ctx`, and no error is raised because of their absence — the same principle
+as `UP2-E2003`. When the upstream value itself is a handle it is rejected explicitly (`UP2-E2003`).
 
-If the attribute does not exist ⇒ an observable failure (`AttributeError` ⇒ `UP2-E2017`); it does not silently return an empty value.
-
-**`ctx` contains JSON values only**: handles (DOM / XPath nodes) **do not appear in `ctx`, and no error is raised because of their absence** — the same
-principle as `UP2-E2003`, "handles cannot leave the chain". When the upstream value itself is a handle it is not filtered out (that is explicit argument
-passing) and it lands directly on `UP2-E2003`.
-
-**Assignments to `ctx` inside the sandbox do not flow back** to the engine scope: `ctx.locals.added = 7` changes only the copy inside the fragment, and the
-chain's next stage reading `$locals.added` will not see it. The technical reason: the sandbox does not dispatch `__setattr__`, and `dir` / `vars` / `__dict__`
-do not exist, so keys added inside the sandbox cannot be enumerated back. **To write to the scope, use `ctx.set` in the chain**:
+**Assignments to `ctx` inside the sandbox do not flow back** to the engine scope: to write, use `ctx.set` in the chain.
 
 ```jsonc
-[["code", {"src": "len(obj)"}], ["ctx", "set", "locals._n"]]                  // write the scope: go through ctx.set in the chain
-[["code", {"src": "ctx.locals.added = 7"}], ["ctx", "get", "locals.added"]]   // reading it back does not work (no flow-back)
+[["code", "len(obj)"], ["ctx", "set", "locals._n"]]
 ```
 
-**`inputs` (optional)**: a named "name → value" object whose values may be literals or references. Its **only benefit is compile-time reference checking**:
-`{"src": "x", "inputs": {"x": "$nope.n"}}` reports `UP2-E1006` at compile time (the Pointer lands in the parameter slot, `/0/1`), whereas `ctx.locals.typo` can
-only raise `AttributeError` at runtime. `obj` and `ctx` are reserved names; using them inside `inputs` ⇒ `UP2-E1005`.
+**Allowlisted functions are directly available**: the sandbox namespace is preloaded with the same pure functions as `py`, so a fragment can write
+`normalize_space(obj)` without `import`; actions with an incomplete dependency (such as `html_to_markdown`) are not mounted. Each call is one host round-trip,
+bounded by the budget (default 1000; `0` makes them uncallable). When `json` / `re` / `math` / `base64` / `datetime` / `collections` / `itertools` /
+`functools` / `unicodedata` are needed, the sandbox can `import` them (a stdlib subset).
 
-**Allowlisted functions are directly available**: the sandbox namespace is preloaded with the engine's pure functions **from the same source** as `py` (JSON in,
-JSON out, no IO), so a fragment can write `normalize_space(obj)` / `strip_tags(obj)` **without `import`**; actions whose dependencies are incomplete (such as
-`html_to_markdown`) are not mounted. The cost is **one host round-trip counted per call**, bounded by the round-trip budget (default 1000; setting it to `0`
-makes every preloaded function uncallable). When `json` / `re` / `math` / `base64` / `datetime` / `collections` / `itertools` / `functools` / `unicodedata` are
-needed, the sandbox can `import` them directly — it ships a **subset** of these standard libraries:
-
-```jsonc
-["code", {"src": "import json, re\njson.dumps(re.findall(r'\\d+', obj))"}]
-```
+**`UP2_CODE=off` disables the operator** before any sandbox work (compile-time `UP2-E1107`); the environment variable is the deployment's switch, convenient
+for containers.
 
 **Isolation and limits**:
 
-- **No host capability, stated per surface as measured** (the distinction is load-bearing, so it is not compressed into one slogan): `import socket` / `import subprocess`
-  do not exist in the sandbox VM (`ModuleNotFoundError`), and neither do `compile` / `__import__`; `open(…)` and `os.getenv(…)` **do exist and are blocked** at runtime
-  (`PermissionError` / "not supported in this environment") — that rejection comes from the Monty runtime defaults, not from a policy this repository pins, see `04`
-  §11.3; the language features `eval` / `exec` **do** exist inside the sandbox and grant no capability by themselves; `time.sleep` is neutralised (it returns
-  immediately, the determinism policy). The classic escape chain (`''.__class__.__mro__[1].__subclasses__()`) fails at the language level (`AttributeError`) and lands
-  on `UP2-E2017`.
+- **No host capability, stated per surface as measured**: `import socket` / `import subprocess` do not exist in the sandbox VM (`ModuleNotFoundError`), and
+  neither do `compile` / `__import__`; `open(…)` and `os.getenv(…)` exist and are blocked at runtime (`PermissionError` / "not supported in this environment"),
+  from the Monty runtime defaults, see `04` §11.3; `eval` / `exec` exist but grant no capability; `time.sleep` is neutralised. The classic escape chain
+  (`''.__class__.__mro__[1].__subclasses__()`) fails at the language level (`AttributeError`) and lands on `UP2-E2017`.
 - **The limits live on the host side only** (`uniparser2.ops.code.configure`): memory (default 64 MB), single-execution duration (0.5 s), request timeout (5 s),
-  host round-trip budget (1000), recursion depth (the runtime default). **They cannot be changed from the chain** — passing `{"max_memory": …}` to `code` is
-  merely an unknown parameter ⇒ compile-time `UP2-E1005`.
-- **Deterministic by default**: a frozen clock (a fixed instant) + a fixed time zone + `sleep` disabled + seeded random, so the same chain with the same input
-  replays **character for character**; the host may explicitly switch back to following the host, and **switching back gives up the cross-machine replay
-  guarantee**.
-- **An optional extra, `uniparser2[code]`** (`pydantic-monty`): **absent by default**; when it is not installed, compile-time `UP2-E1107` + the install command,
-  and `up2 ops` marks it as unavailable; **`uniparser2[all]` does not include it** — installing everything must not hand out code-execution capability as a side
-  effect.
+  host round-trip budget (1000), recursion depth. **They cannot be changed from the chain** — there is no parameter slot to pass them through.
+- **Deterministic by default**: a frozen clock + a fixed time zone + `sleep` disabled + seeded random, so the same chain with the same input replays
+  character for character; the host may explicitly switch back, giving up the cross-machine replay guarantee.
+- **An optional extra, `uniparser2[code]`** (`pydantic-monty`): absent by default; when missing, compile-time `UP2-E1107` + the install command, and `up2 ops`
+  marks it unavailable; `uniparser2[all]` does not include it.
 
-**Error codes**: a limit being hit ⇒ `UP2-E2016`; an exception in the sandboxed code ⇒ `UP2-E2017` (including syntax errors and unsupported constructs); a
-return value that cannot be a product (or an input that is not a JSON value) ⇒ `UP2-E2009`; an upstream value that is a handle ⇒ `UP2-E2003`.
-
-**Dialect limitations**: the sandbox implements only **a subset of CPython 3.14**, and it rejects class inheritance and metaclasses, generators (`yield`),
-`match`, `del`, `async with` / `async for`, wildcard imports (`from m import *`), PEP 695 `type` aliases and similar constructs already at parse time (landing
-code `UP2-E2017`). **Syntax validation happens at runtime, not at compile time**: `compile_field` must be free of IO, and using CPython's `ast.parse` would
-falsely reject legal constructs that the sandbox does not support anyway. The authoritative list is Monty's limitations document:
-<https://pydantic.dev/docs/monty/limitations/>.
-
-**Side by side with `py` / `udf`** (the same call convention, different trust levels):
-
-| Operator | Where the code lives | Action space | Auditability |
-|---|---|---|---|
-| `py` | in the engine, already audited | **closed** (42 named functions) | "this chain can do at most these 42 things" — statically checkable, portable across deployments |
-| `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | "this chain depends on which functions this deployment registered" — deployment-bound |
-| `code` | **in the chain itself** | a **single** behaviour | "this chain contains a piece of sandboxed code" — visible in the chain itself |
-
-The trade-off reasons for the three and their trust boundaries are in `04` §11.
-
----
+**Error codes**: a limit ⇒ `UP2-E2016`; an exception in the sandboxed code ⇒ `UP2-E2017`; a non-product return (or a non-JSON input) ⇒ `UP2-E2009`; an upstream
+handle ⇒ `UP2-E2003`.
 
 ## 7. Compile-time error codes (`UP2-E1xxx`)
 
@@ -760,8 +652,6 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2003` | the exit contains a non-serialisable value (`Opaque` or a non-JSON type) | convert it to text first via `text` / `html` / `outer` / `@<attribute name>` |
 | `UP2-E2004` | the lazy import of an operator's optional dependency failed | give the install command |
 | `UP2-E2005` | value conversion failed | give the source type, the target type and a preview of the source value |
-| `UP2-E2007` | `time` parsing failed | give the input string and the list of formats that were tried |
-| `UP2-E2008` | `py.parse_time` reached the natural-language path but `dateparser` is not installed | give the install command |
 | `UP2-E2009` | the operator returned a value that cannot be a product | only a JSON value may be a **product**: a host object may flow, but it exits through `pack` (`UP2-E2003`), so convert it first |
 | `UP2-E2010` | a `Request` product carries no `url` | give `url` in the field map of the step whose `type` is `Request` (`03` §4.1) |
 | `UP2-E2011` | `output="single"` but several products or several terminals exist | change `output` to `auto` / `list` |
@@ -798,16 +688,16 @@ it with a test patched to "temporarily turn `urljoin.base` into `Kind.REF`".
 | # | `04` draft wording | This design | Reason |
 |---|---|---|---|
 | D-02-1 | `const`/`cast` are 2-element, the rest are 3-element | the arity is declared by the operator Schema (2 or 3) and the stage length is **matched exactly**; there is no "omitting the tail" | the shape is unified; the arity is a property of the operator and should not be hard-coded in a document |
-| D-02-2 | multiple arguments passed as a comma-joined string (`"\u65e7,\u65b0"`) | a positional array / a named object | string joining cannot be validated or escaped, and `essence` already lists it as the R1 root cause |
+| D-02-2 | multiple arguments passed as a comma-joined string (`"old,new"`) | one positional array (`["old","new"]`) | string joining cannot be validated or escaped, and `essence` already lists it as the R1 root cause |
 | D-02-3 | `remove` is a side effect | `remove` returns a pruned copy (a pure function) | preserves `N1`/I5; avoids the cross-talk of a shared mutable DOM during per-item parsing |
 | D-02-4 | `callback` uses a `"ctx.fields.x\|each"` string; the preset-chain container is called `parsers` | **superseded** by the L2 iteration redesign (`each`): the argument is an inline field map, so there is no selector object, no container and no name to resolve | no string surgery, one shape in one slot, and the terminology does not collide |
 | D-02-5 | `ctx` has `get/set/del/map` with an undefined write surface; there is also a `call` verb | the write surface is hard-limited to `locals.*`; `call` is deleted | preserves purity and the immutability of products; calling a function is an operator |
 | D-02-6 | three reference forms are undefined (`$locals.*`, multi-level paths, literals), and an undefined `$get` appears | one rule: a leading `$` ⇒ a reference, `{"$lit":…}` escapes; `$get` is abolished | a rule must fit in one sentence; undefined concepts are deleted |
-| D-02-7 | the `cast` vocabulary contains `datetime`, which conflicts with exit encoding (blocker N of the `02` worked-example draft) | type conversion only converts inside the JSON value domain, and time goes to `py.parse_time` (which outputs a str) | the value domain is a JSON tree and `N2` requires serialisability |
+| D-02-7 | the `cast` vocabulary contains `datetime`, which conflicts with exit encoding (blocker N of the `02` worked-example draft) | `strptime` / `from_timestamp` produce a `datetime` that may flow between stages but is refused at the exit (`UP2-E2003` names `py.strftime`) | the stored value domain is a JSON tree; a datetime is an internal value only |
 | D-02-8 | the `py` table contains `const`/`getattr` (as well as `int`/`float`/`bool`/`str`/`list`) | `const` is a standalone operator; `getattr` **came back** with host objects (`allow-object-values`), where it reads an attribute of the value that flows in and refuses a callable one; the five type functions first went to `cast` and then, with D-02-14, back to `py` | a single entry point, avoiding one name meaning two things |
-| D-02-9 | the `re` capture-group action does not say how pattern and group name are given together | the named object `{"pattern":…, "group":…}` | the parameter position cannot hold two parameters |
+| D-02-9 | the `re` capture-group action does not say how pattern and group name are given together | `search` takes `[pattern, group]`; the separate `group` action is gone | one action fewer, and two parameters fit one positional array |
 | D-02-10 | there are no `default` / `first` / `sort` / `uniq` / `urlsplit` / encoding functions | the allowlist functions are completed | the list was ported from `dsl-design` §3.4 and taken from `essence` §3.4; these are equivalent ports of existing behaviour |
 | D-02-11 | `css1` was deleted for a while (replaced by `css` + `py.first`) | `css1` is restored: `css` produces a `list`, `css1` produces a scalar | in L1 `nodes` cannot shoulder "take all values"; first-match-by-default risks silent truncation; `css_first` is not a fast path and the gain is in extracting N-1 fewer values |
 | D-02-12 | `css` chooses between `selectolax` / `beautifulsoup4` (`any_requires`) | only `selectolax` remains; XML goes to `xpath` (lxml) | measured, the two engines have identical HTML semantics; `any_requires` had a single user |
 | D-02-13 | the slot-order dispute: the `04` draft's "slot 2 is always the action" versus the old draft's "selector first" | the slot order is unified with **zero exceptions** as `[operator, action, parameter]` — the css/xpath selector lands in slot 3, and `json`/`const` are written with two positions | the enumeration strength of the three positions increases step by step (operator → action → arbitrary value); the interim "selector first" flip was withdrawn because of the tax of two shapes (`action_slot` declarations, two pointer shapes) |
-| D-02-14 | `time` / `cast` each occupy an operator; action names carry `$`; `re`'s actions are called `$match` / `$all` | both are merged into `py` (`parse_time` / `str`·`int`·`float`·`bool`·`list`·`from_json`); all `$` are removed; they are renamed `search` / `findall` | a single behaviour does not need an operator of its own; `$` is easily confused with the reference syntax; `match` conflicts semantically with `re.match` |
+| D-02-14 | `time` / `cast` each occupy an operator; action names carry `$`; `re`'s actions are called `$match` / `$all` | both are merged into `py` (`strptime`·`strftime` / `str`·`int`·`float`·`bool`·`from_json`); all `$` are removed; they are renamed `search` / `findall` | a single behaviour does not need an operator of its own; `$` is easily confused with the reference syntax; `match` conflicts semantically with `re.match` |

@@ -6,12 +6,12 @@ A declarative, deterministic, serializable **text parsing engine**: it turns the
 input text to a specified structure into JSON data (a **parse chain**), generated offline by a human
 or an LLM, with nothing but deterministic evaluation at runtime.
 
-> **Status**: `0.5.0`. **L1** (the DSL operator layer) is complete: **11 operators** —
+> **Status**: `0.5.0`. **L1** (the DSL operator layer) is complete: **10 operators** —
 > `css` / `css1` (HTML selectors — all matches vs. first match only, selectolax), `xpath` (XML, lxml),
-> `json` (jmespath), `re`, `py` (42 allowlist functions), `udf` (host-registered, no code in the
+> `json` (jmespath), `re`, `py` (46 allowlist functions), `udf` (host-registered, no code in the
 > chain), `code` (in-chain code, language-level sandbox, **not present by default** — see the
-> security note), plus the scoping operator `ctx`, the building block `const` and the iteration
-> operator `each` — 74 `(operator, action)` pairs in total. **L2 has started**: a site bundle (a
+> security note), plus the scoping operator `ctx` and the iteration
+> operator `each` — 77 `(operator, action)` pairs in total. **L2 has started**: a site bundle (a
 > **story**) compiles and runs — `start(bundle, value)` / `run.go()` / `run.feed(answer)`, where a
 > `Request` / `RequestBatch` / `call` suspends the run and its answer resumes the **same** run — and
 > both `samples/*/site.json` run end to end against their live sites through the committed host
@@ -59,8 +59,8 @@ store rules as data and reuse them. uniparser2 solves all five at once:
 
 ## What you get today (L1)
 
-The **operator layer** is complete and mechanically audited: 11 operators, 72 `(operator, action)`
-pairs, each with a covering case (`uv run up2 conformance --check`), and 37 implemented error codes
+The **operator layer** is complete and mechanically audited: 10 operators, 77 `(operator, action)`
+pairs, each with a covering case (`uv run up2 conformance --check`), and 35 implemented error codes
 each asserted by a test. The **store** (L3's first slice) has landed on top of it: `up2 publish` binds
 a chain to a `(root_domain, tpl_key)` identity, refuses a chain that does not lint, keeps its
 fingerprint history append-only, and `up2 get` / `up2 audit` read it back — over a file store or a
@@ -70,14 +70,13 @@ SQLite one (`UP2_HOME`, `UP2_STORE`).
 |---|---|---|
 | `css` / `css1` | selectolax (`[html]`) | `text` · `html` · `outer` · `@<attr>` · `remove` · `self` · `nodes` — all matches vs. first match only |
 | `xpath` | lxml (`[xml]`) | `text` · `self` · `nodes` (XML; XPath is lxml-native) |
-| `json` | jmespath (`[json]`) | `get` — a jmespath expression, empty means the root |
-| `re` | stdlib | `search` · `group` · `findall` |
-| `py` | stdlib; the natural-language path of `parse_time` needs `[time]`, `html_to_markdown` needs `[md]` | 42 allowlisted pure functions: `int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `getattr` · `len` `first` `last` `flatten` `uniq` `sort` · `items` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` · `==` `!=` `<` `<=` `>` `>=` `in` `or` `and` (predicates, Python's spellings) |
-| `ctx` | stdlib | `get` · `set` · `del` · `map` (scope reads and writes) |
-| `udf` | host-registered | any function the host registered beforehand; the chain carries only a name |
-| `code` | pydantic-monty (`[code]`, deliberately not in `[all]`) | `run` — in-chain code in a language-level sandbox (see the security note) |
-| `const` | stdlib | the literal building block |
-| `each` | stdlib | one dictionary per element of a list: the argument is a **field map** (`field name → chain`), a `_`-prefixed field is a per-element temporary, and every element gets its own scope |
+| `json` | jmespath (`[json]`) | `get` — a jmespath expression; omitting the third slot queries the whole document |
+| `re` | stdlib | `search` · `findall` · `sub` — `search` takes a pattern or `[pattern, group]` |
+| `py` | stdlib; `html_to_markdown` needs `[md]` | 46 allowlisted pure functions: `const` `strip` `normalize_space` `html_to_markdown` · `replace` `split` `join` `upper` `lower` `slice` `getitem` `getattr` · `len` `first` `last` `flatten` `uniq` `sort` `sort_desc` `find_jsons` · `items` · `urljoin` `urlsplit` · `strptime` `strftime` `from_timestamp` `to_timestamp` · `b64_encode` `b64_decode` `sha256` `md5` · `str` `int` `float` `bool` `from_json` · `==` `!=` `<` `<=` `>` `>=` `in` `between` `or` `and` (predicates, Python's spellings) |
+| `ctx` | stdlib | `get` · `set` · `del` · `dict` · `list` (scope reads and writes; `obj` names the stage's value) |
+| `udf` | host-registered | any function the host registered beforehand; the chain carries only a name, and the call is unary or nullary |
+| `code` | pydantic-monty (`[code]`, deliberately not in `[all]`) | `run` — in-chain code in a language-level sandbox, written `["code", src]` (see the security note) |
+| `each` | stdlib | per element of a list: an **object** parameter is a field map (one dictionary per element), an **array** parameter is one chain run over every element |
 
 This table is a summary: **the registry is the authority**, so ask it. `uv run up2 ops --json` prints
 every operator with its arity, slot roles, action enumeration, parameter schema, dependencies,
@@ -111,7 +110,7 @@ their deliverables and their acceptance criteria are in
 # Kernel only (zero dependencies)
 uv add uniparser2
 
-# Install engines as needed: HTML parsing / XML / JSON queries / natural-language dates / HTML→Markdown
+# Install engines as needed: HTML parsing / XML / JSON queries / HTML→Markdown
 # (`ui` is the trial bench, not implemented yet, and — like `code` — deliberately not part of `[all]`)
 uv add "uniparser2[html]"
 uv add "uniparser2[all]"
@@ -160,10 +159,10 @@ publication-date text:
 ```jsonc
 // chain.json
 [
-  ["re", "group", {"pattern": "(\\d{4})-(\\d{2})", "group": 1}],
+  ["re", "search", ["(\\d{4})-(\\d{2})", 1]],
   ["ctx", "set", "locals._year"],
-  ["py", "int", ""],
-  ["py", "default", 0]
+  ["py","int"],
+  ["py","or",[0]]
 ]
 ```
 
@@ -175,8 +174,8 @@ chain carried and carries on, `["try","break"]` ends the chain with it, and a gu
 // chain.json — the year is optional, the rest of the record is not
 [
   ["try", "skip"],
-  ["re", "group", {"pattern": "(\\d{4})", "group": 1}],
-  ["py", "int", ""]
+  ["re", "search", ["(\\d{4})", 1]],
+  ["py","int"]
 ]
 ```
 
@@ -200,8 +199,8 @@ normalise a feed timestamp into one canonical form:
 // link.json — the download URL, resolved against the page base
 [["css1", "@href", "a.download"], ["py", "urljoin", "$globals.base_url"]]
 
-// date.json — an RFC 822 feed timestamp in, the canonical shape out
-[["css1", "text", "time.pubdate"], ["py", "normalize_space", ""], ["py", "parse_time", ""]]
+// date.json — a machine timestamp in, the canonical shape out
+[["css1", "text", "time.pubdate"], ["py","normalize_space"], ["py","strptime","%Y-%m-%dT%H:%M:%S%z"], ["py","strftime","%Y-%m-%d %H:%M:%S"]]
 ```
 
 ```bash
@@ -213,7 +212,7 @@ uv run up2 trial link.json --global base_url=https://example.com/news/ \
 # }
 
 uv run up2 trial date.json \
-  --input 'text=<time class="pubdate">Thu, 24 Sep 2026 15:30:00 +0800</time>' --json
+  --input 'text=<time class="pubdate">2026-09-24T15:30:00+0800</time>' --json
 # {
 #   "state": "ok",
 #   "value": "2026-09-24 15:30:00"
@@ -259,8 +258,8 @@ import uniparser2 as up2
 
 chain = up2.compile_field(
     [
-        ["re", "group", {"pattern": r"(\d{4})-(\d{2})", "group": 1}],
-        ["py", "int", ""],
+        ["re", "search", [r"(\d{4})-(\d{2})", 1]],
+        ["py", "int"],
     ]
 )
 

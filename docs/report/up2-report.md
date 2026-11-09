@@ -6,22 +6,21 @@ Generated from `uniparser2` 0.5.0 · one case per `(operator, action)` pair decl
 
 ## Coverage check
 
-- **Coverage check passed**: every declared pair has a case and every behavior case ran `Ok`.
-- the registry declares **74** pairs = **74** pairs covered by cases
-- states across every run: `Failed` 10, `Ok` 107
+- **Coverage gap**: missing [('py', 'const'), ('py', 'from_timestamp'), ('py', 'sort_desc'), ('py', 'strftime'), ('py', 'strptime'), ('py', 'to_timestamp'), ('re', 'sub')] · non-Ok behavior cases []
+- the registry declares **77** pairs = **72** pairs covered by cases
+- states across every run: `Failed` 10, `Ok` 105
 
 | operator | arity | slots | summary | actions |
 |---|---|---|---|---|
 | `css` | 3 | accessor / selector | CSS selector (all matches) | 8 |
 | `css1` | 3 | accessor / selector | CSS selector (first match only) | 8 |
-| `py` | 3 | function / params | Python built-in allowlist functions | 42 |
+| `py` | 3 | function / params | Python built-in allowlist functions | 46 |
 | `xpath` | 3 | accessor / XPath | XPath query (XML; lxml) | 3 |
 | `json` | 2 | jmespath path | JSON dot-path query (jmespath) | 1 |
-| `re` | 3 | mode / pattern | Regex matching (search / group / findall) | 3 |
+| `re` | 3 | mode / pattern | Regex matching (search / findall / sub) | 3 |
 | `ctx` | 3 | action / parameter | Scope reads and writes (get / set / del / dict / list) | 5 |
-| `const` | 2 | value | Literal (never resolved as a reference) | 1 |
 | `each` | 2 | fields | One dictionary per element of a list | 1 |
-| `code` | 2 | source & inputs | In-chain code (sandboxed; optional dependency [code]) | 1 |
+| `code` | 2 | source | In-chain code (sandboxed; optional dependency [code]) | 1 |
 | `udf` | 3 | action / parameter | Host-registered named function (the chain carries no code) | 1 |
 
 
@@ -139,7 +138,7 @@ Input sample for this section — the same input for every card below:
 - chain:
   - `["css", "remove", "script,style"]` → `Ok(value='<opaque DomNode>')`
   - `["css1", "html", "div.content"]` → `Ok(value='"\\n      \\n      <p>To all municipal governments:</p>\\n      <p>The Government Service Item List is hereby issued to you; please comply.</p>\\n      <a class=\\"download\\" hre…)`
-  - `["py", "html_to_markdown", ""]` → `Ok(value='To all municipal governments:\n\nThe Government Service Item List is hereby issued to you; please comply.\n\n[Download the list](/files/list.pdf)\n')`
+  - `["py", "html_to_markdown"]` → `Ok(value='To all municipal governments:\n\nThe Government Service Item List is hereby issued to you; please comply.\n\n[Download the list](/files/list.pdf)\n')`
 - input: the section sample above (shown in full)
 - output: `Ok(value='To all municipal governments:\n\nThe Government Service Item List is hereby issued to you; please comply.\n\n[Download the list](/files/list.pdf)\n')` (Ok)
 
@@ -156,7 +155,7 @@ Input sample for this section — the same input for every card below:
 - note: node set → count
 - chain:
   - `["css", "nodes", "ul.rel a"]` → `Ok(value=['<DomNode Node>', '<DomNode Node>'])`
-  - `["py", "len", ""]` → `Ok(value=2)`
+  - `["py", "len"]` → `Ok(value=2)`
 - input: the section sample above (shown in full)
 - output: `Ok(value=2)` (Ok)
 
@@ -280,7 +279,7 @@ Input sample for this section — the same input for every card below:
 - note: take the heading → normalize whitespace
 - chain:
   - `["css1", "text", "h1.article-title"]` → `Ok(value='  Notice on Issuing the Government Service Item List  ')`
-  - `["py", "normalize_space", ""]` → `Ok(value='Notice on Issuing the Government Service Item List')`
+  - `["py", "normalize_space"]` → `Ok(value='Notice on Issuing the Government Service Item List')`
 - input: the section sample above (shown in full)
 - output: `Ok(value='Notice on Issuing the Government Service Item List')` (Ok)
 
@@ -298,28 +297,28 @@ Input sample for this section — the same input for every card below:
 - note: extract → process in the sandbox (allowlisted functions need no import)
 - chain:
   - `["css1", "text", "h1.article-title"]` → `Ok(value='  Notice on Issuing the Government Service Item List  ')`
-  - `["code", {"src": "normalize_space(obj)"}]` → `Ok(value='Notice on Issuing the Government Service Item List')`
+  - `["code", "normalize_space(obj)"]` → `Ok(value='Notice on Issuing the Government Service Item List')`
 - input: the section sample above (shown in full)
 - output: `Ok(value='Notice on Issuing the Government Service Item List')` (Ok)
 
 
 ## `py` — Python built-in allowlist functions
 
-arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (Core, Common, Advanced, Rare)
+arity 3 · slot 2=function / slot 3=params · dependencies: none · 46 actions (Core, Common, Advanced, Rare)
 
 ### Actions (sorted by commonness)
 
-#### `strip` — strip leading and trailing whitespace
-- tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
+#### `strip` — strip leading and trailing whitespace, or the given characters
+- tier ★★★ Core · parameter slot: the value itself · `chars: literal?, default None`
 - note: strip leading/trailing whitespace
-- chain: `[["py", "strip", ""]]`
+- chain: `[["py", "strip"]]`
 - input: `  text  `
 - output: `Ok(value='text')` (Ok)
 
 #### `normalize_space` — collapse runs of whitespace into a single space
 - tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
 - note: collapse consecutive whitespace
-- chain: `[["py", "normalize_space", ""]]`
+- chain: `[["py", "normalize_space"]]`
 - input:
 
   ```text
@@ -338,7 +337,7 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 #### `first` — take the first element
 - tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
 - note: first item (xpath/css yield a list; a scalar is needed)
-- chain: `[["py", "first", ""]]`
+- chain: `[["py", "first"]]`
 - input: `['a', 'b']`
 - output: `Ok(value='a')` (Ok)
 
@@ -359,7 +358,7 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 #### `len` — length
 - tier ★★★ Core · parameter slot: no parameter (write two positions, or "")
 - note: length
-- chain: `[["py", "len", ""]]`
+- chain: `[["py", "len"]]`
 - input: `[1, 2, 3]`
 - output: `Ok(value=3)` (Ok)
 
@@ -369,13 +368,6 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 - chain: `[["py", "slice", ":3"]]`
 - input: `abcdef`
 - output: `Ok(value='abc')` (Ok)
-
-#### `default` — fall back when the value is None or an empty string
-- tier ★★★ Core · parameter slot: the value itself · `value: ref_or_literal`
-- note: fallback for None / "" only (a missing upstream is a failure, not a value)
-- chain: `[["py", "default", "fallback value"]]`
-- input: ``
-- output: `Ok(value='fallback value')` (Ok)
 
 #### `getitem` — take a subscript: a sequence index, a mapping key or a str character
 - tier ★★ Common · parameter slot: the value itself · `at: ref_or_literal`
@@ -387,19 +379,19 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 #### `last` — take the last element
 - tier ★★ Common · parameter slot: no parameter (write two positions, or "")
 - note: last item
-- chain: `[["py", "last", ""]]`
+- chain: `[["py", "last"]]`
 - input: `[1, 2]`
 - output: `Ok(value=2)` (Ok)
 
 #### `replace` — replace all occurrences
-- tier ★★ Common · parameter slot: a named object (a positional array also works) · `old: literal`, `new: literal`
+- tier ★★ Common · parameter slot: array · `old: literal`, `new: literal`
 - note: replace all (positional array)
 - chain: `[["py", "replace", ["old", "new"]]]`
 - input: `old document`
 - output: `Ok(value='new document')` (Ok)
 
 #### `split` — split on a separator
-- tier ★★ Common · parameter slot: a named object (a positional array also works) · `sep: literal`, `maxsplit: literal?, default None`
+- tier ★★ Common · parameter slot: the value itself · `sep: literal`
 - note: split on a separator
 - chain: `[["py", "split", ","]]`
 - input: `a,b,c`
@@ -412,45 +404,45 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 - input: `['a', 'b']`
 - output: `Ok(value='a-b')` (Ok)
 
-#### `strip_tags` — remove HTML tags
+#### `find_jsons` — every JSON object/array embedded in the text, parsed, in document order
 - tier ★★ Common · parameter slot: no parameter (write two positions, or "")
-- note: strip HTML tags
-- chain: `[["py", "strip_tags", ""]]`
-- input: `<b>text</b>`
-- output: `Ok(value='text')` (Ok)
+- note: every embedded JSON value
+- chain: `[["py", "find_jsons"]]`
+- input: `x{"a": 1}y`
+- output: `Ok(value=[{'a': 1}])` (Ok)
 
-#### `parse_time` — parse a time string into the canonical format %Y-%m-%d %H:%M:%S (explicit format, the built-in table, then natural-language detection)
-- tier ★★ Common · parameter slot: a named object (a positional array also works) · `lang: literal?, default None`, `format: literal?, default None`, `date_order: literal?, default None`, `now: ref_or_literal?, default None`
-- note: time normalization (0 required dependencies)
-- chain: `[["py", "parse_time", ""]]`
-- input: `2026-09-24 15:30:00`
-- output: `Ok(value='2026-09-24 15:30:00')` (Ok)
+#### `md5` — hexadecimal digest (checksums only, not security)
+- tier ★★ Common · parameter slot: no parameter (write two positions, or "")
+- note: checksum (not for security)
+- chain: `[["py", "md5"]]`
+- input: `abc`
+- output: `Ok(value='900150983cd24fb0d6963f7d28e17f72')` (Ok)
 
-#### `strftime` — render the canonical time string in another layout (%Y-%m-%d %H:%M:%S → %Y/%m/%d)
-- tier ★★ Common · parameter slot: the value itself · `layout: literal`
-- note: render the canonical time in another layout (output side)
-- chain: `[["py", "strftime", "%Y/%m/%d"]]`
-- input: `2026-09-24 15:30:00`
-- output: `Ok(value='2026/09/24')` (Ok)
+#### `between` — lo <= value < hi (numbers only, half-open)
+- tier ★★ Common · parameter slot: the value itself · `bounds: ref_or_literal`
+- note: half-open numeric interval
+- chain: `[["py", "between", [200, 300]]]`
+- input: `250`
+- output: `Ok(value=True)` (Ok)
 
-#### `html_to_markdown` — HTML → Markdown (no parameters; complete relative links with py.urljoin)
+#### `html_to_markdown` — HTML -> Markdown (no parameters; complete relative links with py.urljoin)
 - tier ★★ Common · parameter slot: no parameter (write two positions, or "")
 - note: optional dependency [md]
-- chain: `[["py", "html_to_markdown", ""]]`
+- chain: `[["py", "html_to_markdown"]]`
 - input: `<h1>Heading</h1><p>a <b>b</b></p>`
 - output: `Ok(value='# Heading\n\na **b**\n')` (Ok)
 
 #### `int` — convert to an integer (former cast int)
 - tier ★★ Common · parameter slot: no parameter (write two positions, or "")
 - note: type conversion (formerly cast int)
-- chain: `[["py", "int", ""]]`
+- chain: `[["py", "int"]]`
 - input: `42`
 - output: `Ok(value=42)` (Ok)
 
 #### `str` — convert to a string (former cast str)
 - tier ★★ Common · parameter slot: no parameter (write two positions, or "")
 - note: type conversion (formerly cast str)
-- chain: `[["py", "str", ""]]`
+- chain: `[["py", "str"]]`
 - input: `42`
 - output: `Ok(value='42')` (Ok)
 
@@ -475,14 +467,14 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 - input: `301`
 - output: `Ok(value=True)` (Ok)
 
-#### `or` — the first truthy operand, else the last (Python's or; answers with the operand)
+#### `or` — the first truthy of [value, *operands], else the last (Python's or)
 - tier ★★ Common · parameter slot: the value itself · `operands: ref_or_literal`
 - note: Python's or: first truthy, else the last
 - chain: `[["py", "or", ["", "fallback"]]]`
 - input: `in`
-- output: `Ok(value='fallback')` (Ok)
+- output: `Ok(value='in')` (Ok)
 
-#### `and` — the first falsy operand, else the last (Python's and)
+#### `and` — the first falsy of [value, *operands], else the last (Python's and)
 - tier ★★ Common · parameter slot: the value itself · `operands: ref_or_literal`
 - note: Python's and: first falsy, else the last
 - chain: `[["py", "and", [{"a": 1}, ""]]]`
@@ -492,35 +484,35 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 #### `upper` — convert to uppercase
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: uppercase
-- chain: `[["py", "upper", ""]]`
+- chain: `[["py", "upper"]]`
 - input: `abc`
 - output: `Ok(value='ABC')` (Ok)
 
 #### `lower` — convert to lowercase
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: lowercase
-- chain: `[["py", "lower", ""]]`
+- chain: `[["py", "lower"]]`
 - input: `ABC`
 - output: `Ok(value='abc')` (Ok)
 
 #### `flatten` — flatten one level
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: flatten one level
-- chain: `[["py", "flatten", ""]]`
+- chain: `[["py", "flatten"]]`
 - input: `[[1, 2], [3]]`
 - output: `Ok(value=[1, 2, 3])` (Ok)
 
-#### `sort` — stable sort
-- tier ★ Advanced · parameter slot: a named object (a positional array also works) · `key: literal?, default None`, `reverse: literal?, default False`
+#### `sort` — Python's sorted
+- tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: stable sort
-- chain: `[["py", "sort", ""]]`
+- chain: `[["py", "sort"]]`
 - input: `[3, 1, 2]`
 - output: `Ok(value=[1, 2, 3])` (Ok)
 
 #### `uniq` — deduplicate while preserving order
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: deduplicate, keeping order
-- chain: `[["py", "uniq", ""]]`
+- chain: `[["py", "uniq"]]`
 - input: `[1, 1, 2]`
 - output: `Ok(value=[1, 2])` (Ok)
 
@@ -534,44 +526,37 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 #### `b64_decode` — Base64 decode
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: Base64 decode
-- chain: `[["py", "b64_decode", ""]]`
+- chain: `[["py", "b64_decode"]]`
 - input: `YWJj`
 - output: `Ok(value='abc')` (Ok)
 
 #### `sha256` — hexadecimal digest
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: hex digest (idempotency key)
-- chain: `[["py", "sha256", ""]]`
+- chain: `[["py", "sha256"]]`
 - input: `abc`
 - output: `Ok(value='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')` (Ok)
 
-#### `from_json` — JSON text → JSON tree (former cast json)
+#### `from_json` — JSON text -> JSON tree (former cast json)
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: JSON text → JSON tree (formerly cast json)
-- chain: `[["py", "from_json", ""]]`
+- chain: `[["py", "from_json"]]`
 - input: `{"a": 1}`
 - output: `Ok(value={'a': 1})` (Ok)
 
 #### `float` — convert to a float (former cast float)
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: type conversion
-- chain: `[["py", "float", ""]]`
+- chain: `[["py", "float"]]`
 - input: `1.5`
 - output: `Ok(value=1.5)` (Ok)
 
-#### `bool` — convert to a boolean (former cast bool)
+#### `bool` — convert with Python's bool (former cast bool)
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: type conversion (falsey word list)
-- chain: `[["py", "bool", ""]]`
+- chain: `[["py", "bool"]]`
 - input: `no`
-- output: `Ok(value=False)` (Ok)
-
-#### `list` — convert to a list (JSON array text or as-is)
-- tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
-- note: JSON array text → list
-- chain: `[["py", "list", ""]]`
-- input: `["a","b"]`
-- output: `Ok(value=['a', 'b'])` (Ok)
+- output: `Ok(value=True)` (Ok)
 
 #### `<` — less than the parameter (two numbers or two strings)
 - tier ★ Advanced · parameter slot: the value itself · `to: ref_or_literal`
@@ -601,17 +586,17 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 - input: `c`
 - output: `Ok(value=True)` (Ok)
 
-#### `items` — a dict becomes [[key, value], …] (index a pair with the literal 0 / 1)
+#### `items` — a dict becomes [[key, value], ...] (index a pair with the literal 0 / 1)
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: dict → key/value pairs (index with the literal 0 / 1)
-- chain: `[["py", "items", ""]]`
+- chain: `[["py", "items"]]`
 - input: `{'a': 1, 'b': 2}`
 - output: `Ok(value=[['a', 1], ['b', 2]])` (Ok)
 
 #### `b64_encode` — Base64 encode
 - tier ○ Rare · parameter slot: no parameter (write two positions, or "")
 - note: Base64 encode
-- chain: `[["py", "b64_encode", ""]]`
+- chain: `[["py", "b64_encode"]]`
 - input: `abc`
 - output: `Ok(value='YWJj')` (Ok)
 
@@ -621,7 +606,7 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 - tier ★★★ Core
 - note: normalize to the canonical time → render another layout (the output side)
 - chain:
-  - `["py", "parse_time", ""]` → `Ok(value='2026-09-24 15:30:00')`
+  - `["py", "strptime", "%Y-%m-%d %H:%M:%S"]` → `Ok(value='datetime datetime.datetime(2026, 9, 24, 15, 30)')`
   - `["py", "strftime", "%Y/%m/%d"]` → `Ok(value='2026/09/24')`
 - input: `2026-09-24 15:30:00`
 - output: `Ok(value='2026/09/24')` (Ok)
@@ -630,7 +615,7 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 - tier ★★★ Core
 - note: parse the JSON text first, then use the json operator to take a subtree
 - chain:
-  - `["py", "from_json", ""]` → `Ok(value={'data': {'html': '<p>Body</p>', 'list': [{'url': 'u1'}, {'url': 'u2'}]}})`
+  - `["py", "from_json"]` → `Ok(value={'data': {'html': '<p>Body</p>', 'list': [{'url': 'u1'}, {'url': 'u2'}]}})`
   - `["json", "data.html"]` → `Ok(value='<p>Body</p>')`
 - input: `{"data": {"html": "<p>Body</p>", "list": [{"url": "u1"}, {"url": "u2"}]}}`
 - output: `Ok(value='<p>Body</p>')` (Ok)
@@ -647,9 +632,9 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 - tier ★★★ Core
 - note: convert → regex → convert again
 - chain:
-  - `["py", "str", ""]` → `Ok(value='2026')`
+  - `["py", "str"]` → `Ok(value='2026')`
   - `["re", "search", "\\d+"]` → `Ok(value='2026')`
-  - `["py", "int", ""]` → `Ok(value=2026)`
+  - `["py", "int"]` → `Ok(value=2026)`
 - input: `2026`
 - output: `Ok(value=2026)` (Ok)
 
@@ -657,8 +642,8 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 - tier ★★★ Core
 - note: time normalization → take the date part
 - chain:
-  - `["py", "parse_time", ""]` → `Ok(value='2026-09-24 15:30:00')`
-  - `["py", "slice", ":10"]` → `Ok(value='2026-09-24')`
+  - `["py", "strptime", "%Y/%m/%d %H:%M:%S"]` → `Ok(value='datetime datetime.datetime(2026, 9, 24, 15, 30)')`
+  - `["py", "strftime", "%Y-%m-%d"]` → `Ok(value='2026-09-24')`
 - input: `2026/09/24 15:30:00`
 - output: `Ok(value='2026-09-24')` (Ok)
 
@@ -666,16 +651,16 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 42 actions (
 
 | invalid chain | code | pointer | message | fix |
 |---|---|---|---|---|
-| `[["py", "strip"]]` | `UP2-E1004` | `/0` | py needs 3 slots, got 2 | this operator's slots are slot2=function, slot3=params; for an action with no parameters, write "" in slot 3 |
-| `[["py", "strip", "", ""]]` | `UP2-E1004` | `/0` | stage length is 4, only 2 or 3 is allowed | follow the declared arity: 3 slots is ["operator", slot2, slot3]; 2 slots is ["operator", parameter] |
+| `[["py"]]` | `UP2-E1004` | `/0` | py needs 3 slots, got 1 | this operator's slots are slot2=function, slot3=params; drop the parameter slot when the action declares nothing required |
+| `[["py", "strip", "", ""]]` | `UP2-E1004` | `/0` | stage length is 4, only 1 to 3 is allowed | follow the declared arity: 3 slots is ["operator", action, parameter]; 2 slots is ["operator", parameter] or ["operator", action]; 1 slot is a single-action operator whose parameter is omitted |
 | `[["py", "no_such_function", ""]]` | `UP2-E1003` | `/0/1` | the py allowlist has no function 'no_such_function' | use one of the functions below (run up2 ops --json for the full table) |
-| `[["py", "parse_time", {"format": "%Q"}]]` | `UP2-E1005` | `/0/2/format` | invalid strptime format: 'Q' is a bad directive in format '%Q' | fix the directives in format |
-| `[["py", "default", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare the earlier step product with --product; for text that starts with `$`, write {"$lit": "…"} |
+| `[["py", "strptime", "%Q"]]` | `UP2-E1005` | `/0/2/format` | unknown directive %Q in strptime's format | use numeric directives such as "%Y-%m-%d" / "%H:%M:%S", or reshape the pieces with py.slice |
+| `[["py", "urljoin", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare the earlier step product with --product; for text that starts with `$`, write {"$lit": "…"} |
 | `[["py", "urljoin", {"base": "https://example.com/news/"}]]` | `UP2-E1005` | `/0/2/base` | parameter 'base' of py.urljoin must be a string, got dict | write the value directly: ["py", "urljoin", "…"] |
 | `[["py", "slice", {"spec": "0:4"}]]` | `UP2-E1005` | `/0/2/spec` | parameter 'spec' of py.slice must be a string, got dict | write the value directly: ["py", "slice", "…"] |
 | `[["py", "getitem", {"at": {}}]]` | `UP2-E1005` | `/0/2/at` | parameter 'at' of py.getitem must be a scalar, got dict | write the value directly: ["py", "getitem", "…"] |
-| `[["py", "split", {"sep": ",", "maxsplit": {}}]]` | `UP2-E1005` | `/0/2/maxsplit` | parameter 'maxsplit' of py.split must be an integer, got dict | write the parameters as a named object with 'sep', 'maxsplit', for example {"maxsplit": …} |
-| `[["py", "sort", {"key": {}}]]` | `UP2-E1005` | `/0/2/key` | the key of sort must be one of ('', 'str', 'int', 'float'), got {} | write "str", "int" or "float", or drop the parameter |
+| `[["py", "split", {"sep": {}}]]` | `UP2-E1005` | `/0/2/sep` | parameter 'sep' of py.split must be a string, got dict | write the value directly: ["py", "split", "…"] |
+| `[["py", "sort", "int"]]` | `UP2-E1004` | `/0/2` | action 'sort' takes no parameter, but 'int' was written in the slot | drop the slot: the action has nothing left to configure |
 
 
 ## `xpath` — XPath query (XML; lxml)
@@ -695,21 +680,21 @@ Input sample for this section — the same input for every card below:
 ### Actions (sorted by commonness)
 
 #### `text` — text value (elements: all descendant text; attributes as-is)
-- tier ★★★ Core · parameter slot: a named object (a positional array also works) · `expr: literal`, `ns: literal?, default None`
+- tier ★★★ Core · parameter slot: array · `expr: literal`, `ns: literal?, default None`
 - matched: `2 nodes · loc (×2)`
 - chain: `[["xpath", "text", "//*[local-name()='loc']"]]`
 - input: the section sample above (shown in full)
 - output: `Ok(value=['https://x/1', 'https://x/2'])` (Ok)
 
 #### `nodes` — the set of matching nodes
-- tier ★★ Common · parameter slot: a named object (a positional array also works) · `expr: literal`, `ns: literal?, default None`
+- tier ★★ Common · parameter slot: array · `expr: literal`, `ns: literal?, default None`
 - matched: `2 nodes · url (×2)`
 - chain: `[["xpath", "nodes", "//*[local-name()='url']"]]`
 - input: the section sample above (shown in full)
 - output: `Ok(value=[<XPathNode {http://www.sitemaps.org/schemas/sitemap/0.9}url>, <XPathNode {http://www.sitemaps.org/schemas/sitemap/0.9}url>])` (Ok)
 
 #### `self` — the first matching node (relative paths can keep selecting)
-- tier ★ Advanced · parameter slot: a named object (a positional array also works) · `expr: literal`, `ns: literal?, default None`
+- tier ★ Advanced · parameter slot: array · `expr: literal`, `ns: literal?, default None`
 - matched: `2 nodes · url (×2)`
 - chain: `[["xpath", "self", "//*[local-name()='url']"]]`
 - input: the section sample above (shown in full)
@@ -722,7 +707,7 @@ Input sample for this section — the same input for every card below:
 - note: sitemap: every lastmod → take the last
 - chain:
   - `["xpath", "text", "//*[local-name()='lastmod']"]` → `Ok(value=['2026-09-23', '2026-09-24'])`
-  - `["py", "last", ""]` → `Ok(value='2026-09-24')`
+  - `["py", "last"]` → `Ok(value='2026-09-24')`
 - input: the section sample above (shown in full)
 - output: `Ok(value='2026-09-24')` (Ok)
 
@@ -730,7 +715,7 @@ Input sample for this section — the same input for every card below:
 - tier ★★★ Core
 - note: namespace prefix: slot 3 takes an object form carrying the ns map
 - matched: `1 node · creator`
-- chain: `[["xpath", "text", {"expr": "//dc:creator", "ns": {"dc": "http://purl.org/dc/elements/1.1/"}}]]`
+- chain: `[["xpath", "text", ["//dc:creator", {"dc": "http://purl.org/dc/elements/1.1/"}]]]`
 - input:
 
   ```text
@@ -768,7 +753,7 @@ arity 2 · slot 2=jmespath path · dependencies: `jmespath` · 1 actions (Core)
 - note: take all URLs → take the first
 - chain:
   - `["json", "data.list[*].url"]` → `Ok(value=['u1', 'u2'])`
-  - `["py", "first", ""]` → `Ok(value='u1')`
+  - `["py", "first"]` → `Ok(value='u1')`
 - input: `{"data": {"html": "<p>Body</p>", "list": [{"url": "u1"}, {"url": "u2"}]}}`
 - output: `Ok(value='u1')` (Ok)
 
@@ -779,22 +764,22 @@ arity 2 · slot 2=jmespath path · dependencies: `jmespath` · 1 actions (Core)
 | `[["json", "("]]` | `UP2-E1005` | `/0/1/expr` | invalid jmespath expression: Invalid jmespath expression: Incomplete expression:<br>"("<br>  ^ | fix the path (e.g. data.list[*].url, data.html, or an empty string for the root) |
 
 
-## `re` — Regex matching (search / group / findall)
+## `re` — Regex matching (search / findall / sub)
 
 arity 3 · slot 2=mode / slot 3=pattern · dependencies: none · 3 actions (Core, Common, Advanced)
 
 ### Actions (sorted by commonness)
 
-#### `search` — the whole first match group(0)
-- tier ★★★ Core · parameter slot: the value itself · `pattern: literal`
+#### `search` — the first match, or one of its capture groups
+- tier ★★★ Core · parameter slot: array · `pattern: literal`, `group: literal?, default None`
 - chain: `[["re", "search", "\\d{4}-\\d{2}-\\d{2}"]]`
 - input: `published 2026-09-24 end`
 - output: `Ok(value='2026-09-24')` (Ok)
 
-#### `group` — take the given capture group
-- tier ★★ Common · parameter slot: a named object (a positional array also works) · `pattern: literal`, `group: literal`
+#### `group` — re
+- tier ★★ Common
 - note: named object: pattern + group
-- chain: `[["re", "group", {"pattern": "(\\d{4})-(\\d{2})", "group": 2}]]`
+- chain: `[["re", "search", ["(\\d{4})-(\\d{2})", 2]]]`
 - input: `2026-09`
 - output: `Ok(value='09')` (Ok)
 
@@ -819,7 +804,7 @@ arity 3 · slot 2=mode / slot 3=pattern · dependencies: none · 3 actions (Core
 
 | invalid chain | code | pointer | message | fix |
 |---|---|---|---|---|
-| `[["re", "group", {"pattern": "a", "group": 9}]]` | `UP2-E1005` | `/0/2/group` | the pattern has only 0 capture groups, so group 9 is unavailable | change the group index, or add a capture group to the pattern |
+| `[["re", "search", ["a", 9]]]` | `UP2-E1005` | `/0/2/group` | the pattern has only 0 capture groups, so group 9 is unavailable | change the group index, or add a capture group to the pattern |
 
 
 ## `ctx` — Scope reads and writes (get / set / del / dict / list)
@@ -883,20 +868,6 @@ arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 5 actions (
 | `[["ctx", "set", "globals.x"]]` | `UP2-E1015` | `/0/2/path` | ctx.set cannot write 'globals.x' | the write surface is limited to locals.* and public.* (globals and a step's product are read-only) |
 
 
-## `const` — Literal (never resolved as a reference)
-
-arity 2 · slot 2=value · dependencies: none · 1 actions (Core)
-
-### Actions (sorted by commonness)
-
-#### `const` — Produce the value verbatim
-- tier ★★★ Core · parameter slot: the value itself · `value: literal`
-- note: 2 positions: literal
-- chain: `[["const", "article"]]`
-- input: not used — the value comes from the chain, never from the upstream
-- output: `Ok(value='article')` (Ok)
-
-
 ## `each` — One dictionary per element of a list
 
 arity 2 · slot 2=fields · dependencies: none · 1 actions (Core)
@@ -904,16 +875,16 @@ arity 2 · slot 2=fields · dependencies: none · 1 actions (Core)
 ### Actions (sorted by commonness)
 
 #### `each` — Run the field map once per element
-- tier ★★★ Core · parameter slot: the value itself · `fields: fields`
+- tier ★★★ Core · parameter slot: the value itself · `fields: fields_or_chain`
 - note: 2 positions: field map; one dictionary per element
-- chain: `[["each", {"title": [["py", "strip", ""]], "size": [["py", "len", ""]]}]]`
+- chain: `[["each", {"title": [["py", "strip"]], "size": [["py", "len"]]}]]`
 - input: `['  a  ', 'bb']`
 - output: `Ok(value=[{'title': 'a', 'size': 5}, {'title': 'bb', 'size': 2}])` (Ok)
 
 
 ## `code` — In-chain code (sandboxed; optional dependency [code])
 
-arity 2 · slot 2=source & inputs · dependencies: `pydantic_monty` · 1 actions (Advanced)
+arity 2 · slot 2=source · dependencies: `pydantic_monty` · 1 actions (Advanced)
 
 Input sample for this section — the same input for every card below:
 
@@ -942,10 +913,10 @@ Input sample for this section — the same input for every card below:
 ### Actions (sorted by commonness)
 
 #### `run` — run src once and take the value of the last expression
-- tier ★ Advanced · parameter slot: a named object (a positional array also works) · `src: literal`, `inputs: ref_or_literal?, default None`
+- tier ★ Advanced · parameter slot: the value itself · `src: literal`
 - note: sandboxed; optional dependency [code]; the last expression value is returned
 - scope: `locals {'prefix': 'Title: '}`
-- chain: `[["code", {"src": "ctx.locals.prefix + normalize_space(obj)"}]]`
+- chain: `[["code", "ctx.locals.prefix + normalize_space(obj)"]]`
 - input: the section sample above (shown in full)
 - output: `Ok(value='Title: <html> <head> <meta name="PubDate" content="2026-09-24 15:30:00"> <title>Notice on Issuing the Government Service Item List</title> </head> <body> <h1 class="artic…` (Ok)
 
@@ -957,9 +928,9 @@ arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 1 actions (
 ### Actions (sorted by commonness)
 
 #### `*` — registered: demo_upper
-- tier ★★ Common · parameter slot: the value itself
+- tier ★★ Common · parameter slot: no parameter (write two positions, or "")
 - note: dynamic action space: slot 2 carries the host-registered function name
-- chain: `[["udf", "demo_upper", ""]]`
+- chain: `[["udf", "demo_upper"]]`
 - input: `hello`
 - output: `Ok(value='HELLO')` (Ok)
 
@@ -967,7 +938,7 @@ arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 1 actions (
 
 | invalid chain | code | pointer | message | fix |
 |---|---|---|---|---|
-| `[["udf", "not_registered", ""]]` | `UP2-E1010` | `/0/1` | the custom function 'not_registered' is not registered | call register_udf(name, function) in the host, or declare an entry point (group uniparser2.udfs) |
+| `[["udf", "not_registered"]]` | `UP2-E1010` | `/0/1` | the custom function 'not_registered' is not registered | call register_udf(name, function) in the host, or declare an entry point (group uniparser2.udfs) |
 
 
 ## Appendix: mechanisms shared by all operators
@@ -1070,14 +1041,14 @@ A query that matches nothing is a **value** — the empty value of its shape (`"
 #### `Failed (input type mismatch)` — outcome
 - tier ★★★ Core
 - note: UP2-E2002
-- chain: `[["py", "strip_tags", ""]]`
+- chain: `[["py", "upper"]]`
 - input: `42`
-- output: `Failed(code='UP2-E2002', reason='py.strip_tags needs a str, got int', fix='turn the upstream value into text with py.strip_tags / py.getitem first')` (Failed)
+- output: `Failed(code='UP2-E2002', reason='py.upper needs a str, got int', fix='turn the upstream value into text with py.str / py.getitem first')` (Failed)
 
 #### `Failed (evaluation failed)` — outcome
 - tier ★★★ Core
 - note: UP2-E2005
-- chain: `[["py", "int", ""]]`
+- chain: `[["py", "int"]]`
 - input: `abc`
 - output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'abc'", fix='py.int expects an integer, a float, a bool, or a string of digits; c…` (Failed)
 
@@ -1112,14 +1083,14 @@ A query that matches nothing is a **value** — the empty value of its shape (`"
 #### `Failed (sandbox code raised)` — outcome
 - tier ★★★ Core
 - note: UP2-E2017 (the sandbox code can catch it with try/except)
-- chain: `[["code", {"src": "1 / 0"}]]`
+- chain: `[["code", "1 / 0"]]`
 - input: `None`
 - output: `Failed(code='UP2-E2017', reason='the sandboxed code raised an exception: ZeroDivisionError: division by zero', fix='fix src; the snippet can catch it itself with try/except')` (Failed)
 
 #### `Failed (sandbox execution over limit)` — outcome
 - tier ★★★ Core
 - note: UP2-E2016: limits are configured by the host (a tiny time budget is used here)
-- chain: `[["code", {"src": "while True:\n    pass"}]]`
+- chain: `[["code", "while True:\n    pass"]]`
 - input: `None`
 - output: `Failed(code='UP2-E2016', reason='sandbox execution exceeded its limits: TimeoutError: feed time limit exceeded: <measured> fix='reduce the data volume or rewrite the algorithm; lim…` (Failed)
 
@@ -1139,9 +1110,9 @@ The scalar / positional array / named object / reference / directive forms of th
 - input: `old text`
 - output: `Ok(value='new text')` (Ok)
 
-#### `named object` — form
+#### `two parameters in one array` — form
 - tier ★★★ Core
-- chain: `[["re", "group", {"pattern": "(\\d+)", "group": 1}]]`
+- chain: `[["re", "search", ["(\\d+)", 1]]]`
 - input: `x42`
 - output: `Ok(value='42')` (Ok)
 
@@ -1155,7 +1126,7 @@ The scalar / positional array / named object / reference / directive forms of th
 #### `directive object {"$lit": …}: a literal starting with $` — form
 - tier ★★★ Core
 - note: without $lit it is a reference (E1006, see the invalid-form sections)
-- chain: `[["py", "default", {"$lit": "$locals.title"}]]`
+- chain: `[["py", "or", [{"$lit": "$locals.title"}]]]`
 - input: ``
 - output: `Ok(value='$locals.title')` (Ok)
 
@@ -1182,7 +1153,7 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - tier ★★★ Core
 - note: private to the field that wrote it
 - chain:
-  - `["const", "42"]` → `Ok(value='42')`
+  - `["py", "const", "42"]` → `Ok(value='42')`
   - `["ctx", "set", "locals._n"]` → `Ok(value='42')`
   - `["ctx", "get", "locals._n"]` → `Ok(value='42')`
 - input: `None`
@@ -1192,7 +1163,7 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - tier ★★★ Core
 - note: writable and readable from any node; never part of the chain data
 - chain:
-  - `["const", "42"]` → `Ok(value='42')`
+  - `["py", "const", "42"]` → `Ok(value='42')`
   - `["ctx", "set", "public.n"]` → `Ok(value='42')`
   - `["ctx", "get", "public.n"]` → `Ok(value='42')`
 - input: `None`
@@ -1202,7 +1173,7 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - tier ★★★ Core
 - note: ctx.dict / ctx.list read any scope, globals included
 - chain:
-  - `["const", "42"]` → `Ok(value='42')`
+  - `["py", "const", "42"]` → `Ok(value='42')`
   - `["ctx", "set", "public.n"]` → `Ok(value='42')`
   - `["ctx", "dict", {"n": "public.n"}]` → `Ok(value={'n': '42'})`
 - input: `None`
@@ -1212,9 +1183,9 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - tier ★★★ Core
 - note: the guard covers the NEXT stage only, and never turns the error into a value
 - chain:
-  - `["const", "keep"]` → `Ok(value='keep')`
+  - `["py", "const", "keep"]` → `Ok(value='keep')`
   - `["try", "skip"]` → `(a directive: it does no work)`
-  - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
+  - `["py", "int"]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
 - input: `not-a-number`
 - output: `Ok(value='keep')` (Ok)
 
@@ -1222,9 +1193,9 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - tier ★★★ Core
 - note: the stages after the guarded one are not evaluated
 - chain:
-  - `["const", "keep"]` → `Ok(value='keep')`
+  - `["py", "const", "keep"]` → `Ok(value='keep')`
   - `["try", "break"]` → `(a directive: it does no work)`
-  - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
+  - `["py", "int"]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
 - input: `not-a-number`
 - output: `Ok(value='keep')` (Ok)
 
@@ -1232,9 +1203,9 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - tier ★★★ Core
 - note: UP2-E2005: the run fails
 - chain:
-  - `["const", "keep"]` → `Ok(value='keep')`
+  - `["py", "const", "keep"]` → `Ok(value='keep')`
   - `["try", "raise"]` → `(a directive: it does no work)`
-  - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
+  - `["py", "int"]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: 'keep')`
 - input: `not-a-number`
 - output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: 'keep'", fix='py.int expects an integer, a float, a bool, or a string of digits; …` (Failed)
 
@@ -1242,10 +1213,10 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 - tier ★★★ Core
 - note: the guard covered one stage only: the later failure still fails the run
 - chain:
-  - `["const", ""]` → `Ok(value='')`
+  - `["py", "const", ""]` → `Ok(value='')`
   - `["try", "skip"]` → `(a directive: it does no work)`
-  - `["py", "strip", ""]` → `Ok(value='')`
-  - `["py", "int", ""]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: '')`
+  - `["py", "strip"]` → `Ok(value='')`
+  - `["py", "int"]` → `Failed(UP2-E2005: py.int conversion failed: invalid literal for int() with base 10: '')`
 - input: `not-a-number`
 - output: `Failed(code='UP2-E2005', reason="py.int conversion failed: invalid literal for int() with base 10: ''", fix='py.int expects an integer, a float, a bool, or a string of digits; chec…` (Failed)
 

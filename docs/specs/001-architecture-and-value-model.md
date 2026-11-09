@@ -179,7 +179,7 @@ The three answers are **different on purpose**, and nothing settles one into ano
 | the stage cannot do its work | `Failed`, carrying the code of the stage | the operator (and its JSON Pointer in the trace) |
 | the product is not the declared shape | the **host-registered type constructor** refuses it (`UP2-E2019`) | the step boundary (`03` §3) |
 
-A value that may be absent is the author's decision, taken where it applies: `py.default` replaces
+A value that may be absent is the author's decision, taken where it applies: `py.or` replaces
 `None` or `""` in one field. A field that must exist is enforced by the type constructor at the step
 boundary, which reports it at the step that produced it.
 
@@ -358,7 +358,7 @@ deletes it:
 
 `on_missing="empty"` — the old default — is the reason for the retirement: it wrote `""` into a record
 whenever a selector never matched, which is a lie in the data. A failed stage always fails the run
-(§4.2), so "tolerate one absence" is expressed at the action level (`py.default`) and "this field must
+(§4.2), so "tolerate one absence" is expressed at the action level (`py.or`) and "this field must
 exist" by the host-registered type constructor.
 
 `UP2-E2015` ("value is missing and the effective policy is raise") is **retired, not reused**
@@ -366,4 +366,4 @@ exist" by the host-registered type constructor.
 
 > **Follow-up** (change `empty-value-semantics`): the third outcome is gone as well. A query that
 > matches nothing answers the shape's empty value, `accepts_missing` and the `MISSING` sentinel were
-> deleted, and `py.default` now replaces `None` / `""` only. The two-outcome model is §4.1.
+> deleted, and `py.or` is the fallback (the upstream value is its first operand). The two-outcome model is §4.1.

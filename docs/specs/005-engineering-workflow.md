@@ -42,7 +42,6 @@ dependencies = []                     # the kernel has zero third-party dependen
 html  = ["selectolax>=0.3.21"]        # the HTML engine for css / css1
 xml   = ["lxml>=5.0"]                 # the XML engine for the xpath operator (XPath is native to lxml)
 json  = ["jmespath>=1.0.1"]           # the json operator
-time  = ["dateparser>=1.2"]           # natural-language dates for py.parse_time
 md    = ["html-to-markdown>=3.0"]      # py.html_to_markdown (measured API: convert(html).content)
 ui    = ["pywebview>=5.0"]            # the in-place trial UI (not implemented yet; kept out of `all`)
 code  = ["pydantic-monty>=1.0.0"]     # sandboxed execution of in-chain code (a language-level sandbox; **deliberately not part of all**)

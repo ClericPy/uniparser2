@@ -5,10 +5,10 @@
 声明式、确定性、可序列化的**文本解析引擎**：把「输入文本 → 指定结构」的解析过程写成 JSON 数据（**解析链**），
 由人或 LLM 离线生成，运行时只做确定性求值。
 
-> **状态**：`0.5.0`。**L1**（DSL 算子层）已完成：**11 个算子**——`css` / `css1`（HTML 选择器，前者取全部、
-> 后者只取首个，selectolax）、`xpath`（XML，lxml）、`json`（jmespath）、`re`、`py`（42 个白名单函数）、
+> **状态**：`0.5.0`。**L1**（DSL 算子层）已完成：**10 个算子**——`css` / `css1`（HTML 选择器，前者取全部、
+> 后者只取首个，selectolax）、`xpath`（XML，lxml）、`json`（jmespath）、`re`、`py`（46 个白名单函数）、
 > `udf`（宿主注册，链里不含代码）、`code`（链内代码，语言级沙箱，**默认不存在**，见「安全提示」），
-> 外加作用域算子 `ctx`、积木 `const` 与迭代算子 `each`，共 74 对 `(算子, 动作)`。**L2 已起步**：站点包
+> 外加作用域算子 `ctx` 与迭代算子 `each`，共 77 对 `(算子, 动作)`。**L2 已起步**：站点包
 > （**story**）可编译可运行——`start(bundle, value)` / `run.go()` / `run.feed(answer)`，`Request` /
 > `RequestBatch` / `call` 挂起运行、其答复恢复**同一个**运行——两个 `samples/*/site.json` 都能通过随仓库提交的
 > 宿主脚本（`samples/*/host.py`，用 `register_type` 注册样本自己的领域类型，并从命令行取种子 URL）对真实站点
@@ -47,8 +47,8 @@
 
 ## 现在有什么（L1）
 
-**算子层**已完成，且有机械审计：11 个算子、72 对 `(算子, 动作)`，每一对都有覆盖用例
-（`uv run up2 conformance --check`）；37 个已实现的错误码每一个都有测试断言。它上面已落地 **L3 的第一片
+**算子层**已完成，且有机械审计：10 个算子、77 对 `(算子, 动作)`，每一对都有覆盖用例
+（`uv run up2 conformance --check`）；35 个已实现的错误码每一个都有测试断言。它上面已落地 **L3 的第一片
 ——模板仓库**：`up2 publish` 把链绑定到 `(root_domain, tpl_key)` 身份、拒绝不过 lint 的链、把指纹写进
 只增不改的审计表，`up2 get` / `up2 audit` 读回来——底层可以是文件仓库或 SQLite（`UP2_HOME`、`UP2_STORE`）。
 
@@ -56,14 +56,13 @@
 |---|---|---|
 | `css` / `css1` | selectolax（`[html]`） | `text` · `html` · `outer` · `@<attr>` · `remove` · `self` · `nodes` · `exists`——前者取全部，后者只取首个 |
 | `xpath` | lxml（`[xml]`） | `text` · `self` · `nodes`（XML；XPath 是 lxml 原生能力） |
-| `json` | jmespath（`[json]`） | `get`——jmespath 表达式，留空表示根 |
-| `re` | 标准库 | `search` · `group` · `findall` |
-| `py` | 标准库；`parse_time` 的自然语言路径需 `[time]`，`html_to_markdown` 需 `[md]` | 42 个白名单纯函数：`int` `float` `str` `bool` `list` `from_json` · `strip` `lower` `upper` `replace` `split` `join` `slice` `getitem` `getattr` · `len` `first` `last` `flatten` `uniq` `sort` · `items` · `default` `normalize_space` `strip_tags` `urljoin` `urlsplit` · `parse_time` `strftime` · `b64_encode` `b64_decode` `sha256` · `html_to_markdown` · `==` `!=` `<` `<=` `>` `>=` `in` `or` `and`（谓词，Python 的写法） |
-| `ctx` | 标准库 | `get` · `set` · `del` · `dict` · `list`（作用域读写） |
-| `udf` | 宿主注册 | 宿主事先注册的任意函数；链里只带名字 |
-| `code` | pydantic-monty（`[code]`，刻意不在 `[all]` 里） | `run`——链内代码，跑在语言级沙箱里（见「安全提示」） |
-| `const` | 标准库 | 字面量积木 |
-| `each` | 标准库 | 列表里的每个元素产出一个字典：参数是一张**字段表**（`字段名 → 链`），`_` 前缀的字段是该元素的临时值，每个元素有独立作用域 |
+| `json` | jmespath（`[json]`） | `get`——jmespath 表达式；省略第三个槽位即查询整份文档 |
+| `re` | 标准库 | `search` · `findall` · `sub`——`search` 的参数是 pattern 或 `[pattern, group]` |
+| `py` | 标准库；`html_to_markdown` 需 `[md]` | 46 个白名单纯函数：`const` `strip` `normalize_space` `html_to_markdown` · `replace` `split` `join` `upper` `lower` `slice` `getitem` `getattr` · `len` `first` `last` `flatten` `uniq` `sort` `sort_desc` `find_jsons` · `items` · `urljoin` `urlsplit` · `strptime` `strftime` `from_timestamp` `to_timestamp` · `b64_encode` `b64_decode` `sha256` `md5` · `str` `int` `float` `bool` `from_json` · `==` `!=` `<` `<=` `>` `>=` `in` `between` `or` `and`（谓词，Python 的写法） |
+| `ctx` | 标准库 | `get` · `set` · `del` · `dict` · `list`（作用域读写；`obj` 指本阶段收到的值） |
+| `udf` | 宿主注册 | 宿主事先注册的任意函数；链里只带名字，调用是一元或空元 |
+| `code` | pydantic-monty（`[code]`，刻意不在 `[all]` 里） | `run`——链内代码，跑在语言级沙箱里，写作 `["code", src]`（见「安全提示」） |
+| `each` | 标准库 | 列表的每个元素：参数是**对象**即字段表（每元素产出一个字典），是**数组**即一条链（对每个元素各跑一次） |
 
 这张表只是摘要：**权威是注册表**，直接问它。`uv run up2 ops --json` 会打印每个算子的元数、槽位角色、
 动作枚举、参数 Schema、依赖、可用性与安装命令——这份输出也是让 LLM 写链之前该先喂进去的东西。
@@ -91,7 +90,7 @@ CLI 是 `ops` / `conformance` / `lint` / `trial` / `snapshot` / `test` / `publis
 # 只要内核（零依赖）
 uv add uniparser2
 
-# 按需装引擎：html 解析 / XML / JSON 查询 / 自然语言日期 / HTML→Markdown
+# 按需装引擎：html 解析 / XML / JSON 查询 / HTML→Markdown
 # （`ui` 是尚未实现的验证台，与 `code` 一样**刻意不放进 `[all]`**）
 uv add "uniparser2[html]"
 uv add "uniparser2[all]"
@@ -129,10 +128,10 @@ uv run up2 ops --json               # 机读：交给 LLM 生成链时先喂这�
 ```jsonc
 // chain.json
 [
-  ["re", "group", {"pattern": "(\\d{4})-(\\d{2})", "group": 1}],
+  ["re", "search", ["(\\d{4})-(\\d{2})", 1]],
   ["ctx", "set", "locals._year"],
-  ["py", "int", ""],
-  ["py", "default", 0]
+  ["py","int"],
+  ["py","or",[0]]
 ]
 ```
 
@@ -143,8 +142,8 @@ uv run up2 ops --json               # 机读：交给 LLM 生成链时先喂这�
 // chain.json —— 年份可选，其余字段不是
 [
   ["try", "skip"],
-  ["re", "group", {"pattern": "(\\d{4})", "group": 1}],
-  ["py", "int", ""]
+  ["re", "search", ["(\\d{4})", 1]],
+  ["py","int"]
 ]
 ```
 
@@ -166,8 +165,8 @@ uv run up2 trial chain.json --input 'text=announcement published 2026-09' --json
 // link.json —— 下载地址，按页面 base 补全
 [["css1", "@href", "a.download"], ["py", "urljoin", "$globals.base_url"]]
 
-// date.json —— RFC 822 时间戳进，规范形态出
-[["css1", "text", "time.pubdate"], ["py", "normalize_space", ""], ["py", "parse_time", ""]]
+// date.json —— 机器时间戳进，规范形态出
+[["css1", "text", "time.pubdate"], ["py","normalize_space"], ["py","strptime","%Y-%m-%dT%H:%M:%S%z"], ["py","strftime","%Y-%m-%d %H:%M:%S"]]
 ```
 
 ```bash
@@ -179,7 +178,7 @@ uv run up2 trial link.json --global base_url=https://example.com/news/ \
 # }
 
 uv run up2 trial date.json \
-  --input 'text=<time class="pubdate">Thu, 24 Sep 2026 15:30:00 +0800</time>' --json
+  --input 'text=<time class="pubdate">2026-09-24T15:30:00+0800</time>' --json
 # {
 #   "state": "ok",
 #   "value": "2026-09-24 15:30:00"
@@ -223,8 +222,8 @@ import uniparser2 as up2
 
 chain = up2.compile_field(
     [
-        ["re", "group", {"pattern": r"(\d{4})-(\d{2})", "group": 1}],
-        ["py", "int", ""],
+        ["re", "search", [r"(\d{4})-(\d{2})", 1]],
+        ["py", "int"],
     ]
 )
 

@@ -7,7 +7,7 @@
     {
       "name": "start",
       "body": {
-        "url": "$in"
+        "url": [["py", "strip"]]
       },
       "type": "Request",
       "next": "channels"

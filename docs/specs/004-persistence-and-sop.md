@@ -439,22 +439,22 @@ up2 doctor [--fix]                           # chains and audit correspond? --fi
 |---|---|---|---|
 | 1 | comma-packed arguments: `["py","replace","\u65e7,\u65b0"]` | usually a silently wrong value | use a positional array `["py","replace",["\u65e7","\u65b0"]]` |
 | 2 | an unescaped literal starting with `$`: `"price": "$100"` | `UP2-E1006` | write `{"$lit": "$100"}` |
-| 3 | referencing a later step | `UP2-E1006` | a referenced step must sit earlier in the order |
-| 4 | referencing a `_`-prefixed field **across steps** | `UP2-E1014` | `_` is local to its step; inside the step use `$locals._x`, across steps use a field without the `_` prefix |
-| 5 | `ctx.set` writing `globals.x` | `UP2-E1015` | the write surface is limited to `locals.*` |
+| 3 | referencing a node product with `$` (`$rows.url`) | `UP2-E1006` | a node's product is the value its call returns; read `$locals` (every field map writes there) |
+| 4 | reading an `each` element's `_` local from another element | `UP2-E2001` | a local belongs to its scope; keep the value in `$public` or in the element's product |
+| 5 | `ctx.set` writing `globals.x` | `UP2-E1015` | the write surface is limited to `locals.*` and `public.*` |
 | 6 | a misspelt value mode (css: `["css","innerHTML","div.c"]`; xpath: `["xpath","innerText","//item"]`) | `UP2-E1002` | use `["css","html","div.c"]` / `["xpath","text","//item"]` (slot 2 = mode, slot 3 = selector); read `up2 ops --json` first |
-| 7 | a bundle with no `entry` | `UP2-E1005` | name the step the run starts at: `"entry": "<step name>"` (`03` §2) |
+| 7 | a bundle with no `nodes` | `UP2-E1005` | declare the callable nodes: `{"nodes": {"parse": [...]}}` (`03` §2) |
 | 8 | forgetting the `each` stage, so the fields run once over the whole page (or `each` receives something that is not a list) | the list version fails loudly with `UP2-E2002`; the "ran once over the page" version is a wrong product at runtime | only S3's `trace` can reveal the latter; the `tpl_key` name and the samples should hint that this is a list page |
 | 9 | `["py","int",""]` (a parameter written for a function that has none) | `UP2-E1004` | a parameter slot is omitted, never written empty: `["py","int"]`; a time string is parsed with `["py","strptime","%Y-%m-%d"]` and rendered with `py.strftime` |
 | 10 | `["re","search",["<pattern>",1]]` with a group the pattern does not have | `UP2-E1005` | check the group index or name against the pattern; `search` takes `[pattern, group]` |
 | 11 | putting a node handle straight into the product (forgetting `text`/`@attr`) | `UP2-E2003` | serialize the `Opaque` handle into text first |
-| 12 | a step nothing reaches (nothing falls through to it and no `next` names it) | `UP2-E1018` | point a `next` at it, take it out of the flow, or make it the `entry` |
-| 13 | a step key using a reserved name (`globals`) or duplicated | `UP2-E1009` | change the key |
+| 12 | a node call that closes a cycle (`a -> b -> a`) | `UP2-E1017` | inline one of the nodes, or run two calls from the host |
+| 13 | a node key using a reserved name (`globals`) or duplicated | `UP2-E1009` | change the key |
 | 14 | `tpl_key` carrying `:` or `/` | `UP2-E3002` | pick a name inside the character set |
-| 15 | parsing an answer object as HTML without reading its body first | `UP2-E2002` | `css` sees the object, not text: start the chain with `["py","getattr","text"]` (`03` §4.1) |
-| 16 | a field chain longer than 32 stages / `each` nested deeper than 3 levels / one field map holding more than 256 fields | `UP2-E1012` | split the chain, spread the nesting over several steps, or switch to `udf` |
+| 15 | parsing an answer object as HTML without reading its body first | `UP2-E2002` | `css` sees the object, not text: start the chain with `["py","getattr","text"]` (`03` §4) |
+| 16 | a field chain longer than 32 stages / `each` nested deeper than 3 levels / one field map holding more than 256 fields | `UP2-E1012` | split the chain, spread the nesting over several nodes, or switch to `udf` |
 | 17 | an empty field map, or a field name that is empty or contains `.` | `UP2-E1005` | declare at least one field, and name each one so a `$…` path can address it |
-| 18 | a `$`-prefixed chain that names something no root or step provides (`"url": "$nope"`) | `UP2-E1006` | a chain reference reads a reserved root (`$globals` / `$locals` / `$in`) or an earlier step (`$rows.url`); to pass the input on unchanged write `"$in"` (`03` §2) |
+| 18 | a string written where a chain is expected (`"url": "$in"`) | `UP2-E1004` | write `[]` for identity, or the stages that read a field of the input (`["py","getitem","url"]`) |
 
 ---
 

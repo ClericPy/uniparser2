@@ -92,33 +92,29 @@ $<root>[.<segment>][.<segment>]…
 
 | root | Meaning | Writable | Readable |
 |---|---|---|---|
-| `globals` | the chain-level environment (the story's `globals`), consistent across steps | — | all steps |
-| `locals` | this step's locals (`_`-prefixed fields + `ctx.set locals.*`) | this step | only this step |
-| `in` | this step's own input value | — | only this step |
-| `<step key>` | the product of an earlier step | — | only its **later** steps |
+| `globals` | the story's constants plus this run's overrides | — | every node |
+| `locals` | the current scope's variables (every field map writes here) | the current scope | the scope and its children |
+| `public` | the run's shared notes | any node | any node |
+| `in` | the current **node invocation's** input | — | that invocation |
+| `obj` | the whole value the current stage received | — | that stage |
 
 `$locals` was a second name for `locals` and is **retired** (change `rename-and-unify`): one namespace, one
 spelling. A bundle that writes it is `UP2-E1006`, an unknown reference root.
 
-**The run's input value is read as `$in`** (`03` §2): it is the first stage's input value, and a step that
-needs a field of its own input writes `$in.url` rather than a `locals` round-trip.
+**`$in` is the current node invocation's input** (`03` §2.2): at the top of a run it is the value the host
+passed, at a `["node", name]` call it is the value the caller had, and inside an `each` it is still the node's
+input — the element is the stage value. A dotted path reads a field of it (`$in.url`, `$in.status_code`).
 
-**A chain may be a reference.** Wherever a chain is expected — a field-map value, or a step's `body` when it
-is an array — a **string beginning with `$`** is a whole-chain reference: the value it names, unchanged.
-`"$in"` is identity, `"$in.url"` is a field of the step's input, and a chain may open with one
-(`["$globals.base", ["py","strip"]]`). This is the same spelling a `ref_or_literal` parameter uses, and it
-is the only way to express identity — there is no single-element stage form (`03` §2, §12.6 E4).
+**Identity is `[]`.** The whole-chain reference (`"$in"`, `["$globals.base", […] ]`) is **retired**: a chain is
+an array of stages and the empty array is the only identity. A string in chain position is `UP2-E1004`.
 
 - **Only dotted paths are supported, not array indices** (settled by Q24 in `01`). To take an index, use the explicit operator `["py","getitem",0]`.
-- **Multi-level dotted paths** are supported (`$article.meta.url`) — Q24 in `01` already settled that dotted paths are supported.
-- **References can only point backwards**: `$<step key>` must be a step preceding the current one, otherwise `UP2-E1006` (a direct consequence of the
-  sequential-execution semantics of `N7`).
-- **Referencing the current step's own key is forbidden**: the compile error points at `$in` (its own input) or at the step's own name.
+- **Multi-level dotted paths** are supported (`$article.meta.url`).
+- **There is no `<node name>` reference root**: a node's product is the value its call returns, and a field map writes every field into `$locals`.
 - **A dotted path dispatches on the value it walks** (`03` §13 O12): a mapping is read by key, a sequence by a digit index and a host object by `getattr`.
   An attribute that is **callable** is refused with `UP2-E2002`, the same way `py.getattr` refuses one — a method is not a value, and it could not leave the
   run anyway (`UP2-E2003`); the fix hint names `["css","text",""]` or a `udf`.
-- A `_`-prefixed key is a **local of this step**: **it may be referenced inside this step, but later steps are forbidden to reference it** (`UP2-E1014`) —
-  the semantics of a local value is precisely "it does not leave this step".
+- A `_`-prefixed field is a **local**: every field map writes every result into `$locals`, and the `_` prefix only keeps the field out of the product.
 - **There is no iteration variable**: inside `each`'s field map the current element is the **input value** of every field chain (§6.9), and each element is
   evaluated in its own child scope — `$locals.*` falls back outward **by name** (the innermost scope holding the path's first segment resolves the whole path,
   so a name the element wrote is never read from the calling scope), while a write stays in the element.
@@ -206,7 +202,7 @@ Evaluation rules:
 | `Ok(v)` | feed `v` as the input of the next stage and keep evaluating |
 | `Failed` | **stop the chain** and fail the run with the code of the stage that failed; nothing degrades it |
 
-- The first stage's input = the field's `input` (the step's input by default; inside `each`'s field map it is the current element, §6.9).
+- The first stage's input = the field's `input` (the node's input by default; inside `each`'s field map it is the current element, §6.9).
 - Fields are evaluated in **declaration order** (a JSON object preserves order), so a later field can reference the `_` local values produced by an earlier one.
 - **The number of stages is a hard stability boundary**: exceeding `MAX_STEPS_PER_FIELD` is a compile error (`01` §9).
 
@@ -342,11 +338,13 @@ function written with an object (`["py","urljoin",{"base": …}]`) is a compile-
 | `strptime` | `format` | a non-empty, locale-free format |
 | `from_timestamp` / `to_timestamp` | `tz` | a number of hours (a bool is rejected) |
 | `between` | `bounds` | a two-element array of numbers |
+| `sleep` | `seconds` | a non-negative number |
+| `filter` | `keep` (optional) | a boolean (the default is `true`) |
 
 Deliberately not checked: `join.sep` (the runtime coerces it with `str()`), and a parameter that genuinely accepts any JSON value (`in`'s container,
 `or`'s operand array). `or`/`and` also refuse a literal that is not an array at compile time; a reference to one is decided at run time (`UP2-E2002`).
 
-**Function table (46 functions, a closed set; anything outside is `UP2-E1003`)**:
+**Function table (48 functions, a closed set; anything outside is `UP2-E1003`)**:
 
 > **Dependencies are declared per action**: `html_to_markdown` needs `html-to-markdown`; when it is missing that **action** is unavailable (`UP2-E1107`)
 > while the operator's other actions keep working. It accepts **no arguments** and has no base_url — complete relative links with `py.urljoin`.
@@ -368,6 +366,7 @@ Deliberately not checked: `join.sep` (the runtime coerces it with `str()`), and 
 | Collections | `sort` / `sort_desc` | — | Python's `sorted` / `sorted(reverse=True)`; no key, no coercion |
 | Collections | `uniq` | — | deduplicate while preserving order (a set plus a list) |
 | Collections | `find_jsons` | — | every JSON object/array embedded in the text, parsed, in document order |
+| Collections | `filter` | `keep`? | keep truthy elements (`true`, the default) or falsy ones (`false`); a new list in input order |
 | URL | `urljoin` | `base` | relative → absolute |
 | URL | `urlsplit` | `"netloc"` / `"path"` / `"query"` / … | take a URL apart |
 | Encoding | `b64_encode` / `b64_decode` | — | Base64 |
@@ -376,6 +375,7 @@ Deliberately not checked: `join.sep` (the runtime coerces it with `str()`), and 
 | Time | `strftime` | `layout` | a `datetime` + layout → text (`%z` renders an aware offset, empty on a naive value) |
 | Time | `from_timestamp` | `tz`? | epoch seconds → an aware `datetime` at a fixed offset (default UTC) |
 | Time | `to_timestamp` | `tz`? | a `datetime` → epoch seconds; a naive value is read at `tz` (default UTC, never the machine's zone) |
+| Time | `sleep` | seconds | block for that many seconds and return the upstream value unchanged (the allowlist's only blocking action) |
 | Conversion | `str` / `int` / `float` / `bool` | — | type conversion (`bool` follows Python: `"false"` is true); failure is `UP2-E2005` |
 | Conversion | `items` | — | a dict → `[[key, value], …]` |
 | Conversion | `from_json` | — | JSON text → JSON tree |
@@ -395,7 +395,7 @@ would assume a zone, so each is `UP2-E1005` at compile time. `%z` is allowed.
 
 | Operator | Where the code lives | Action space | Auditability |
 |---|---|---|---|
-| `py` | in the engine, already audited | **closed** (46 named functions) | "this chain can do at most these 46 things" |
+| `py` | in the engine, already audited | **closed** (48 named functions) | "this chain can do at most these 48 things" |
 | `udf` | in the host, invisible to the chain | **open** (whatever the host registers) | deployment-bound |
 | `code` | **in the chain itself** | a **single** behaviour | visible in the chain itself |
 
@@ -472,7 +472,7 @@ values inside the chain:
 ```
 
 `each` is a 2-slot operator with a single action, so slot 2 carries the whole argument. **The argument's shape selects the mode** (D8): an **object** is a
-field map (exactly the shape a step's field map has, `03` §7, one level down); an **array** is one chain run over every element, answering a list of its
+field map (exactly the shape a node's field map has, `03` §7, one level down); an **array** is one chain run over every element, answering a list of its
 products. Anything else is `UP2-E1005`.
 
 | Argument | Result |
@@ -503,32 +503,35 @@ products. Anything else is `UP2-E1005`.
 ### 6.10 `udf` — a host-registered named function
 
 ```jsonc
-["udf", "ah_normalize_title"]
+["udf", "ah_normalize_title"]          // f(value): the upstream value is one DTO argument
+["udf", "fetch", "*"]                  // f(*value): the upstream value is a list
+["udf", "fetch", "**"]                 // f(**value): the upstream value is a mapping
+["udf", "translate", "en"]             // f("en"): one explicit argument
 ```
 
-- The function must be in the host registry (the `entry_points` group `uniparser2.udfs`, or `register_udf(name, fn)` at runtime).
-- Not registered ⇒ **compile-time** `UP2-E1010` (it does not blow up halfway through a run).
-- **The call is unary or nullary** (D10): the upstream value is the only positional argument, `f(value)`, or there is none when the function declares no
-  positional parameter, `f()`. A function that requires a second argument — or a required keyword-only argument — is `UP2-E1005` at compile time, because the
-  signature is known when the chain compiles. An optional second parameter is ignored; bind it at registration (`functools.partial`).
-- **The stage writes no parameter slot**: `["udf", "f"]` is two slots, and `["udf", "f", …]` is `UP2-E1004`. Configuration a host function needs travels in a
-  **payload the chain builds with `ctx`**:
+- The function resolves from the **run's udf table**: `register_udf(name, fn)` installs process-wide defaults, and
+  `run(story, …, udfs={"fetch": my_fetch})` overlays them for that run. A name the story uses but the table lacks is
+  `UP2-E1010`, reported by `run` **before** evaluation with the names that are available.
+- **Four argument forms** (the third slot selects the call):
+  - omitted ⇒ `f(value)`, the upstream value as one DTO argument;
+  - the literal `"*"` ⇒ `f(*value)`, the upstream value must be a list;
+  - the literal `"**"` ⇒ `f(**value)`, the upstream value must be a mapping with string keys;
+  - any other value ⇒ `f(argument)`, the resolved literal/reference as the single argument.
+- The signature is checked at compile time **when the function is already in the table**; an unknown name is
+  deferred to `run`'s pre-flight, because the table is run state. A function that cannot accept the selected form
+  is `UP2-E1005` at compile time when known.
+- **A udf may answer any value.** A host object (a response, a node handle) is carried by reference and read with
+  `py.getattr`; only the run's exit (`UP2-E2003`) and a `["type", …]` stage require JSON. An awaitable answer is
+  `UP2-E2009`: the kernel is synchronous, so the host calls an async function in its own event loop before returning.
+- **`ctx` is not injected**: a function that needs the scope takes the payload the chain hands it; writing the scope
+  stays `ctx.set`'s job.
+- **The action space is dynamic**: `udf`'s "action" is the function name (slot 2), so `up2 conformance` declares it
+  as **`("udf", "*")`**.
+- **Security boundary**: the chain carries no code; it can only name functions the host reviewed and registered.
+  This is the replacement for the old v3 `udf` (arbitrary source through `exec`/`eval`).
 
-  ```jsonc
-  ["ctx", "dict", {"value": "obj", "lang": "globals.lang"}]
-  ["udf", "translate"]
-  ```
-
-- **`ctx` is no longer injected**: a parameter named `ctx` is an ordinary parameter of the host function. A host function that needs the scope takes the
-  payload the chain hands it; writing the scope stays `ctx.set`'s job.
-- Returning a value that cannot be a product ⇒ runtime `Failed` (`UP2-E2009`). A host function that raises ⇒ `UP2-E2099`.
-- **The action space is dynamic**: `udf`'s "action" is the function name itself (in slot 2), so `up2 conformance` declares it as **`("udf", "*")`**, and
-  `up2 ops` reports `param_form: "none"` (there is no parameter slot).
-- **Security boundary**: there is no `eval`/`exec` in the chain; `udf` can only reference functions the host has reviewed and registered in advance. This is the
-  replacement form for the old v3 `udf` (arbitrary source through `exec`/`eval`, no resource limits; see `essence` §5-R10) and the implementation of Q42 in `01`.
-
-Registration is trust: `udf` functions run with the host's full authority, so "what a chain can do" = what this deployment registered; scope and trust
-boundaries are in `04` §11.
+Registration is trust: `udf` functions run with the host's full authority, so "what a chain can do" is what this
+deployment registered; scope and trust boundaries are in `04` §11.
 
 ### 6.11 `xpath` — XPath query (XML)
 
@@ -572,7 +575,7 @@ whitespace-only string is likewise `UP2-E1005`. There is no `inputs` parameter a
 
 ```jsonc
 ["code", "len(obj)"]                         // minimal form: obj and the allowlisted functions
-["code", "ctx.locals.n + 1"]                 // read this step's temporary variable (locals.n = 41 ⇒ 42)
+["code", "ctx.locals.n + 1"]                 // read this scope's temporary variable (locals.n = 41 ⇒ 42)
 ["code", "ctx.globals.base_url"]             // read the chain-level environment
 ["code", "1 / 0"]                            // an exception ⇒ UP2-E2017
 ```
@@ -617,6 +620,42 @@ for containers.
 **Error codes**: a limit ⇒ `UP2-E2016`; an exception in the sandboxed code ⇒ `UP2-E2017`; a non-product return (or a non-JSON input) ⇒ `UP2-E2009`; an upstream
 handle ⇒ `UP2-E2003`.
 
+### 6.13 `node` — call a story node
+
+```jsonc
+["node", "detail"]          // run node `detail` with the current value as its `$in`
+```
+
+`node` is a **composition** operator: two slots, the node name in slot 2. It has one action (`call`), so the stage
+never writes an action slot. The current stage value becomes the callee's `$in`; the callee's product becomes the
+stage value. The call shares the caller's `$locals` and `$public`, and the caller's `$in` is restored on return.
+
+- The name MUST be a literal naming a node of the same story; an unknown name is `UP2-E1016` at compile time,
+  listing the node names.
+- The node-call graph MUST be acyclic; a cycle is `UP2-E1017` at compile time, with the travel path and the stage
+  that closes it.
+- A `node` stage is only valid inside a story: a standalone chain compiled with no node table rejects it with the
+  same `UP2-E1016`.
+- A three-slot `["node", name, …]` is `UP2-E1004`: the call has no argument slot. Put a stage in front of it to
+  produce a different input.
+
+### 6.14 `type` — validate a chain's product
+
+```jsonc
+["type", "Article"]         // build the registered `Article` from the value, carry the JSON on
+```
+
+`type` is a **chain-tail** operator: two slots, the type name in slot 2, one action (`check`). It applies the
+host's type registry at this stage:
+
+- a mapping ⇒ `Cls(**payload)`, a list ⇒ `Cls(*items)`, anything else ⇒ `Cls(value)`;
+- the constructor is a **validator**: the stage answers the JSON the constructor approved, never the constructor's
+  object; an answer that is not JSON is `UP2-E2003`;
+- an unregistered name is `UP2-E1011`, listing the registered names; a constructor that raises is `UP2-E2019`,
+  with its own exception text;
+- the stage MUST be the last stage of its chain; a later stage is `UP2-E1005`;
+- a field-map node has no trailing stage, so wrap it: `[["node","fields"], ["type","Article"]]`.
+
 ## 7. Compile-time error codes (`UP2-E1xxx`)
 
 Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumerating the available values.
@@ -628,18 +667,18 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E1003` | the `py` function is not in the allowlist | list the allowlisted function names |
 | `UP2-E1004` | stage length/arity mismatch | give the legal forms of that operator |
 | `UP2-E1005` | parameter Schema validation failure (type/required/unknown parameter) | give the parameter name + the expected type + the actual type |
-| `UP2-E1006` | the reference names an unknown root, points at a later step, or a step names itself | give the available roots, the step order and the list of available keys |
+| `UP2-E1006` | the reference names an unknown root, or reads a path the compiler can prove wrong | give the available roots |
 | `UP2-E1007` | a literal was written in a `ref` position | hint that the position must be a `$…` reference |
-| `UP2-E1009` | a step name is a reserved root (`globals`/`locals`/`in`) or is duplicated | list the reserved roots and the declared step names (`03` §10 L3) |
-| `UP2-E1010` | the `udf` is not registered | hint at `register_udf` or the `entry_points` group name |
-| `UP2-E1011` | the type name declared by a step's `type` is not registered (checked at the step boundary, `03` §3.3) | list the registered type names (`03` §3) |
+| `UP2-E1009` | a node name is a reserved root (`globals`/`locals`/`public`/`in`/`obj`), contains `.` / `/` / `~`, or is duplicated | list the reserved roots and the declared node names (`03` §2.1) |
+| `UP2-E1010` | a `udf` name is not in the run's table | name the missing function and the available ones; register it with `register_udf` or `run(udfs={...})` |
+| `UP2-E1011` | a `["type", name]` stage names an unregistered type (checked when the stage runs, `03` §3.3) | list the registered type names (`03` §3) |
 | `UP2-E1012` | a resource limit is exceeded (`01` §9) | give the constant name that was hit and the limit value |
 | `UP2-E1013` | the regex contains a nested quantifier (ReDoS risk) | hint at rewriting it or switching to non-greedy |
-| `UP2-E1014` | a `_`-prefixed local key was referenced **across steps** | hint that a local value does not leave its step; inside the same step use `$locals.<key>` |
-| `UP2-E1015` | `ctx.set`/`del` wrote a path outside `locals.` | hint that the write surface is limited to `locals` |
-| `UP2-E1016` | an `entry` / `next` / `collect` target is not a step of the story | list the declared step names (`03` §10 L9) |
-| `UP2-E1017` | the story's flow closes a loop of steps (`03` §10 L12) | give the travel path and point at the jump that closes it: name a step that runs after it, or take the looping step out (`03` §12.5) |
-| `UP2-E1018` | a step is unreachable from the story's `entry` (`03` §10 L13) | name the step and hint at pointing a `next` at it, taking it out of the flow, or making it the entry (`03` §12.6) |
+| `UP2-E1014` | a standalone chain referenced a `_`-prefixed product key across chains | hint that a local value does not leave its scope; inside the same scope use `$locals.<key>` |
+| `UP2-E1015` | `ctx.set`/`del` wrote a path outside `locals.` / `public.` | hint that the write surface is limited to `locals` and `public` |
+| `UP2-E1016` | a `["node", name]` stage names no node of this story | list the declared node names (`03` §2.2) |
+| `UP2-E1017` | the node-call graph closes a cycle (`03` §5.2) | give the travel path and point at the call that closes it |
+| ~~`UP2-E1018`~~ | **retired with the step model** (`03` §12.1): every node is an entry point, so nothing is unreachable | the number is retired, not reused |
 | ~~`UP2-E1101`~~ … ~~`UP2-E1106`~~, ~~`UP2-E1108`~~ | **retired with the v0.1 node model** (`03` §12.1) | they policed a graph that no longer exists (`next`/`routes`/`default_route`, node existence, reachability, cycles, in-degree > 1, `route_field`, the `result` template). The numbers are **retired, not reused**, so older references keep pointing at the same rule |
 | `UP2-E1107` | an operator's optional dependency is missing | give the install command (e.g. `uv add selectolax`) |
 
@@ -649,11 +688,11 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 |---|---|---|
 | `UP2-E2001` | a reference path cannot be resolved at runtime (the actual structure has fewer keys than declared) | give the path and the actual type/key set of the value |
 | `UP2-E2002` | a stage input's type does not match what the operator expects | give the type the operator expects and the actual type |
-| `UP2-E2003` | the exit contains a non-serialisable value (`Opaque` or a non-JSON type) | convert it to text first via `text` / `html` / `outer` / `@<attribute name>` |
+| `UP2-E2003` | the run's exit or a `["type", …]` product is not JSON (`Opaque` or a non-JSON type) | convert it to text first via `text` / `html` / `outer` / `@<attribute name>` |
 | `UP2-E2004` | the lazy import of an operator's optional dependency failed | give the install command |
 | `UP2-E2005` | value conversion failed | give the source type, the target type and a preview of the source value |
-| `UP2-E2009` | the operator returned a value that cannot be a product | only a JSON value may be a **product**: a host object may flow, but it exits through `pack` (`UP2-E2003`), so convert it first |
-| `UP2-E2010` | a `Request` product carries no `url` | give `url` in the field map of the step whose `type` is `Request` (`03` §4.1) |
+| `UP2-E2009` | a `udf` answered an awaitable | the kernel is synchronous: call the async function in the host's own event loop and return its value |
+| ~~`UP2-E2010`~~ | **retired with `Request`** (`03` §12.1): a request is an ordinary object, and `fetch` is a udf | the number is retired, not reused |
 | `UP2-E2011` | `output="single"` but several products or several terminals exist | change `output` to `auto` / `list` |
 | `UP2-E2012` | the list given to `each` is longer than `MAX_EACH_ITER` | truncate it first with `["py","slice",":100"]` |
 | `UP2-E2013` | the input text exceeds `MAX_TEXT_BYTES` | truncate in the outer layer first, or switch to a streaming upstream |
@@ -662,7 +701,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2016` | sandbox execution exceeded its limits (execution duration / memory / host round-trip budget) | reduce the amount of data or rewrite the algorithm; the limits are configured by the host (`uniparser2.ops.code.configure`) and cannot be changed from the chain |
 | `UP2-E2017` | the sandboxed code raised an exception (including syntax errors and unsupported constructs) | fix `src`; the sandbox implements only a subset of CPython 3.14 (see Monty's limitations document) |
 | `UP2-E2018` | a subscript (`py.getitem`) has no such key or index | name the key or the index and the shape it was looked up in (`KeyError: 'text' — the dict has no key 'text'`) |
-| `UP2-E2019` | the constructor registered for a step's `type` refused its product | the `reason` carries the constructor's own exception (`TypeError: Article.__init__() missing 1 required positional argument: 'title'`); fix the product's shape at the step that declared the type, or the constructor |
+| `UP2-E2019` | the constructor registered for a `["type", …]` stage refused its value | the `reason` carries the constructor's own exception (`TypeError: Article.__init__() missing 1 required positional argument: 'title'`); fix the value's shape at the stage, or the constructor |
 | `UP2-E2099` | an operator raised an unexpected exception (backstop) | this is a defect in the operator implementation; keep the chain and the input for reproduction |
 
 **The codes retired while implementing L1 (the reasons are recorded so that they are not "added back" later)**:

@@ -103,18 +103,18 @@ Python's `re` has **no** timeout parameter, so there is no runtime backstop — 
 
 ### `py` — the allowlist of pure functions (standard library)
 
-46 functions, JSON in and JSON out, no IO. A closed set: an unknown name is `UP2-E1003`. The predicate
+48 functions, JSON in and JSON out, no IO. A closed set: an unknown name is `UP2-E1003`. The predicate
 actions use Python's own spellings, so a chain reads like the expression it means.
 
 | Purpose | Functions |
 |---|---|
 | text | `const` · `strip` (optional `chars`) · `normalize_space` · `html_to_markdown` · `replace ["old","new"]` · `split` · `join` · `upper` · `lower` · `slice` · `len` |
-| collections | `first` · `last` · `flatten` · `uniq` · `sort` · `sort_desc` · `find_jsons` · `getitem` |
+| collections | `first` · `last` · `flatten` · `uniq` · `sort` · `sort_desc` · `find_jsons` · `getitem` · `filter` (keep truthy, or falsy with `false`) |
 | host object | `getattr` — read an attribute of the value that flows in (a method is never called) |
 | URL | `urljoin` · `urlsplit` |
 | encoding / hash | `b64_encode` · `b64_decode` · `sha256` · `md5` (checksums and ETags only, never security) |
 | conversion | `str` · `int` · `float` · `bool` · `from_json` |
-| time | `strptime` (text + explicit format → `datetime`) · `strftime` (`datetime` → text) · `from_timestamp` / `to_timestamp` (epoch seconds ↔ `datetime`) |
+| time | `strptime` (text + explicit format → `datetime`) · `strftime` (`datetime` → text) · `from_timestamp` / `to_timestamp` (epoch seconds ↔ `datetime`) · `sleep` (block N seconds, return the upstream value) |
 | predicate | `==` · `!=` · `<` · `<=` · `>` · `>=` · `in` · `between` (one parameter each; `["py","==",200]`) |
 | selection | `or` · `and` (Python's, over `[upstream, *operands]`: `["py","or",["$locals._a","fallback"]]`) |
 
@@ -160,9 +160,9 @@ zero-argument method such as `selectolax`'s `decompose` mutates the tree), so th
 to use instead (`["css","text",""]`) or a `udf`. A value with no attributes at all (an integer, say) is
 the same `AttributeError` failure.
 
-**Identity is not an action**: where a step's value **is** its own input, the chain is the reference
-`"$in"` (or `["$in", …]` to read a field of it first). `py.id` was retired with the identity stages
-(`03` §2, §12.6 E4).
+**Identity is `[]`**: a chain whose value **is** its own input is the empty array. The whole-chain
+reference (`"$in"`, `["$in", …]`) was retired with the step model (`03` §2.3); read a field with a
+stage or a reference parameter.
 
 The parameter slot is written bare for every single-parameter action (`const`, `strip`, `split`, `join`,
 `urljoin`, `urlsplit`, `slice`, `getitem`, `getattr`, `strptime`, `strftime`, `from_timestamp`,
@@ -261,14 +261,36 @@ function per element is this array form with a `udf` stage (`["each",["udf","nor
 
 ### `udf` — host-registered functions (no extra)
 
-The action **is** the function name and the stage carries no parameter: `["udf","my_clean"]`. The
-registered function receives the upstream value as its only positional argument (`f(value)`), or no
-argument when it declares none (`f()`); a function that requires a second argument is a compile error
-`UP2-E1005` (bind it at registration with `functools.partial`, or take one payload object). The chain
-carries no code — only a name the host registered with `register_udf` (or an entry point in the group
-`uniparser2.udfs`); an unregistered name is `UP2-E1010` at compile time. `ctx` is no longer injected:
-configuration travels in a payload the chain builds with `ctx` (`["ctx","dict",{…}]` followed by
-`["udf","translate"]`).
+The action **is** the function name. The third slot selects the call:
+
+| Slot 3 | Call |
+|---|---|
+| omitted | `f(value)` — the upstream value is one DTO argument |
+| `"*"` | `f(*value)` — the upstream value must be a list |
+| `"**"` | `f(**value)` — the upstream value must be a mapping |
+| anything else | `f(argument)` — one explicit argument |
+
+The chain carries no code — only a name from the run's table (`register_udf`, or
+`run(…, udfs={...})`); a missing name is `UP2-E1010`, reported by `run` before evaluation. A udf may
+answer **any** value: a response object flows to the next stage and is read with `py.getattr`, while
+the run's exit and a `["type", …]` stage still require JSON. An awaitable answer is `UP2-E2009`; the
+kernel is synchronous.
+
+### `node` — call a story node (no extra)
+
+`["node", "detail"]` runs the node `detail` with the current value as its `$in` and answers that
+node's product. The call shares the caller's `$locals`, and the caller's `$in` is restored afterwards.
+The name is literal and must be a node of the same story (`UP2-E1016` otherwise); the node-call graph
+is acyclic (`UP2-E1017`). A `node` stage has no argument slot: put a stage in front of it to produce
+a different input. A standalone chain (compiled without a story) rejects the stage.
+
+### `type` — validate a chain's product (no extra)
+
+`["type", "Article"]` builds the host-registered type from the current value and answers the JSON the
+constructor approved. A mapping is `Cls(**payload)`, a list `Cls(*items)`, anything else `Cls(value)`.
+An unregistered name is `UP2-E1011`; a raising constructor is `UP2-E2019`; a non-JSON approval is
+`UP2-E2003`. The stage must be the **last** stage of its chain (`UP2-E1005` otherwise). A field-map
+node has no tail, so wrap it: `[["node","fields"], ["type","Article"]]`.
 
 ### `code` — code inside the chain (optional extra `[code]`)
 

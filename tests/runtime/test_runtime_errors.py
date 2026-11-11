@@ -167,10 +167,8 @@ def test_a_host_object_flows_through_a_stage_unchanged() -> None:
     """The value that flows may be an object: a stage reads it, nothing converts it."""
     response = _HostResponse(200, "body")
     assert run([["py", "getattr", "status"]], response) == Ok(200)
-    # A whole-chain reference hands the same object on unchanged (`03` §2).
-    assert eval_field(compile_field("$in"), response, scope=Scope(step_input=response)) == Ok(
-        response
-    )
+    # The empty chain is identity: the same object comes out unchanged (`03` §2.3).
+    assert eval_field(compile_field([]), response, scope=Scope(step_input=response)) == Ok(response)
 
 
 def test_e2003_pack_accepts_json() -> None:

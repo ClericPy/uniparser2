@@ -35,7 +35,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from uniparser2 import Failed, Up2Error, compile_field, eval_field, pack, start
+from uniparser2 import Failed, Up2Error, compile_field, compile_story, eval_field, pack, run
+from uniparser2.core.errors import diag
 from uniparser2.core.export import ProductDifference, render_difference
 from uniparser2.core.values import dumps_json, loads_json
 from uniparser2.net import RequestCache
@@ -174,7 +175,7 @@ def run_graph(graph: Any, value: Any, *, cache: RequestCache | None = None) -> G
     answered from the **request cache**, and a request with no cached answer is a miss -- the
     runner never reaches the network (`03` §4.1).
     """
-    if isinstance(graph, Mapping) and "steps" in graph:
+    if isinstance(graph, Mapping) and "nodes" in graph:
         return _run_story(graph, value, cache)
     return _run_field(graph, value)
 
@@ -192,54 +193,77 @@ def _run_field(graph: Any, value: Any) -> GraphRun:
 
 
 def _run_story(graph: Any, value: Any, cache: RequestCache | None) -> GraphRun:
-    """A story bundle: run to its end, answering every request from the cache (`03` §5)."""
-    run = start(graph, value)
-    while True:
-        effect = run.go()
-        if effect[0] == "done":
-            return _packed(effect[1])
-        if effect[0] == "call":
-            return GraphRun(
-                error=(
-                    "the story calls a host function; a snapshot runner has no host to answer it "
-                    "(03 §4.2)"
-                )
+    """A story bundle: run it, answering `fetch` from the request cache (`03` §4.1).
+
+    A story may use other host functions; a snapshot runner has no host for them, so it reports
+    that before the run instead of failing halfway through. A request with no cached answer is a
+    **miss**: the runner never reaches the network.
+    """
+    try:
+        story = compile_story(graph)
+    except Up2Error as exc:
+        return GraphRun(error=str(exc.diagnostic))
+    extra = sorted(story.udf_names - {"fetch"})
+    if extra:
+        return GraphRun(
+            error=(
+                f"the story calls host function(s) {', '.join(extra)}; a snapshot runner only "
+                "answers `fetch` from the request cache"
             )
-        answer, error = _cached_answer(effect, cache)
-        if error is not None:
-            return GraphRun(error=error)
-        run.feed(answer)
+        )
 
-
-def _cached_answer(effect: Any, cache: RequestCache | None) -> tuple[Any, str | None]:
-    """The cached answers of one effect: one for a request, one per task for a batch."""
-    if cache is None:
-        return None, _miss(effect, None)
-    kind, payload = effect[0], effect[1]
-    if kind == "request":
-        found = cache.get(payload)
+    def cached_fetch(request: Any) -> Any:
+        key = _request_mapping(request)
+        if cache is None:
+            raise _CacheMissError(_miss(key, None))
+        found = cache.get(key)
         if found is None:
-            return None, _miss(effect, cache)
-        return found, None
-    if not isinstance(payload, list):
-        return None, f"a batch must be a list of tasks, got {type(payload).__name__}"
-    answers = []
-    for task in payload:
-        found = cache.get(task)
-        if found is None:
-            return None, _miss(("request", task), cache)
-        answers.append(found)
-    return answers, None
+            raise _CacheMissError(_miss(key, cache))
+        return found
+
+    try:
+        product = run(graph, input=value, udfs={"fetch": cached_fetch})
+    except _CacheMissError as exc:
+        return GraphRun(error=str(exc))
+    except Up2Error as exc:
+        return GraphRun(error=str(exc.diagnostic))
+    return _packed(product)
 
 
-def _miss(effect: Any, cache: RequestCache | None) -> str:
+class _CacheMissError(Up2Error):
+    """Internal: a fetch with no cached answer, carried out as a coded diagnostic.
+
+    A host function's exception would become `UP2-E2099` ("operator raised"); this one is the
+    runner's own answer, so it is an `Up2Error` and reaches `run_graph` as it is.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            diag(
+                "UP2-E2005",
+                message,
+                fix="run the sample's host once from the same directory to fill the cache",
+            )
+        )
+
+
+def _request_mapping(request: Any) -> Mapping[str, Any]:
+    """One request as the cache sees it: a request object with a `url`."""
+    if isinstance(request, Mapping):
+        return request
+    raise _CacheMissError(
+        f"fetch needs a request object, got {type(request).__name__}; "
+        'build one with ["ctx","dict",{"url":"obj"}]'
+    )
+
+
+def _miss(request: Mapping[str, Any], cache: RequestCache | None) -> str:
     """The message for a request the cache does not hold: the runner never fetches it.
 
     The message names the cache directory, because the usual cause is looking in the wrong place:
     the cache is relative to the working directory the command ran in.
     """
-    request = effect[1] if isinstance(effect, tuple) else effect
-    url = request.get("url") if isinstance(request, Mapping) else request
+    url = request.get("url")
     where = cache.root if cache is not None else RequestCache().root
     return (
         f"the request {url!r} is not in the request cache ({where}); run the sample's host once "

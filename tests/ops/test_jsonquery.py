@@ -21,7 +21,6 @@ from uniparser2 import (
     Up2Error,
     compile_field,
     eval_field,
-    start,
 )
 from uniparser2.core import registry
 from uniparser2.ops import jsonquery
@@ -174,21 +173,16 @@ def test_real_jmespath_when_installed() -> None:
 def test_json_text_is_materialized_once_per_run(fake_jmespath: None) -> None:
     """Two fields over one JSON text are one parse, not two (``03`` §6)."""
     text = '{"data": {"html": "<p>x</p>", "url": "u"}}'
-    bundle = {
-        "entry": "record",
-        "steps": [
-            {
-                "name": "record",
-                "body": {"html": [["json", "data.html"]], "url": [["json", "data.url"]]},
-            }
-        ],
-        "collect": "record",
-    }
-    run = start(bundle, text)
-    assert run.go() == ("done", [{"html": "<p>x</p>", "url": "u"}])
-    cache = run.scope.materializer
-    assert len(cache) == 1
-    assert cache.bytes > len(text.encode("utf-8"))
+    scope = Scope()
+    chain = [
+        ["py", "const", [text]],
+        ["each", {"html": [["json", "data.html"]], "url": [["json", "data.url"]]}],
+    ]
+    assert eval_field(compile_field(chain), None, scope=scope) == Ok(
+        [{"html": "<p>x</p>", "url": "u"}]
+    )
+    assert len(scope.materializer) == 1
+    assert scope.materializer.bytes > len(text.encode("utf-8"))
 
 
 def test_an_already_parsed_value_is_not_materialized(fake_jmespath: None) -> None:

@@ -10,16 +10,13 @@ from .ast import CompiledField, CompiledStage, Lit, Param, Ref, Stage, dumps, lo
 from .compile import compile_field, compile_field_map, compile_stage
 from .conformance import ConformanceReport, check
 from .errors import CODES, Diagnostic, Failed, Ok, Outcome, Up2Error, diag
-from .evaluator import eval_field, resolve_params
+from .evaluator import eval_field, eval_field_map, resolve_params
 from .export import ProductDifference, compare_products, pack, render_difference
 from .limits import MAX_MATERIALIZE_BYTES, MAX_MATERIALIZE_ITEMS, MAX_STEPS_PER_FIELD
 from .materialize import HTML, JSON, XML, Materialize, MaterializedArtifact, Materializer
 from .refs import Scope, is_ref_text, parse_path_text, parse_ref
-from .story import CompiledStory, StoryRun, StoryStep, compile_story, start
+from .story import CompiledNode, CompiledStory, compile_story, run
 from .trace import (
-    EFFECT_BATCH,
-    EFFECT_CALL,
-    EFFECT_REQUEST,
     PREVIEW_LIMIT,
     STATE_FAILED,
     STATE_OK,
@@ -43,9 +40,6 @@ from .values import JsonValue, Opaque, Value, is_json_value, is_opaque, preview,
 __all__ = [
     "BUILTIN_TYPES",
     "CODES",
-    "EFFECT_BATCH",
-    "EFFECT_CALL",
-    "EFFECT_REQUEST",
     "HTML",
     "JSON",
     "MAX_MATERIALIZE_BYTES",
@@ -56,6 +50,7 @@ __all__ = [
     "STATE_OK",
     "XML",
     "CompiledField",
+    "CompiledNode",
     "CompiledStage",
     "CompiledStory",
     "ConformanceReport",
@@ -74,8 +69,6 @@ __all__ = [
     "Ref",
     "Scope",
     "Stage",
-    "StoryRun",
-    "StoryStep",
     "Trace",
     "TraceEvent",
     "TypeConstructionError",
@@ -93,6 +86,7 @@ __all__ = [
     "diag",
     "dumps",
     "eval_field",
+    "eval_field_map",
     "get_type",
     "is_json_value",
     "is_opaque",
@@ -105,7 +99,7 @@ __all__ = [
     "register_type",
     "render_difference",
     "resolve_params",
-    "start",
+    "run",
     "type_name",
     "type_names",
     "unregister_type",

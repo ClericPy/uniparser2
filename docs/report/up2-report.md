@@ -2,19 +2,19 @@
 
 What each case ran on, what its selector matched, and what came out: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `--md --check` fails when it is stale. The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
 
-Generated from `uniparser2` 0.5.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
+Generated from `uniparser2` 0.7.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
 
 ## Coverage check
 
-- **Coverage gap**: missing [('py', 'const'), ('py', 'from_timestamp'), ('py', 'sort_desc'), ('py', 'strftime'), ('py', 'strptime'), ('py', 'to_timestamp'), ('re', 'sub')] · non-Ok behavior cases []
-- the registry declares **77** pairs = **72** pairs covered by cases
+- **Coverage gap**: missing [('node', 'call'), ('py', 'const'), ('py', 'filter'), ('py', 'from_timestamp'), ('py', 'sleep'), ('py', 'sort_desc'), ('py', 'strftime'), ('py', 'strptime'), ('py', 'to_timestamp'), ('re', 'sub'), ('type', 'check')] · non-Ok behavior cases []
+- the registry declares **81** pairs = **72** pairs covered by cases
 - states across every run: `Failed` 10, `Ok` 105
 
 | operator | arity | slots | summary | actions |
 |---|---|---|---|---|
 | `css` | 3 | accessor / selector | CSS selector (all matches) | 8 |
 | `css1` | 3 | accessor / selector | CSS selector (first match only) | 8 |
-| `py` | 3 | function / params | Python built-in allowlist functions | 46 |
+| `py` | 3 | function / params | Python built-in allowlist functions | 48 |
 | `xpath` | 3 | accessor / XPath | XPath query (XML; lxml) | 3 |
 | `json` | 2 | jmespath path | JSON dot-path query (jmespath) | 1 |
 | `re` | 3 | mode / pattern | Regex matching (search / findall / sub) | 3 |
@@ -304,7 +304,7 @@ Input sample for this section — the same input for every card below:
 
 ## `py` — Python built-in allowlist functions
 
-arity 3 · slot 2=function / slot 3=params · dependencies: none · 46 actions (Core, Common, Advanced, Rare)
+arity 3 · slot 2=function / slot 3=params · dependencies: none · 48 actions (Core, Common, Advanced, Rare)
 
 ### Actions (sorted by commonness)
 
@@ -928,7 +928,7 @@ arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 1 actions (
 ### Actions (sorted by commonness)
 
 #### `*` — registered: demo_upper
-- tier ★★ Common · parameter slot: no parameter (write two positions, or "")
+- tier ★★ Common · parameter slot: the value itself
 - note: dynamic action space: slot 2 carries the host-registered function name
 - chain: `[["udf", "demo_upper"]]`
 - input: `hello`
@@ -938,7 +938,7 @@ arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 1 actions (
 
 | invalid chain | code | pointer | message | fix |
 |---|---|---|---|---|
-| `[["udf", "not_registered"]]` | `UP2-E1010` | `/0/1` | the custom function 'not_registered' is not registered | call register_udf(name, function) in the host, or declare an entry point (group uniparser2.udfs) |
+| `[["udf", "not_registered"]]` | `unexpected: no error raised` | `` |  |  |
 
 
 ## Appendix: mechanisms shared by all operators

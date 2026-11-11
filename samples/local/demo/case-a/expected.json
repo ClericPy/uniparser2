@@ -1,8 +1,6 @@
-[
-  {
-    "headings": [
-      "First   section",
-      "Second section"
-    ]
-  }
-]
+{
+  "headings": [
+    "First   section",
+    "Second section"
+  ]
+}

@@ -30,7 +30,6 @@ from uniparser2 import (
     compile_field,
     eval_field,
     pack,
-    start,
 )
 from uniparser2.core import registry
 from uniparser2.ops import xmlxpath
@@ -231,24 +230,22 @@ def test_real_lxml_roundtrip() -> None:
 
 def test_xml_text_is_materialized_once_per_run(xml_ready: None) -> None:
     """Two fields over one XML document are one parse, not two (``03`` §6)."""
-    bundle = {
-        "entry": "record",
-        "steps": [
+    scope = Scope()
+    chain = [
+        ["py", "const", [RSS]],
+        [
+            "each",
             {
-                "name": "record",
-                "body": {
-                    "title": [["xpath", "text", "//title"]],
-                    "creator": [["xpath", "text", ["//dc:creator", NS_DC]]],
-                },
-            }
+                "title": [["xpath", "text", "//title"]],
+                "creator": [["xpath", "text", ["//dc:creator", NS_DC]]],
+            },
         ],
-        "collect": "record",
-    }
-    run = start(bundle, RSS)
-    assert run.go() == ("done", [{"title": ["Title"], "creator": ["Reporter A"]}])
-    cache = run.scope.materializer
-    assert len(cache) == 1
-    assert cache.bytes > 0
+    ]
+    assert eval_field(compile_field(chain), None, scope=scope) == Ok(
+        [{"title": ["Title"], "creator": ["Reporter A"]}]
+    )
+    assert len(scope.materializer) == 1
+    assert scope.materializer.bytes > 0
 
 
 def test_a_node_input_does_not_materialize(xml_ready: None) -> None:

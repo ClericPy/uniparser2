@@ -19,16 +19,16 @@ DOMAIN = "local"
 KEY = "demo"
 
 STORY = {
-    "entry": "seed",
-    "steps": [
-        {"name": "seed", "body": {"url": "$in"}, "type": "Request", "next": "record"},
-        {
-            "name": "record",
-            "body": {"title": [["py", "getattr", "text"], ["py", "upper"]]},
-            "type": "dict",
-        },
-    ],
-    "collect": "record",
+    "nodes": {
+        "record": {
+            "title": [
+                ["ctx", "dict", {"url": "obj"}],
+                ["udf", "fetch"],
+                ["py", "getattr", "text"],
+                ["py", "upper"],
+            ]
+        }
+    }
 }
 """A story that fetches one page and reads its title."""
 
@@ -68,11 +68,11 @@ def publish(tmp_path: Path, samples: Path, payload: object, *extra: str) -> int:
 # ---------------------------------------------------------------- the runner
 
 
-def test_a_suspended_story_runs_from_the_cache(tmp_path: Path) -> None:
+def test_a_story_runs_from_the_cache(tmp_path: Path) -> None:
     cache = cached(RequestCache(tmp_path))
     result = run_graph(STORY, "https://example.com/page", cache=cache)
     assert result.ok
-    assert result.value == [{"title": "<HTML><TITLE>HELLO</TITLE></HTML>"}]
+    assert result.value == {"title": "<HTML><TITLE>HELLO</TITLE></HTML>"}
 
 
 def test_a_miss_is_reported_and_nothing_is_fetched(tmp_path: Path) -> None:
@@ -83,24 +83,18 @@ def test_a_miss_is_reported_and_nothing_is_fetched(tmp_path: Path) -> None:
     assert "example.com/page" in result.error
 
 
-def test_without_a_cache_a_suspension_is_a_miss(tmp_path: Path) -> None:
+def test_without_a_cache_a_fetch_is_a_miss(tmp_path: Path) -> None:
     result = run_graph(STORY, "https://example.com/page")
     assert not result.ok
     assert "not in the request cache" in result.error
 
 
-def test_a_call_suspension_still_needs_a_host(tmp_path: Path) -> None:
+def test_a_udf_other_than_fetch_still_needs_a_host(tmp_path: Path) -> None:
     """The cache holds network answers, not the result of a host function."""
-    story = {
-        "entry": "store",
-        "steps": [
-            {"name": "store", "call": "host.store", "args": {"rows": "$in"}, "type": "dict"},
-        ],
-        "collect": "store",
-    }
+    story = {"nodes": {"store": [["udf", "store"]]}}
     result = run_graph(story, "x", cache=RequestCache(tmp_path))
     assert not result.ok
-    assert "no host to answer it" in result.error
+    assert "host function(s) store" in result.error
 
 
 # ---------------------------------------------------------------- the commands
@@ -138,9 +132,9 @@ def test_snapshot_records_a_fetching_story(tmp_path: Path, capsys, monkeypatch) 
         == EXIT_OK
     )
     payload = json.loads(capsys.readouterr().out)
-    assert payload["value"] == [{"title": "<HTML><TITLE>HELLO</TITLE></HTML>"}]
+    assert payload["value"] == {"title": "<HTML><TITLE>HELLO</TITLE></HTML>"}
     recorded = json.loads((directory / "expected.json").read_text(encoding="utf-8"))
-    assert recorded == [{"title": "<HTML><TITLE>HELLO</TITLE></HTML>"}]
+    assert recorded == {"title": "<HTML><TITLE>HELLO</TITLE></HTML>"}
 
 
 def test_snapshot_reports_a_miss(tmp_path: Path, capsys, monkeypatch) -> None:
@@ -216,6 +210,6 @@ def test_a_frozen_fetching_story_regresses_offline(tmp_path: Path, capsys, monke
     assert "matches its samples" in capsys.readouterr().out
 
     # A changed page is caught: the cache answers with the old body, the product differs.
-    (directory / "expected.json").write_text('[{"title": "OTHER"}]', encoding="utf-8")
+    (directory / "expected.json").write_text('{"title": "OTHER"}', encoding="utf-8")
     assert main(["test", DOMAIN, KEY, "--tests-root", str(samples)]) == EXIT_FAILED
-    assert "/0/title" in capsys.readouterr().out
+    assert "/title" in capsys.readouterr().out

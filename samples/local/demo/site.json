@@ -1,16 +1,10 @@
 {
-  "entry": "record",
-  "steps": [
-    {
-      "name": "record",
-      "body": {
-        "headings": [
-          ["css", "text", "h2"],
-          ["py","uniq"]
-        ]
-      },
-      "type": "dict"
+  "nodes": {
+    "record": {
+      "headings": [
+        ["css", "text", "h2"],
+        ["py", "uniq"]
+      ]
     }
-  ],
-  "collect": "record"
+  }
 }

@@ -15,18 +15,11 @@ from .values import dumps_json, loads_json
 
 MIN_STAGE_LEN = 1
 MAX_STAGE_LEN = 3
-REF_OPERATOR = "$"
 TRY_OPERATOR = "try"
 """The operator name of the **guard directive** (change `public-scope-and-try`).
 
 ``try`` is not an operator: it changes what the evaluator does with the **next** stage's outcome, so
 the operators stay pure. The compiler recognises it as a stage shape, and the evaluator reads it.
-"""
-"""The operator slot a **whole-chain reference** carries in the serializable source (`03` §2).
-
-A chain written as a string beginning with ``$`` has no operator of its own; this marker is what
-``dumps`` writes back for it (``"$in"``), so a compiled chain stays a fixed point. It is never a
-registered name, so it can never be reached through the operator lookup.
 """
 
 
@@ -109,16 +102,13 @@ class CompiledField:
     what the trace reports as ``field`` (`06` §5.1), so a missing ``title`` inside an ``each`` field
     map is distinguishable from a missing ``price`` inside the same map.
 
-    ``stages`` is empty exactly when the chain was written as a **whole-chain reference**: a string
-    beginning with ``$`` means "the value the reference names, unchanged" (`03` §2), so it carries
-    no stage at all. That is the only way to express identity -- no one-element stage form exists.
+    ``stages`` is empty exactly when the chain is the **identity** (``[]``): the value it received
+    is the value it answers. There is no whole-chain reference any more (`03` §2.3).
     """
 
     stages: tuple[CompiledStage, ...]
     source: tuple[Stage, ...]
     name: str = ""
-    ref: Ref | None = None
-    """Set when the chain **is** one reference: it carries no stage and resolves to that value."""
 
     def dumps(self) -> str:
         return _dumps_lists(_as_lists(self.source))
@@ -206,11 +196,8 @@ def _as_lists(stages: Any) -> list[list[Any]]:
 
 
 def _stage_list(stage: Stage) -> list[Any]:
-    """One stage of a compiled source; a whole-chain reference writes back as its own text."""
-    if stage.op != REF_OPERATOR:
-        return stage.to_list()
-    slot = stage.slot1
-    return [REF_OPERATOR, slot.raw if isinstance(slot, Ref) else str(slot)]
+    """One stage of a compiled source, in its original slot count."""
+    return stage.to_list()
 
 
 def _split_stages(source: Any, *, pointer: str = "") -> list[Any]:
@@ -225,14 +212,7 @@ def _split_stages(source: Any, *, pointer: str = "") -> list[Any]:
             )
         )
     if not source:
-        raise Up2Error(
-            diag(
-                "UP2-E1004",
-                "the chain is empty",
-                fix="write at least one stage",
-                pointer=pointer,
-            )
-        )
+        return []
     first = source[0]
     if isinstance(first, Stage):
         return list(source)

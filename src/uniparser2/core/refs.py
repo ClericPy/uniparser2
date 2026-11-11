@@ -159,6 +159,8 @@ class Scope:
     not a property of the chain. The run's root scope owns it and every child scope shares it by
     reference, so a value written inside an ``each`` element is still there after the element.
     """
+    udfs: Mapping[str, Any] = field(default_factory=dict)
+    """The run's udf table (process-wide defaults plus the run's overlay), shared by every scope."""
     parent: Scope | None = None
     step_input: Any = _NO_STEP_INPUT
     iteration: int | None = None
@@ -192,6 +194,7 @@ class Scope:
             globals=self.globals,
             products=self.products,
             public=self.public,
+            udfs=self.udfs,
             parent=self,
             step_input=self.step_input,
             iteration=iteration,

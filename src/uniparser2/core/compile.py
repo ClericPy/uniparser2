@@ -13,8 +13,6 @@ from typing import Any, Final
 
 from . import registry
 from .ast import (
-    MAX_STAGE_LEN,
-    REF_OPERATOR,
     TRY_OPERATOR,
     CompiledField,
     CompiledStage,
@@ -33,13 +31,9 @@ from .values import type_name
 logger = logging.getLogger("uniparser2")
 
 _DIRECTIVE_PREFIX = "$"
-INDEX_FIELD: Final = "next"
-"""The field-map key whose value is a **routing target** rather than an extraction (`03` §4.1.1).
-
-A task item's `next` names the step that receives that answer, exactly like the step-level `next`,
-so a plain string there is that step's name. Every other field-map value keeps the ordinary chain
-rule.
-"""
+NODE_OPERATOR: Final = "node"
+TYPE_OPERATOR: Final = "type"
+"""The two story-aware stages: a node call and a chain-tail type check."""
 
 
 def compile_field(
@@ -47,26 +41,22 @@ def compile_field(
     /,
     *,
     products: Iterable[str] = (),
+    nodes: Iterable[str] = (),
     depth: int = 0,
     pointer: str = "",
     name: str = "",
-    index_key: bool = False,
 ) -> CompiledField:
-    """Compile a stage array / field chain / reference / JSON string into ``CompiledField``.
+    """Compile a stage array / field chain / JSON string into ``CompiledField``.
 
-    A string beginning with ``$`` is a **whole-chain reference** (`03` §2): the field is the value
-    that reference names, unchanged. It is the only way to express identity -- no single-element
-    stage form exists -- and it resolves through the same reference checks a parameter's reference
-    does, so an unknown root and a self-reference fail here.
+    An empty array is the **identity**: the chain answers the value it received, with no stage
+    evaluated. ``[]`` is the only identity form; a string in chain position is not accepted.
 
-    ``index_key`` marks a field-map field whose name is a **routing key** (``next``): a plain string
-    there is the routing value itself (`03` §4.1.1), the same way a step-level ``next`` is a string,
-    instead of a JSON document to parse.
+    ``nodes`` is the story's node table (empty for a standalone chain): a ``["node", name]`` stage
+    is checked against it, and a chain outside a story cannot call a node.
 
     ``depth`` counts the enclosing ``each`` field maps, ``pointer`` is the JSON Pointer prefix this
-    chain sits at inside the chain being compiled, and ``name`` is the field-map key it is compiled
-    as (the trace's ``field``, `06` §5.1); all three stay at their defaults for a top-level chain,
-    and are non-default only for a sub-chain.
+    chain sits at inside the chain being compiled, and ``name`` is the field-map key it was compiled
+    as (the trace's ``field``, `06` §5.1).
     """
     if depth > MAX_EACH_DEPTH:
         raise Up2Error(
@@ -77,11 +67,11 @@ def compile_field(
                 pointer=pointer,
             )
         )
-    if is_ref_text(source):
-        return _compile_ref_field(source, products=products, pointer=pointer, name=name)
-    if index_key and isinstance(source, str):
-        return _compile_literal_field(source, products=products, pointer=pointer, name=name)
-    source_stages = _as_stages(source, pointer=pointer)
+    source_stages = (
+        tuple(source.source)
+        if isinstance(source, CompiledField)
+        else loads(source, pointer=pointer)
+    )
     if len(source_stages) > MAX_STEPS_PER_FIELD:
         raise Up2Error(
             diag(
@@ -94,24 +84,38 @@ def compile_field(
             )
         )
     declared = tuple(dict.fromkeys(products))
-    # The first stage is a marker when the chain opens with a whole-chain reference: it is not an
-    # operator, so it is checked as the reference it is and skipped by the stage loop (`03` §2).
-    opening = source_stages[0] if source_stages and source_stages[0].op == REF_OPERATOR else None
-    if opening is not None:
-        _check_refs({"ref": opening.slot1}, products=declared, pointer=pointer)
+    node_names = tuple(dict.fromkeys(nodes))
     stages = tuple(
-        compile_stage(stage, index=index, products=declared, depth=depth, pointer=pointer)
+        compile_stage(
+            stage,
+            index=index,
+            products=declared,
+            nodes=node_names,
+            depth=depth,
+            pointer=pointer,
+        )
         for index, stage in enumerate(source_stages)
-        if not _is_ref_stage(stage)
     )
     _check_try_directives(source_stages, pointer=pointer)
+    _check_type_tail(stages, pointer=pointer)
     logger.debug("compiled field: steps=%d ops=%s", len(stages), [item.op_name for item in stages])
     return CompiledField(stages=stages, source=source_stages, name=name)
 
 
-def _is_ref_stage(stage: Stage) -> bool:
-    """Whether a source stage is the marker of a whole-chain reference rather than an operator."""
-    return stage.op == REF_OPERATOR
+def _check_type_tail(stages: tuple[CompiledStage, ...], *, pointer: str) -> None:
+    """A `type` stage must be the last stage of its chain."""
+    for position, stage in enumerate(stages):
+        if stage.op_name != TYPE_OPERATOR:
+            continue
+        if position != len(stages) - 1:
+            raise Up2Error(
+                diag(
+                    "UP2-E1005",
+                    "a `type` stage must be the last stage of its chain",
+                    fix="move it to the end, or validate the value with a separate node",
+                    pointer=f"{pointer}/{position}",
+                )
+            )
 
 
 def _check_try_directives(source_stages: tuple[Stage, ...], *, pointer: str) -> None:
@@ -145,7 +149,14 @@ def _check_try_directives(source_stages: tuple[Stage, ...], *, pointer: str) -> 
 
 
 def compile_stage(
-    raw: Any, /, *, index: int = 0, products: Iterable[str] = (), depth: int = 0, pointer: str = ""
+    raw: Any,
+    /,
+    *,
+    index: int = 0,
+    products: Iterable[str] = (),
+    nodes: Iterable[str] = (),
+    depth: int = 0,
+    pointer: str = "",
 ) -> CompiledStage:
     """Compile a single stage. ``pointer`` is the prefix of the chain this stage belongs to."""
     pointer = f"{pointer}/{index}"
@@ -186,9 +197,12 @@ def compile_stage(
         preset=instance.action_params(action, action_text),
         pointer=f"{pointer}/{param_slot}",
         products=tuple(products),
+        nodes=tuple(nodes),
         depth=depth,
     )
     _check_refs(params, products=tuple(products), pointer=f"{pointer}/{param_slot}")
+    if instance.name == NODE_OPERATOR:
+        _check_node_name(params, nodes=tuple(nodes), pointer=f"{pointer}/{param_slot}")
     payload = instance.precompile(action, params, pointer=f"{pointer}/{param_slot}")
     return CompiledStage(
         index=index,
@@ -198,6 +212,22 @@ def compile_stage(
         params=params,
         payload=payload,
     )
+
+
+def _check_node_name(params: Mapping[str, Param], *, nodes: tuple[str, ...], pointer: str) -> None:
+    """A `node` stage names a node of the same story, checked at compile time."""
+    raw = params["node"]
+    name = raw.value if isinstance(raw, Lit) else raw
+    if not isinstance(name, str) or name not in nodes:
+        raise Up2Error(
+            diag(
+                "UP2-E1016",
+                f"the node call names {name!r}, which is not a node of this story",
+                fix="name a node of this story; a standalone chain has no nodes to call",
+                pointer=pointer,
+                allowed=nodes,
+            )
+        )
 
 
 def _compile_try_stage(stage: Stage, /, *, index: int, pointer: str) -> CompiledStage:
@@ -225,63 +255,6 @@ def _compile_try_stage(stage: Stage, /, *, index: int, pointer: str) -> Compiled
         params={},
         payload=policy,
     )
-
-
-def _compile_ref_field(
-    source: object, /, *, products: Iterable[str], pointer: str, name: str
-) -> CompiledField:
-    """A chain written as a whole-chain reference: one reference, no stage (`03` §2)."""
-    ref = parse_ref(str(source), pointer=pointer)
-    _check_refs({"ref": ref}, products=tuple(products), pointer=pointer)
-    marker = Stage(op=REF_OPERATOR, slot1=ref, slot2=None, length=2)
-    return CompiledField(stages=(), source=(marker,), name=name, ref=ref)
-
-
-def _compile_literal_field(
-    source: str, /, *, products: Iterable[str], pointer: str, name: str
-) -> CompiledField:
-    """A routing key written as a plain string: the value itself, as a one-stage chain.
-
-    A task item's `next` is a step name, exactly like the step-level `next`, so the string is the
-    value the field holds -- not a JSON document to parse and not a reference (`03` §4.1.1).
-    """
-    literal = Stage(op="py", slot1="const", slot2=source, length=MAX_STAGE_LEN)
-    compiled = compile_stage(literal, index=0, products=products, pointer=pointer)
-    return CompiledField(stages=(compiled,), source=(literal,), name=name)
-
-
-def _as_stages(source: Any, *, pointer: str = "") -> tuple[Stage, ...]:
-    """A source that carries no whole-chain reference, as its stages.
-
-    ``["$in", ["py","getattr","url"]]`` is a **chain** that opens with a reference, not a single
-    stage: a stage's first slot is an operator name, and a reference is not one (`03` §2).
-    """
-    if isinstance(source, CompiledField):
-        return source.source
-    if _opens_with_ref(source):
-        marker = _opening_ref_stage(source[0], pointer=pointer)
-        rest = tuple(
-            parse_stage(item, pointer=f"{pointer}/{index}")
-            for index, item in enumerate(source)
-            if index > 0
-        )
-        return (marker, *rest)
-    return loads(source, pointer=pointer)
-
-
-def _opening_ref_stage(raw: Any, *, pointer: str) -> Stage:
-    """The marker stage of a chain that opens with a whole-chain reference."""
-    return Stage(
-        op=REF_OPERATOR,
-        slot1=parse_ref(str(raw), pointer=pointer),
-        slot2=None,
-        length=2,
-    )
-
-
-def _opens_with_ref(source: Any) -> bool:
-    """Whether a chain source is an array whose first element is a whole-chain reference."""
-    return isinstance(source, (list, tuple)) and bool(source) and is_ref_text(source[0])
 
 
 def _slot(stage: Stage, index: int | None) -> Any:
@@ -317,6 +290,7 @@ def _build_params(
     preset: Mapping[str, Param],
     pointer: str,
     products: tuple[str, ...] = (),
+    nodes: tuple[str, ...] = (),
     depth: int = 0,
 ) -> dict[str, Param]:
     """Bind slot 3 by the action's declaration (02 §4).
@@ -329,7 +303,14 @@ def _build_params(
     active = tuple(param for param in spec.params if param.name not in preset)
     if not present:
         return _fill_defaults(
-            spec, active, {}, preset=preset, pointer=pointer, products=products, depth=depth
+            spec,
+            active,
+            {},
+            preset=preset,
+            pointer=pointer,
+            products=products,
+            nodes=nodes,
+            depth=depth,
         )
     if not active:
         raise Up2Error(
@@ -351,6 +332,7 @@ def _build_params(
             preset=preset,
             pointer=pointer,
             products=products,
+            nodes=nodes,
             depth=depth,
         )
     if isinstance(raw, dict):
@@ -365,7 +347,14 @@ def _build_params(
         )
     if isinstance(raw, (list, tuple)):
         return _positional_params(
-            spec, active, raw, preset=preset, pointer=pointer, products=products, depth=depth
+            spec,
+            active,
+            raw,
+            preset=preset,
+            pointer=pointer,
+            products=products,
+            nodes=nodes,
+            depth=depth,
         )
     # A scalar given to a multi-parameter action fills the first parameter; the rest take their
     # defaults (xpath's expression without a namespace map, for example).
@@ -376,6 +365,7 @@ def _build_params(
         preset=preset,
         pointer=pointer,
         products=products,
+        nodes=nodes,
         depth=depth,
     )
 
@@ -388,6 +378,7 @@ def _positional_params(
     preset: Mapping[str, Param],
     pointer: str,
     products: tuple[str, ...] = (),
+    nodes: tuple[str, ...] = (),
     depth: int = 0,
 ) -> dict[str, Param]:
     required = sum(1 for param in active if param.required)
@@ -418,6 +409,7 @@ def _positional_params(
         preset=preset,
         pointer=pointer,
         products=products,
+        nodes=nodes,
         depth=depth,
         keys={param.name: index for index, param in enumerate(active)},
     )
@@ -437,6 +429,7 @@ def _fill_defaults(
     preset: Mapping[str, Param],
     pointer: str,
     products: tuple[str, ...] = (),
+    nodes: tuple[str, ...] = (),
     depth: int = 0,
     keys: Mapping[str, int] | None = None,
 ) -> dict[str, Param]:
@@ -450,6 +443,7 @@ def _fill_defaults(
                 values[param.name],
                 pointer=f"{pointer}/{suffix}",
                 products=products,
+                nodes=nodes,
                 depth=depth,
             )
         elif param.required:
@@ -473,6 +467,7 @@ def _resolve_param(
     *,
     pointer: str,
     products: tuple[str, ...] = (),
+    nodes: tuple[str, ...] = (),
     depth: int = 0,
 ) -> Param:
     """Resolve by kind; containers are walked recursively (leaves take the same parameter kind).
@@ -481,16 +476,18 @@ def _resolve_param(
     instead of being walked as values.
     """
     if spec.kind is registry.Kind.FIELDS:
-        return _resolve_field_map(spec, raw, pointer=pointer, products=products, depth=depth)
+        return _resolve_field_map(
+            spec, raw, pointer=pointer, products=products, nodes=nodes, depth=depth
+        )
     if spec.kind is registry.Kind.FIELDS_OR_CHAIN:
         return _resolve_field_map_or_chain(
-            spec, raw, pointer=pointer, products=products, depth=depth
+            spec, raw, pointer=pointer, products=products, nodes=nodes, depth=depth
         )
     if spec.kind is registry.Kind.LITERAL:
         return Lit(raw)
     if isinstance(raw, list):
         return [
-            _resolve_param(spec, item, pointer=pointer, products=products, depth=depth)
+            _resolve_param(spec, item, pointer=pointer, products=products, nodes=nodes, depth=depth)
             for item in raw
         ]
     if isinstance(raw, dict):
@@ -500,7 +497,9 @@ def _resolve_param(
             if quoted is not None:
                 return quoted
         return {
-            key: _resolve_param(spec, item, pointer=pointer, products=products, depth=depth)
+            key: _resolve_param(
+                spec, item, pointer=pointer, products=products, nodes=nodes, depth=depth
+            )
             for key, item in raw.items()
         }
     return _resolve_leaf(spec, raw, pointer=pointer)
@@ -535,14 +534,21 @@ def _resolve_field_map_or_chain(
     *,
     pointer: str,
     products: tuple[str, ...],
+    nodes: tuple[str, ...],
     depth: int,
 ) -> dict[str, CompiledField] | CompiledField:
     """``each``'s parameter: an object is a field map, an array is one chain (design D8)."""
     if isinstance(raw, Mapping):
-        return _resolve_field_map(spec, raw, pointer=pointer, products=products, depth=depth)
+        return _resolve_field_map(
+            spec, raw, pointer=pointer, products=products, nodes=nodes, depth=depth
+        )
     if isinstance(raw, (list, tuple)):
         return compile_field(
-            raw, products=products, depth=depth + 1, pointer=pointer, name=spec.name
+            raw,
+            products=products,
+            nodes=nodes,
+            depth=depth + 1,
+            pointer=pointer,
         )
     raise Up2Error(
         diag(
@@ -561,10 +567,13 @@ def _resolve_field_map(
     *,
     pointer: str,
     products: tuple[str, ...],
+    nodes: tuple[str, ...],
     depth: int,
 ) -> dict[str, CompiledField]:
     """Compile a **field map** (``each``'s argument), named after the parameter for diagnostics."""
-    return compile_field_map(spec.name, raw, products=products, depth=depth, pointer=pointer)
+    return compile_field_map(
+        spec.name, raw, products=products, nodes=nodes, depth=depth, pointer=pointer
+    )
 
 
 def compile_field_map(
@@ -573,6 +582,7 @@ def compile_field_map(
     /,
     *,
     products: tuple[str, ...] = (),
+    nodes: tuple[str, ...] = (),
     depth: int = 0,
     pointer: str = "",
 ) -> dict[str, CompiledField]:
@@ -580,8 +590,8 @@ def compile_field_map(
 
     The compiled chains are the payload the runtime only evaluates, so the shape is checked here:
     it must be non-empty, no larger than ``MAX_FIELDS_PER_MAP``, and every name addressable by a
-    reference path. ``each``'s argument and a story step's ``parse`` object are the same object
-    shape, which is why this is public (the story layer compiles a step's field map with it).
+    reference path. ``each``'s argument and a story node's field map are the same object shape,
+    which is why this is public (the story layer compiles a node's field map with it).
     """
     if not isinstance(raw, Mapping):
         raise Up2Error(
@@ -597,10 +607,10 @@ def compile_field_map(
         str(field): compile_field(
             item,
             products=products,
+            nodes=nodes,
             depth=depth + 1,
             pointer=f"{pointer}/{field}",
             name=str(field),
-            index_key=str(field) == INDEX_FIELD,
         )
         for field, item in raw.items()
     }

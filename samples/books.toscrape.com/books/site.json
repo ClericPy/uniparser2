@@ -2,93 +2,65 @@
   "globals": {
     "base_url": "https://books.toscrape.com/"
   },
-  "entry": "start",
-  "steps": [
-    {
-      "name": "start",
-      "body": {
-        "url": [["py", "strip"]]
-      },
-      "type": "Request",
-      "next": "channels"
-    },
-    {
-      "name": "channels",
-      "body": {
-        "items": [
-          ["py", "getattr", "text"],
-          ["css", "@href", "div.side_categories ul li ul li a"],
-          ["py", "slice", ":2"],
-          [
-            "each",
-            {
-              "url": [["py", "urljoin", "$globals.base_url"]],
-              "next": "shelf_page"
-            }
-          ]
-        ]
-      },
-      "type": "RequestBatch",
-      "next": "shelf_page"
-    },
-    {
-      "name": "shelf_page",
-      "body": [
+  "nodes": {
+    "store": [
+      ["node", "books"],
+      ["udf", "store_books"]
+    ],
+    "books": [
+      ["node", "channels"],
+      ["each", [["node", "shelf"]]],
+      ["py", "flatten"],
+      ["py", "slice", ":3"]
+    ],
+    "channels": [
+      ["py", "strip"],
+      ["ctx", "dict", {"url": "obj"}],
+      ["udf", "fetch"],
+      ["py", "getattr", "text"],
+      ["css", "@href", "div.side_categories ul li ul li a"],
+      ["py", "slice", ":2"]
+    ],
+    "shelf": [
+      ["py", "strip"],
+      ["py", "urljoin", "$globals.base_url"],
+      ["ctx", "set", "locals._channel"],
+      ["ctx", "dict", {"url": "obj"}],
+      ["udf", "fetch"],
+      ["py", "getattr", "text"],
+      ["css", "@href", "article.product_pod h3 a"],
+      ["each", [["node", "book_link"]]]
+    ],
+    "book_link": [
+      ["py", "strip"],
+      ["py", "urljoin", "$locals._channel"],
+      ["ctx", "dict", {"url": "obj"}],
+      ["udf", "fetch"],
+      ["node", "book_fields"],
+      ["type", "Book"]
+    ],
+    "book_fields": {
+      "url": [["py", "getattr", "url"]],
+      "title": [
         ["py", "getattr", "text"],
-        ["css", "@href", "article.product_pod h3 a"],
-        [
-          "each",
-          {
-            "url": [["py", "urljoin", "$in.url"]]
-          }
-        ]
+        ["css1", "text", "div.product_main h1"],
+        ["py", "normalize_space"]
       ],
-      "type": "ShelfPage"
-    },
-    {
-      "name": "shelf",
-      "body": {
-        "items": [["py","flatten"], ["py", "slice", ":3"]]
-      },
-      "type": "RequestBatch",
-      "next": "book"
-    },
-    {
-      "name": "book",
-      "body": {
-        "url": [["py", "getattr", "url"]],
-        "title": [
-          ["py", "getattr", "text"],
-          ["css1", "text", "div.product_main h1"],
-          ["py","normalize_space"]
-        ],
-        "price": [
-          ["py", "getattr", "text"],
-          ["css1", "text", "p.price_color"],
-          ["py","strip"]
-        ],
-        "availability": [
-          ["py", "getattr", "text"],
-          ["css1", "text", "p.instock.availability"],
-          ["py","normalize_space"]
-        ],
-        "description": [
-          ["py", "getattr", "text"],
-          ["css1", "text", "#product_description + p"],
-          ["py","normalize_space"]
-        ]
-      },
-      "type": "Book"
-    },
-    {
-      "name": "store",
-      "call": "host.store_books",
-      "args": {
-        "table": "books",
-        "records": "$in"
-      },
-      "type": "dict"
+      "price": [
+        ["py", "getattr", "text"],
+        ["css1", "text", "p.price_color"],
+        ["py", "strip"]
+      ],
+      "availability": [
+        ["py", "getattr", "text"],
+        ["css1", "text", "p.instock.availability"],
+        ["py", "normalize_space"]
+      ],
+      "description": [
+        ["py", "getattr", "text"],
+        ["css1", "text", "#product_description + p"],
+        ["py", "normalize_space"]
+      ]
     }
-  ],
-  "collect": "store"
+  }
 }

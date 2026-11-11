@@ -54,9 +54,8 @@ class Response:
 def fetch(request: Mapping[str, Any]) -> Response:
     """Send one request and answer with the response.
 
-    The request is the kernel's ``Request`` product: ``url`` (required), ``method`` (default
-    ``GET``), ``headers``, ``timeout``, ``body``, ``params`` and ``json``. An unknown key is
-    ignored.
+    The request is a request object with ``url`` (required), ``method`` (default ``GET``),
+    ``headers``, ``timeout``, ``body``, ``params`` and ``json``. An unknown key is ignored.
 
     A request that cannot be sent raises: an unreachable host, a timeout, a refused scheme. A host
     that needs to tell "no answer" from "an empty page" has to see the difference.

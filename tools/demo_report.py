@@ -905,7 +905,6 @@ def _prefix_of(compiled: Any, index: int) -> Any:
         stages=compiled.stages[: index + 1],
         source=compiled.source,
         name=compiled.name,
-        ref=compiled.ref,
     )
 
 

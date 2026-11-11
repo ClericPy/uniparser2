@@ -120,6 +120,14 @@ The kernel injects one into :class:`Call`, so the operator never imports the eva
 sub-chain is evaluated under **the policy in force for the chain that owns it**.
 """
 
+NodeRunner = Callable[[str, Any, Scope], Any]
+"""How the ``node`` operator runs a named node: ``(name, value, scope) -> product``.
+
+The story layer injects one; a standalone chain has no node table, so its ``node`` stages are
+rejected at compile time and this runner is never reached. The scope is the caller's current scope,
+so the callee shares its ``$locals`` and its fan-out position.
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class Call:
@@ -139,6 +147,7 @@ class Call:
     scope: Scope
     run_chain: ChainRunner
     cache: Materializer
+    run_node: NodeRunner | None = None
 
 
 class Op(ABC):

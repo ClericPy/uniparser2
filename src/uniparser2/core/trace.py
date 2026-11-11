@@ -1,18 +1,17 @@
-"""The trace: one event per evaluated stage, plus one per effect suspension (`06` §5.1, `03` §4.4).
+"""The trace: one event per evaluated stage (design doc 06 §5.1, 03 §5.4).
 
-A trace is a **debugging aid**, not the replay format (`03` §13 O6): what makes a run replayable is
-the host's own log of the answers it sent, while a trace is lossy by construction — every value is
+A trace is a **debugging aid**, not the replay format (`03` §13): what makes a run replayable is the
+host's own log of what its udfs answered, while a trace is lossy by construction — every value is
 replaced by ``type`` / ``preview`` / ``size`` and the whole value is fetched by ``seq`` from this
 object's memory, which lives exactly as long as the trace does.
 
 Nothing is collected unless a caller asks for a trace: ``eval_field(..., trace=...)`` and
-``start(bundle, value, trace=...)`` are the two injection points, and a run without one behaves
-exactly as it did before (`stamp(None)` reads no clock).
+``run(..., trace=...)`` are the two injection points, and a run without one behaves exactly as it
+did before (`stamp(None)` reads no clock).
 
-The event's ``item`` is the fan-out index, and it has two sources because a story fans out in two
-places: the scope of one `each` iteration carries the element's position (the operator hands it over
-when it asks for that scope), and the story layer numbers the answers of a `RequestBatch` fan-out.
-When both are active the innermost index wins — the event is about the field chain that is running.
+The event's ``item`` is the fan-out index: the scope of one `each` iteration carries the element's
+position, which the operator hands over when it asks for that scope. A node call enters the callee's
+name for its stages and restores the caller's on return.
 """
 
 from __future__ import annotations
@@ -32,10 +31,6 @@ PREVIEW_LIMIT: Final = 200
 
 STATE_OK: Final = "Ok"
 STATE_FAILED: Final = "Failed"
-
-EFFECT_REQUEST: Final = "request"
-EFFECT_BATCH: Final = "batch"
-EFFECT_CALL: Final = "call"
 
 INPUT_SIDE: Final = "input"
 OUTPUT_SIDE: Final = "output"
@@ -75,14 +70,10 @@ def elapsed_ms(started_at: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class TraceEvent:
-    """One row of the trial bench's table (`06` §5.1): a stage, or a suspension.
-
-    ``effect`` is set on a suspension event (``request`` / ``batch`` / ``call``) and left out of the
-    JSON for a stage event, which is the shape `06` §5.1 documents.
-    """
+    """One row of the trial bench's table (`06` §5.1): one evaluated stage."""
 
     seq: int
-    step: str | None
+    node: str | None
     item: int | None
     field: str | None
     stage: int | None
@@ -94,13 +85,12 @@ class TraceEvent:
     state: str
     detail: dict[str, str] | None
     ms: float
-    effect: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """The event as JSON data (``up2 trial --trace --json``)."""
-        payload: dict[str, Any] = {
+        return {
             "seq": self.seq,
-            "step": self.step,
+            "node": self.node,
             "item": self.item,
             "field": self.field,
             "stage": self.stage,
@@ -113,26 +103,24 @@ class TraceEvent:
             "detail": self.detail,
             "ms": self.ms,
         }
-        if self.effect is not None:
-            payload["effect"] = self.effect
-        return payload
 
 
 class Trace:
     """The events of one run, and the values their previews stand for (`06` §5.1).
 
     The recording methods are the kernel's own writers: the evaluator calls :meth:`stage` per
-    evaluated stage, the story layer calls :meth:`enter` per step and :meth:`effect` per suspension.
+    evaluated stage, and the story layer calls :meth:`enter` / :meth:`leave` around a node call.
     """
 
-    __slots__ = ("_events", "_field", "_item", "_step", "_values")
+    __slots__ = ("_events", "_field", "_item", "_node", "_stack", "_values")
 
     def __init__(self) -> None:
         self._events: list[TraceEvent] = []
         self._values: dict[int, dict[str, Any]] = {}
-        self._step: str | None = None
+        self._node: str | None = None
         self._field: str | None = None
         self._item: int | None = None
+        self._stack: list[tuple[str | None, str | None, int | None]] = []
 
     def __len__(self) -> int:
         return len(self._events)
@@ -156,9 +144,15 @@ class Trace:
 
     # ------------------------------------------------------------ recording
 
-    def enter(self, step: str, /, *, item: int | None = None) -> None:
-        """Point the trace at the step the events that follow belong to (clears the field)."""
-        self._step, self._field, self._item = step, None, item
+    def enter(self, node: str, /, *, item: int | None = None) -> None:
+        """Point the trace at the node the events that follow belong to (clears the field)."""
+        self._stack.append((self._node, self._field, self._item))
+        self._node, self._field, self._item = node, None, item
+
+    def leave(self) -> None:
+        """Restore the node the trace was pointing at before the matching :meth:`enter`."""
+        if self._stack:
+            self._node, self._field, self._item = self._stack.pop()
 
     def stage(
         self,
@@ -172,14 +166,10 @@ class Trace:
         ms: float,
         position: int | None = None,
     ) -> None:
-        """Record one evaluated stage, with the fan-out index of the scope it ran in.
-
-        ``position`` is the stage's index inside the chain **source**; it is the stage's own index
-        except when the chain opens with a whole-chain reference, whose marker occupies slot 0.
-        """
+        """Record one evaluated stage, with the fan-out index of the scope it ran in."""
         state, detail = _state_of(outcome)
         self._emit(
-            step=self._step,
+            node=self._node,
             item=scope.iteration if scope.iteration is not None else self._item,
             field=field,
             stage=stage.index if position is None else position,
@@ -193,43 +183,10 @@ class Trace:
             ms=ms,
         )
 
-    def effect(
-        self,
-        kind: str,
-        /,
-        *,
-        step: str,
-        incoming: Any,
-        handed_out: Any,
-        ms: float,
-        action: str | None = None,
-        params: Mapping[str, Param] | None = None,
-    ) -> None:
-        """Record one suspension: what the step received, and what the kernel handed the host.
-
-        A suspension is not an error (`03` §5), so its state is ``Ok`` and its kind travels in
-        ``effect``: a request, a batch of tasks, or a host function with the arguments it receives.
-        """
-        self._emit(
-            step=step,
-            item=self._item,
-            field=None,
-            stage=None,
-            op=None,
-            action=action,
-            params=None if params is None else compiled_params(params),
-            incoming=incoming,
-            outgoing=handed_out,
-            state=STATE_OK,
-            detail=None,
-            ms=ms,
-            effect=kind,
-        )
-
     def _emit(
         self,
         *,
-        step: str | None,
+        node: str | None,
         item: int | None,
         field: str | None,
         stage: int | None,
@@ -241,13 +198,12 @@ class Trace:
         state: str,
         detail: dict[str, str] | None,
         ms: float,
-        effect: str | None = None,
     ) -> None:
         seq = len(self._events) + 1
         self._events.append(
             TraceEvent(
                 seq=seq,
-                step=step,
+                node=node,
                 item=item,
                 field=field,
                 stage=stage,
@@ -259,7 +215,6 @@ class Trace:
                 state=state,
                 detail=detail,
                 ms=ms,
-                effect=effect,
             )
         )
         self._values[seq] = {INPUT_SIDE: incoming, OUTPUT_SIDE: outgoing}
@@ -287,13 +242,7 @@ def compiled_params(params: Mapping[str, Param]) -> JsonValue:
 
 
 def _chain_json(node: CompiledField) -> JsonValue:
-    """One compiled chain: its reference, or its stages (`06` §5.1).
-
-    A chain written as a whole-chain reference has no stage (`03` §2), so it renders as the
-    reference it is -- exactly as a reference parameter does, never as an operator not there.
-    """
-    if node.ref is not None:
-        return {"kind": "chain", "ref": _param_json(node.ref)}
+    """One compiled chain: its stages, in source order (`06` §5.1)."""
     return {
         "kind": "chain",
         "stages": [
@@ -328,9 +277,6 @@ def _param_json(node: Any) -> JsonValue:
 
 
 __all__ = [
-    "EFFECT_BATCH",
-    "EFFECT_CALL",
-    "EFFECT_REQUEST",
     "INPUT_SIDE",
     "OUTPUT_SIDE",
     "PREVIEW_LIMIT",

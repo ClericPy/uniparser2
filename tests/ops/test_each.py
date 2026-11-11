@@ -291,5 +291,5 @@ def test_a_failure_in_the_chain_mode_stops_the_iteration() -> None:
     assert outcome.code == "UP2-E2005"
 
 
-def test_an_empty_chain_is_refused() -> None:
-    assert diagnostic([["each", []]]).code == "UP2-E1004"
+def test_an_empty_chain_is_identity_per_element() -> None:
+    assert run([["each", []]], ["a", "b"]) == Ok(["a", "b"])

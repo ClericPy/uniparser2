@@ -19,21 +19,15 @@ from uniparser2.cli.main import EXIT_FAILED, EXIT_OK, EXIT_USAGE, main
 DOMAIN = "local"
 KEY = "demo"
 STORY = {
-    "entry": "record",
-    "steps": [
-        {
-            "name": "record",
-            "body": {
-                "title": [["py", "normalize_space"], ["py", "upper"]],
-            },
-            "type": "dict",
+    "nodes": {
+        "record": {
+            "title": [["py", "normalize_space"], ["py", "upper"]],
         }
-    ],
-    "collect": "record",
+    }
 }
 CHAIN = [["py", "normalize_space"], ["py", "upper"]]
 INPUT = "  hello   world  "
-EXPECTED = [{"title": "HELLO WORLD"}]
+EXPECTED = {"title": "HELLO WORLD"}
 
 
 def write_json(path: Path, payload: object) -> Path:
@@ -192,17 +186,15 @@ def test_snapshot_refuses_a_story_that_requests(tmp_path: Path, capsys) -> None:
     samples = tmp_path / "samples"
     make_case(samples, expected=None)
     story = {
-        "entry": "seed",
-        "steps": [
-            {
-                "name": "seed",
-                "body": {"url": "$in"},
-                "type": "Request",
-                "next": "rec",
-            },
-            {"name": "rec", "body": {"u": [["py", "getattr", "text"]]}},
-        ],
-        "collect": "rec",
+        "nodes": {
+            "rec": {
+                "u": [
+                    ["ctx", "dict", {"url": "obj"}],
+                    ["udf", "fetch"],
+                    ["py", "getattr", "text"],
+                ],
+            }
+        }
     }
     path = write_json(tmp_path / "site.json", story)
     code = main(
@@ -240,11 +232,11 @@ def test_publish_regresses_the_samples(
     assert first["changed"] is True
 
     # The page changed under the chain: the snapshot no longer matches.
-    make_case(samples, expected=[{"title": "HELLO"}])
+    make_case(samples, expected={"title": "HELLO"})
     assert publish(tmp_path, samples, STORY, "--json") == EXIT_FAILED
     payload = json.loads(capsys.readouterr().out)
     assert payload["code"] == "UP2-E3005"
-    assert "/0/title" in payload["message"]
+    assert "/title" in payload["message"]
     assert "up2 test" in payload["fix"]
     # The refusal wrote nothing: the chain still has exactly the one audit row it was published
     # with, and its fingerprint is unchanged.
@@ -301,18 +293,18 @@ def test_test_reports_every_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     store_home(monkeypatch, tmp_path)
     samples = tmp_path / "samples"
     make_case(samples, case="a")
-    make_case(samples, case="b", text="  other  ", expected=[{"title": "OTHER"}])
+    make_case(samples, case="b", text="  other  ", expected={"title": "OTHER"})
     assert publish(tmp_path, samples, STORY) == EXIT_OK
     capsys.readouterr()
     assert main(["test", DOMAIN, KEY, "--tests-root", str(samples), "--json"]) == EXIT_OK
     assert json.loads(capsys.readouterr().out)["ok"] is True
 
-    make_case(samples, case="b", text="  other  ", expected=[{"title": "OTHER"}])
-    make_case(samples, case="a", expected=[{"title": "hello world"}])
+    make_case(samples, case="b", text="  other  ", expected={"title": "OTHER"})
+    make_case(samples, case="a", expected={"title": "hello world"})
     assert main(["test", DOMAIN, KEY, "--tests-root", str(samples), "--json"]) == EXIT_FAILED
     payload = json.loads(capsys.readouterr().out)
     assert [item["case"] for item in payload["failures"]] == ["a"]
-    assert payload["failures"][0]["differences"][0]["pointer"] == "/0/title"
+    assert payload["failures"][0]["differences"][0]["pointer"] == "/title"
 
 
 def test_test_can_run_one_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -338,10 +330,10 @@ def test_test_prints_the_pointer_in_text_mode(
     make_case(samples)
     assert publish(tmp_path, samples, STORY) == EXIT_OK
     capsys.readouterr()
-    make_case(samples, expected=[{"title": "HELLO"}])
+    make_case(samples, expected={"title": "HELLO"})
     assert main(["test", DOMAIN, KEY, "--tests-root", str(samples)]) == EXIT_FAILED
     out = capsys.readouterr().out
-    assert "/0/title" in out and "expect" in out
+    assert "/title" in out and "expect" in out
 
 
 def test_test_without_a_chain_is_not_found(

@@ -29,7 +29,6 @@ from uniparser2 import (
     compile_field,
     eval_field,
     pack,
-    start,
 )
 from uniparser2.core import registry
 from uniparser2.core.materialize import Materializer
@@ -325,42 +324,36 @@ def test_empty_selector_compiles_on_real_engine() -> None:
 
 def test_one_document_is_materialized_once_per_run(fake: FakeEngine) -> None:
     """Twenty fields over one document are one parse, not twenty (``03`` §6)."""
-    bundle = {
-        "entry": "record",
-        "steps": [
+    scope = Scope()
+    chain = [
+        ["py", "const", ["<p>x</p>"]],
+        [
+            "each",
             {
-                "name": "record",
-                "body": {
-                    "title": [["css1", "text", "h1"]],
-                    "link": [["css1", "@href", "a"]],
-                    "all": [["css", "text", "a"]],
-                },
-                "type": "dict",
-            }
+                "title": [["css1", "text", "h1"]],
+                "link": [["css1", "@href", "a"]],
+                "all": [["css", "text", "a"]],
+            },
         ],
-        "collect": "record",
-    }
-    run = start(bundle, "<p>x</p>")
-    assert run.go() == ("done", [{"title": "Title", "link": "/p/1", "all": ["One", "Two"]}])
-    cache = run.scope.materializer
-    assert len(cache) == 1
-    assert cache.bytes == run.scope.materializer.bytes
+    ]
+    assert eval_field(compile_field(chain), None, scope=scope) == Ok(
+        [{"title": "Title", "link": "/p/1", "all": ["One", "Two"]}]
+    )
+    assert len(scope.materializer) == 1
 
 
 def test_two_runs_do_not_share_a_document(fake: FakeEngine) -> None:
     """Nothing is shared across runs: each run materializes its own (``03`` §6)."""
-    bundle = {
-        "entry": "a",
-        "steps": [{"name": "a", "body": {"t": [["css1", "text", "h1"]]}}],
-        "collect": "a",
-    }
-    first = start(bundle, "<p>x</p>")
-    second = start(bundle, "<p>x</p>")
-    first.go()
-    second.go()
-    assert first.scope.materializer is not second.scope.materializer
-    assert len(first.scope.materializer) == 1
-    assert len(second.scope.materializer) == 1
+    chain = compile_field(
+        [["py", "const", ["<p>x</p>"]], ["each", {"t": [["css1", "text", "h1"]]}]]
+    )
+    first = Scope()
+    second = Scope()
+    assert eval_field(chain, None, scope=first) == Ok([{"t": "Title"}])
+    assert eval_field(chain, None, scope=second) == Ok([{"t": "Title"}])
+    assert first.materializer is not second.materializer
+    assert len(first.materializer) == 1
+    assert len(second.materializer) == 1
 
 
 def test_a_prune_leaves_the_cached_document_alone(fake: FakeEngine) -> None:

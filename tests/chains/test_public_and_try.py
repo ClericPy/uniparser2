@@ -20,7 +20,9 @@ from uniparser2 import (
     Up2Error,
     compile_field,
     eval_field,
-    start,
+)
+from uniparser2 import (
+    run as run_story,
 )
 
 
@@ -71,73 +73,50 @@ def test_the_input_root_stays_read_only() -> None:
 def test_a_node_writes_and_the_next_node_reads() -> None:
     """The point of the scope: a value outlives the node that wrote it."""
     story = {
-        "entry": "write",
-        "steps": [
-            {
-                "name": "write",
-                "body": {"_w": [["py", "const", 42], ["ctx", "set", "public.v"]]},
-                "type": "dict",
-            },
-            {"name": "read", "body": {"v": "$public.v"}, "type": "dict"},
-        ],
-        "collect": "read",
+        "nodes": {
+            "write": [["py", "const", 42], ["ctx", "set", "public.v"]],
+            "read": {"v": [["ctx", "get", "public.v"]]},
+            "both": [["node", "write"], ["node", "read"]],
+        }
     }
-    assert start(story, "seed").go() == ("done", [{"v": 42}])
+    assert run_story(story, "both", "seed") == {"v": 42}
 
 
 def test_public_is_shared_across_the_fan_out() -> None:
     """The scope is run-level, so a value written inside an element outlives the element."""
     story = {
-        "entry": "fan",
-        "steps": [
-            {
-                "name": "fan",
-                "body": {
-                    "rows": [
-                        ["py", "const", ["a", "b"]],
-                        [
-                            "each",
-                            {
-                                "_w": [["py", "const", 1], ["ctx", "set", "public.n"]],
-                                "v": "$public.n",
-                            },
-                        ],
+        "nodes": {
+            "fan": {
+                "rows": [
+                    ["py", "const", ["a", "b"]],
+                    [
+                        "each",
+                        {
+                            "_w": [["py", "const", 1], ["ctx", "set", "public.n"]],
+                            "v": [["ctx", "get", "public.n"]],
+                        },
                     ],
-                },
-                "type": "dict",
-            },
-        ],
-        "collect": "fan",
+                ]
+            }
+        }
     }
-    assert start(story, "seed").go() == ("done", [{"rows": [{"v": 1}, {"v": 1}]}])
+    assert run_story(story, "fan", "seed") == {"rows": [{"v": 1}, {"v": 1}]}
 
 
 def test_public_is_not_chain_data() -> None:
     """The fingerprint covers the chain, not what a run wrote into the shared scope."""
     from uniparser2.store.fingerprint import graph_hash
 
-    story = {
-        "entry": "write",
-        "steps": [
-            {"name": "write", "body": {"_w": [["ctx", "set", "public.v"]]}, "type": "dict"},
-        ],
-        "collect": "write",
-    }
+    story = {"nodes": {"write": [["ctx", "set", "public.v"]]}}
     before = graph_hash(story)
-    start(story, "seed").go()
+    run_story(story, "write", "seed")
     assert graph_hash(story) == before
 
 
 def test_public_is_a_reserved_root() -> None:
-    """A step may not be named after a root."""
+    """A node may not be named after a root."""
     with pytest.raises(Up2Error) as info:
-        start(
-            {
-                "entry": "public",
-                "steps": [{"name": "public", "body": {"v": [["py", "const", 1]]}, "type": "dict"}],
-                "collect": "public",
-            }
-        )
+        run_story({"nodes": {"public": []}}, "public")
     assert info.value.diagnostic.code == "UP2-E1009"
 
 

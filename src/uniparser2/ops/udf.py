@@ -1,24 +1,21 @@
-"""``udf`` operator: call a host-registered named function (design doc 02 §6.10, design D10).
+"""``udf`` operator: call a host-registered named function (design doc 02 §6.10).
 
-The fundamental difference from the old v3 ``udf``: **the chain carries no source code**. The chain
-can only name a function, while the body is reviewed and registered by the host beforehand; an
-unregistered name fails at compile time with ``UP2-E1010``.
+The chain carries no source code; it names a function from **the run's table** (process-wide
+`register_udf` defaults plus `run(udfs={...})`). A name the story uses but the table lacks is
+`UP2-E1010`, reported by `run` before evaluation.
 
-The action slot is the function name, so this operator's action space is **dynamic**
-(``dynamic_actions = True``, the static ``actions`` empty): ``up2 conformance`` declares its
-contract coverage with ``*``.
+Four argument forms (the third slot selects the call):
 
-**A call is unary or nullary** (D10). The upstream value is the only positional argument
-(``f(value)``), or there is none when the function declares no positional parameter (``f()``). The
-stage writes no parameter slot, so the chain cannot configure the call; a function that needs
-configuration takes a payload the chain builds with ``ctx``:
+================  ==========================================================
+``["udf", f]``     ``f(value)`` — the upstream value as one DTO argument
+``["udf", f, "*"]``  ``f(*value)`` — the upstream value must be a list
+``["udf", f, "**"]`` ``f(**value)`` — the upstream value must be a mapping
+``["udf", f, arg]``  ``f(arg)`` — one explicit argument
+================  ==========================================================
 
-    ["ctx","dict",{"value":"obj","lang":"globals.lang"}]
-    ["udf","translate"]
-
-The registered signature is known at compile time, so a function that requires a second argument —
-or a required keyword-only argument — is ``UP2-E1005`` before the run starts. ``ctx`` is no longer
-injected: a parameter named ``ctx`` is an ordinary parameter of the host function.
+A udf may answer **any** value: a response object flows to the next stage and is read with
+``py.getattr``; only the run's exit and a ``["type", …]`` stage require JSON. An awaitable answer is
+``UP2-E2009`` because the kernel is synchronous.
 """
 
 from __future__ import annotations
@@ -28,12 +25,17 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, Final
 
 from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
-from ..core.registry import ActionSpec, Call, Op, op
+from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.udfs import UNREGISTERED_FIX, get_udf, udf_names
-from ..core.values import is_json_value, type_name
+from ..core.values import type_name
+
+_NO_ARGUMENT: Final = object()
+"""Slot 3 was omitted: the upstream value is the DTO argument."""
 
 _DYNAMIC_SPEC: Final = ActionSpec(
-    "call", "call a host-registered function (write the function name in slot 2)"
+    "call",
+    "call a host-registered function (write the function name in slot 2)",
+    (ParamSpec("argument", Kind.REF_OR_LITERAL, required=False, default=_NO_ARGUMENT),),
 )
 
 
@@ -50,17 +52,7 @@ class Udf(Op):
             raise Up2Error(
                 diag(
                     "UP2-E1010",
-                    f"slot 2 of udf must be a registered function name, got {action_text!r}",
-                    fix=UNREGISTERED_FIX,
-                    pointer=pointer,
-                    allowed=udf_names(),
-                )
-            )
-        if get_udf(action_text) is None:
-            raise Up2Error(
-                diag(
-                    "UP2-E1010",
-                    f"the custom function {action_text!r} is not registered",
+                    f"slot 2 of udf must be a function name, got {action_text!r}",
                     fix=UNREGISTERED_FIX,
                     pointer=pointer,
                     allowed=udf_names(),
@@ -72,20 +64,17 @@ class Udf(Op):
         del action  # the dynamic action space shares a single schema
         return _DYNAMIC_SPEC
 
-    def precompile(self, action: str, params: Mapping[str, Any], *, pointer: str = "") -> bool:
-        """Check the registered signature; answer whether the value is passed to it."""
-        del params
+    def precompile(self, action: str, params: Mapping[str, Any], *, pointer: str = "") -> str:
+        """Resolve the call form; check the registered signature when the function is known."""
+        mode = _mode_of(params["argument"])
         function = get_udf(action)
-        if function is None:  # pragma: no cover - resolve_action already rejected it
-            raise Up2Error(
-                diag(
-                    "UP2-E1010",
-                    f"the custom function {action!r} is not registered",
-                    fix=UNREGISTERED_FIX,
-                    pointer=pointer,
-                )
+        if function is not None and mode in ("dto", "arg"):
+            takes_value = _check_signature(
+                action, function, mode=mode, pointer=_action_pointer(pointer)
             )
-        return _check_signature(action, function, pointer=_action_pointer(pointer))
+            if mode == "dto" and not takes_value:
+                return "nullary"
+        return mode
 
     def dynamic_action_summary(self) -> str:
         names = udf_names()
@@ -94,22 +83,66 @@ class Udf(Op):
         return "registered: " + ", ".join(names)
 
     def evaluate(self, call: Call) -> Outcome:
-        function = get_udf(call.action)
-        if function is None:  # pragma: no cover - registration is guaranteed at compile time
+        function = call.scope.udfs.get(call.action) or get_udf(call.action)
+        if function is None:
             return Failed(
                 code="UP2-E1010",
                 reason=f"the custom function {call.action!r} is not registered",
                 fix=UNREGISTERED_FIX,
             )
-        result = function(call.value) if call.payload else function()
-        if not is_json_value(result):
+        mode = call.payload
+        if mode == "star":
+            if not isinstance(call.value, (list, tuple)):
+                return Failed(
+                    code="UP2-E2002",
+                    reason=f"udf.{call.action} with `*` needs a list, got {type_name(call.value)}",
+                    fix="produce a list before the stage, or call the function with one DTO",
+                )
+            result = function(*call.value)
+        elif mode == "dstar":
+            if not isinstance(call.value, Mapping):
+                return Failed(
+                    code="UP2-E2002",
+                    reason=(
+                        f"udf.{call.action} with `**` needs a mapping, got {type_name(call.value)}"
+                    ),
+                    fix="produce an object before the stage, or call the function with one DTO",
+                )
+            if not all(isinstance(key, str) for key in call.value):
+                return Failed(
+                    code="UP2-E2002",
+                    reason=f"udf.{call.action} with `**` needs string keys",
+                    fix="build the mapping with string keys",
+                )
+            result = function(**call.value)
+        elif mode == "arg":
+            result = function(call.params["argument"])
+        elif mode == "nullary" or _accepts_no_positional(function):
+            result = function()
+        else:
+            result = function(call.value)
+        if inspect.isawaitable(result):
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()
             return Failed(
                 code="UP2-E2009",
-                reason=f"udf.{call.action} returned a value that cannot be a product: "
-                f"{type_name(result)}",
-                fix="restrict the return value to str/int/float/bool/None/list/dict",
+                reason=f"udf.{call.action} answered an awaitable, and the kernel is synchronous",
+                fix="call the async function in the host's own event loop and return its value",
             )
         return Ok(result)
+
+
+def _mode_of(raw: Any) -> str:
+    """The call form from the raw slot-3 parameter."""
+    value = raw.value if hasattr(raw, "value") else raw
+    if value is _NO_ARGUMENT:
+        return "dto"
+    if value == "*":
+        return "star"
+    if value == "**":
+        return "dstar"
+    return "arg"
 
 
 def _action_pointer(pointer: str) -> str:
@@ -117,12 +150,12 @@ def _action_pointer(pointer: str) -> str:
     return f"{pointer.rsplit('/', 1)[0]}/1" if "/" in pointer else "/0/1"
 
 
-def _check_signature(function_name: str, function: Any, *, pointer: str) -> bool:
-    """Reject a signature the stage cannot call; answer whether it takes the upstream value."""
+def _check_signature(function_name: str, function: Any, *, mode: str, pointer: str) -> bool:
+    """Reject a signature the selected form cannot call; answer whether it takes the value."""
     try:
         parameters = list(inspect.signature(function).parameters.values())
     except (TypeError, ValueError):
-        # A callable whose signature cannot be read is called as unary, the historical behaviour.
+        # A callable whose signature cannot be read is called with the value, the historical rule.
         return True
     positional = [
         parameter
@@ -136,19 +169,58 @@ def _check_signature(function_name: str, function: Any, *, pointer: str) -> bool
         for parameter in parameters
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY and parameter.default is parameter.empty
     ]
-    if len(required) > 1 or required_keywords:
-        names = ", ".join(parameter.name for parameter in (*required, *required_keywords))
+    if required_keywords:
+        names = ", ".join(parameter.name for parameter in required_keywords)
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"the host function {function_name!r} requires the keyword-only arguments {names}",
+                fix="bind them at registration, or pass them with the `**` form",
+                pointer=pointer or "/0/1",
+            )
+        )
+    if mode == "arg" and not positional and not _has_varargs(parameters):
+        raise Up2Error(
+            diag(
+                "UP2-E1005",
+                f"the host function {function_name!r} takes no positional argument, but the stage "
+                "passes one",
+                fix='write the stage as ["udf", name] to pass the upstream value, or register a '
+                "function that accepts one argument",
+                pointer=pointer or "/0/1",
+            )
+        )
+    if len(required) > 1:
+        names = ", ".join(parameter.name for parameter in required)
         raise Up2Error(
             diag(
                 "UP2-E1005",
                 f"the host function {function_name!r} requires the arguments {names}, and a udf "
-                "stage passes only the upstream value",
-                fix="bind the extra arguments at registration (functools.partial), or take one "
-                "payload object built with ctx",
+                "stage passes at most one",
+                fix="bind the extra arguments at registration (functools.partial), or use the `*` "
+                "or `**` form",
                 pointer=pointer or "/0/1",
             )
         )
-    takes_value = bool(positional) or any(
-        parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters
+    return bool(positional) or _has_varargs(parameters)
+
+
+def _has_varargs(parameters: list[inspect.Parameter]) -> bool:
+    return any(parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters)
+
+
+def _accepts_no_positional(function: Any) -> bool:
+    """Whether a dto call should be nullary: the function declares no positional parameter."""
+    try:
+        parameters = list(inspect.signature(function).parameters.values())
+    except (TypeError, ValueError):
+        return False
+    return not any(
+        parameter.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.VAR_POSITIONAL,
+        )
+        for parameter in parameters
     )
-    return takes_value

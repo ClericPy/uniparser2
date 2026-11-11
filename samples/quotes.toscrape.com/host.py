@@ -1,22 +1,22 @@
-"""Host recipe for `samples/quotes.toscrape.com`: the domain type plus the fetch loop.
+"""Host recipe for `samples/quotes.toscrape.com`: the `Author` type and the `fetch` function.
 
-A story is **library-independent data** (`03` §3.1): it names its types and its `call` target, and
+A story is **library-independent data** (`03` §3.1): it names its types and its host functions, and
 the host owns both. This script is the smallest complete host for that sample — it registers the
-`Author` type, answers every suspension (`03` §5) with the package's default downloader, and prints
-the exit product. Run it from the repository root:
+`Author` type, answers `fetch` with the package's default downloader (through the request cache),
+and prints the node's product. Run it from the repository root:
 
     uv run python samples/quotes.toscrape.com/host.py                 # seeds the site root
     uv run python samples/quotes.toscrape.com/host.py <seed URL>      # or any page of the site
     uv run python samples/quotes.toscrape.com/host.py --no-cache      # ignore the cached answers
 
-`Author` is registered here because the kernel refuses an unknown name at the step that declares it
+`Author` is registered here because the story's `["type","Author"]` stage refuses an unknown name
 (`UP2-E1011`, `03` §3.3), and a constructor is a **validator**: it receives the product's own parts
-(`Cls(**payload)`, `03` §3.2) and the run keeps carrying JSON.
+(`Cls(**payload)`) and the run keeps carrying JSON.
 
-The fetching is the package's default (`uniparser2.net`): the request dictionary the kernel
-hands over is the request, and the answer carries `text` and `url` — the two the story reads
-with `py.getattr`. Every answer is cached under `.cache/requests/` (never committed), so a
-second run replays it instead of the network.
+The fetching is the package's default (`uniparser2.net`): `fetch` accepts a URL string or a request
+object and answers a response carrying `text`, `url` and `status_code` — the ones the story reads
+with `py.getattr`. Every answer is cached under `.cache/requests/` (never committed), so a second
+run replays it instead of the network.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ SITE_ROOT = "https://quotes.toscrape.com"
 
 @dataclass(slots=True)
 class Author:
-    """One author record; a field the kernel could not produce fails here, at that step."""
+    """One author record; a field the kernel could not produce fails at the `type` stage."""
 
     url: str
     name: str
@@ -48,45 +48,22 @@ class Author:
     description: str
 
 
-def request_of(task: Any) -> Mapping[str, Any]:
-    """One task the host must send: the kernel hands over request objects (`03` §4.1)."""
-    if not isinstance(task, Mapping):
-        raise TypeError(f"a task must be a request object, got {type(task).__name__}")
-    return task
-
-
 def run_story(bundle: dict[str, Any], seed: str, *, cache: RequestCache | None) -> Any:
-    """The host loop of `03` §5: read the effect, answer it, repeat until the run is done.
+    """Run the story synchronously: `fetch` is the only host function it calls."""
 
-    The kernel's effect is a tagged tuple: a ``request`` carries one task and a ``batch`` a list of
-    them. This story declares no ``call``, so any other effect kind is a host bug.
-    """
-    run = up2.start(bundle, seed)
-    while True:
-        effect = run.go()
-        if effect[0] == "done":
-            return effect[1]
-        kind, payload, *rest = effect
-        if kind == "request":
-            run.feed(answer(request_of(payload), cache))
-        elif kind == "batch":
-            if not isinstance(payload, list):
-                raise TypeError(f"a batch must be a list of tasks, got {type(payload).__name__}")
-            run.feed([answer(request_of(task), cache) for task in payload])
-        else:
-            raise RuntimeError(f"this story declares no host function, got {kind}: {rest!r}")
+    def cached_fetch(request: Any) -> Any:
+        if not isinstance(request, Mapping):
+            raise TypeError(f"fetch needs a request object, got {type(request).__name__}")
+        if cache is not None:
+            cached = cache.get(request)
+            if cached is not None:
+                return cached
+        response = fetch(request)
+        if cache is not None:
+            cache.put(request, response)
+        return response
 
-
-def answer(request: Mapping[str, Any], cache: RequestCache | None) -> Any:
-    """One request answered: from the cache when it is there, from the network otherwise."""
-    if cache is not None:
-        cached = cache.get(request)
-        if cached is not None:
-            return cached
-    response = fetch(request)
-    if cache is not None:
-        cache.put(request, response)
-    return response
+    return up2.run(bundle, input=seed, udfs={"fetch": cached_fetch})
 
 
 up2.register_type("Author", Author)

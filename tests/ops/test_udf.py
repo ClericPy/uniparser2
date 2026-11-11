@@ -1,9 +1,9 @@
 """``udf`` operator: host-registered functions (design doc 02 §6.10).
 
 Coverage is declared as ``("udf", "*")``: that operator's action space is decided by the host, so
-what conformance asks of it is **contract coverage** (an unregistered name reports `E1010`, a
-registered one can be called, the return value must be serializable) rather than one case per
-function name.
+what conformance asks of it is **contract coverage** (a name missing from the run's table reports
+`E1010`, a registered one can be called in each argument form) rather than one case per function
+name. A udf may answer a host object mid-chain; the run's exit is what requires JSON.
 """
 
 from __future__ import annotations
@@ -22,6 +22,9 @@ from uniparser2 import (
     eval_field,
     host,
     register_udf,
+)
+from uniparser2 import (
+    run as run_story,
 )
 from uniparser2.core.refs import Scope
 from uniparser2.core.udfs import udf_names, unregister_udf
@@ -51,10 +54,11 @@ def run(chain: Any, value: Any) -> Outcome:
     return eval_field(compile_field(chain), value)
 
 
-def test_unregistered_function_fails_at_compile_time() -> None:
-    """Unregistered means an error at compile time — it is not left to runtime."""
+def test_unregistered_function_fails_before_evaluation() -> None:
+    """The table is run state, so a missing name is reported by `run` before the run starts."""
+    compile_field([["udf", "definitely_not_registered"]])  # syntax only: no table at compile time
     with pytest.raises(Up2Error) as info:
-        compile_field([["udf", "definitely_not_registered"]])
+        run_story({"nodes": {"a": [["udf", "definitely_not_registered"]]}}, "a")
     assert info.value.diagnostic.code == "UP2-E1010"
     assert "register_udf" in info.value.diagnostic.fix
 
@@ -117,13 +121,13 @@ def test_a_payload_replaces_the_older_kwargs(udfs) -> None:
     assert eval_field(compile_field(chain), "hi", scope=scope) == Ok("hi-fr")
 
 
-def test_non_serialisable_return_is_e2009(udfs) -> None:
+def test_a_host_object_return_flows_mid_chain(udfs) -> None:
+    """A udf may answer any value; only the run's exit and a `type` stage require JSON."""
     udfs("up2_test_bad", lambda value: {1, 2})
-    outcome = run([["udf", "up2_test_bad"]], "x")
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2009"
-    assert "cannot be a product" in outcome.reason
-    assert "list" in outcome.fix
+    assert run([["udf", "up2_test_bad"]], "x") == Ok({1, 2})
+    with pytest.raises(Up2Error) as info:
+        run_story({"nodes": {"a": [["udf", "up2_test_bad"]]}}, "a")
+    assert info.value.diagnostic.code == "UP2-E2003"
 
 
 def test_exception_inside_udf_becomes_e2099(udfs) -> None:

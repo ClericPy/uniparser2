@@ -110,9 +110,9 @@ def test_parse_stage_rejects_scalar_and_empty_chain() -> None:
     with pytest.raises(Up2Error) as scalar:
         parse_stage(5)
     assert scalar.value.diagnostic.code == "UP2-E1004"
-    with pytest.raises(Up2Error) as empty:
-        loads([])
-    assert empty.value.diagnostic.code == "UP2-E1004"
+    # `[]` is the identity, not a malformed chain: no stage is parsed and nothing is compiled.
+    assert loads([]) == ()
+    assert compile_field([]).stages == ()
 
 
 def test_loads_rejects_stage_list_with_non_list_items() -> None:

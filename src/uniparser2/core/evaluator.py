@@ -16,14 +16,15 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 from . import registry
-from .ast import REF_OPERATOR, TRY_OPERATOR, CompiledField, CompiledStage, Lit, Param, Ref, Stage
-from .errors import Failed, Ok, Outcome
+from .ast import TRY_OPERATOR, CompiledField, CompiledStage, Lit, Param, Ref
+from .errors import Failed, Ok, Outcome, Up2Error
 from .refs import OBJ_ROOT, Scope
 from .trace import Trace, elapsed_ms, stamp
 
 logger = logging.getLogger("uniparser2")
 
 _SYSTEM_ERRORS: Final = (KeyboardInterrupt, SystemExit, MemoryError, OSError)
+LOCAL_PREFIX: Final = "_"
 
 
 def eval_field(
@@ -33,30 +34,22 @@ def eval_field(
     *,
     scope: Scope | None = None,
     trace: Trace | None = None,
+    node_runner: registry.NodeRunner | None = None,
 ) -> Outcome:
     """Evaluate one field chain stage by stage.
 
     The outcome is returned as it stands: every field yields a value or the chain stops on a
     failure. ``trace`` collects one event per evaluated stage; without it nothing is measured or
-    recorded.
+    recorded. ``node_runner`` is how a ``["node", …]`` stage runs a story node; a standalone chain
+    passes none, and its ``node`` stages were already rejected at compile time.
 
-    A chain written as a **whole-chain reference** carries no stage and does no work (`03` §2): the
-    outcome is the reference's own read, unchanged, and no event is recorded for it -- the trace's
-    stage rows are operators, and a step's product still shows the value that came out.
+    The empty chain (``[]``) is the identity: the outcome is the value it received, with no event.
     """
     active_scope = scope if scope is not None else Scope()
-    run_chain = _subchain_runner(trace)
+    run_chain = _subchain_runner(trace, node_runner)
     current: Outcome = Ok(value)
     policy: str | None = None
     """The guard the last ``try`` directive armed; it covers **one** stage and is then gone."""
-    if compiled.ref is not None:
-        # A chain that **is** a whole-chain reference (`03` §2): the value it names, unchanged, and
-        # no stage event -- the trace's stage rows are operators, and the reference does no work.
-        current = active_scope.read(compiled.ref)
-    elif compiled.source and _is_ref_marker(compiled.source[0]):
-        # A chain that only **opens** with one (`["$in", ["py","getattr","url"]]`): the stages below
-        # keep their own positions in the source, so the marker is counted but not evaluated.
-        current = active_scope.read(compiled.source[0].slot1)
     for index, stage in enumerate(compiled.stages):
         if isinstance(current, Failed):
             return current
@@ -68,7 +61,7 @@ def eval_field(
         armed = policy
         policy = None  # the guard covers exactly one stage, success or failure
         started_at = stamp(trace)
-        current = _invoke(stage, incoming, active_scope, run_chain)
+        current = _invoke(stage, incoming, active_scope, run_chain, node_runner)
         if trace is not None:
             trace.stage(
                 stage,
@@ -77,7 +70,7 @@ def eval_field(
                 outcome=current,
                 scope=active_scope,
                 ms=elapsed_ms(started_at),
-                position=index + _marker_offset(compiled),
+                position=index,
             )
         if armed is not None and isinstance(current, Failed):
             if armed == "skip":
@@ -89,22 +82,35 @@ def eval_field(
     return current
 
 
-def _marker_offset(compiled: CompiledField) -> int:
-    """How many whole-chain reference markers precede this chain's stages in its own source."""
-    return 1 if _opening_marker(compiled) else 0
+def eval_field_map(
+    fields: Mapping[str, CompiledField],
+    value: Any,
+    /,
+    *,
+    scope: Scope,
+    run_chain: registry.ChainRunner,
+) -> Outcome:
+    """Evaluate a field map: every field on ``value``, every result into this scope's ``$locals``.
+
+    A field whose name starts with ``_`` stays out of the product; every other field is a key. A
+    later field can read an earlier result with ``$locals.name`` because the write happens in
+    declaration order. The first failure stops the map and is returned as it is. ``run_chain`` is
+    the caller's chain runner, so a story field map keeps its trace and node runner.
+    """
+    row: dict[str, Any] = {}
+    for name, chain in fields.items():
+        outcome = run_chain(chain, value, scope)
+        if isinstance(outcome, Failed):
+            return outcome
+        scope.write_local((name,), outcome.value)
+        if not name.startswith(LOCAL_PREFIX):
+            row[name] = outcome.value
+    return Ok(row)
 
 
-def _opening_marker(compiled: CompiledField) -> bool:
-    """Whether the chain opens with a whole-chain reference marker instead of an operator."""
-    return bool(compiled.source) and _is_ref_marker(compiled.source[0])
-
-
-def _is_ref_marker(stage: Any) -> bool:
-    """Whether a source stage is the marker of a whole-chain reference (`03` §2)."""
-    return isinstance(stage, Stage) and stage.op == REF_OPERATOR
-
-
-def _subchain_runner(trace: Trace | None) -> registry.ChainRunner:
+def _subchain_runner(
+    trace: Trace | None, node_runner: registry.NodeRunner | None
+) -> registry.ChainRunner:
     """How a structural operator evaluates a compiled sub-chain (design D2 of the L2 change).
 
     A sub-chain is an ordinary field chain, so ``each`` applies the same rule per element instead of
@@ -113,7 +119,7 @@ def _subchain_runner(trace: Trace | None) -> registry.ChainRunner:
     """
 
     def run(chain: CompiledField, value: Any, scope: Scope) -> Outcome:
-        return eval_field(chain, value, scope=scope, trace=trace)
+        return eval_field(chain, value, scope=scope, trace=trace, node_runner=node_runner)
 
     return run
 
@@ -123,6 +129,7 @@ def _invoke(
     value: Any,
     scope: Scope,
     run_chain: registry.ChainRunner,
+    node_runner: registry.NodeRunner | None,
 ) -> Outcome:
     instance = registry.get(stage.op_name)
     if instance is None:  # pragma: no cover - compile time already guarantees it exists
@@ -142,9 +149,14 @@ def _invoke(
         scope=scope,
         run_chain=run_chain,
         cache=scope.materializer,
+        run_node=node_runner,
     )
     try:
         return instance.evaluate(call)
+    except Up2Error:
+        # A node call re-raises the callee's own diagnostic (with the callee's pointer): the story
+        # boundary reports it as it is, never as an operator defect.
+        raise
     except _SYSTEM_ERRORS:
         raise
     except Exception as exc:

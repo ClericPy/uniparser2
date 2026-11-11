@@ -36,6 +36,7 @@ import importlib
 import json
 import math
 import re
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -315,6 +316,42 @@ def _py_uniq(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
             seen.add(item)
             unique.append(item)
     return Ok(unique)
+
+
+def _py_filter(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Keep the truthy elements, or the falsy ones when ``keep`` is false."""
+    del scope
+    items = _items(value, "filter")
+    if isinstance(items, Failed):
+        return items
+    keep = params.get("keep", True)
+    if not isinstance(keep, bool):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"the keep parameter of py.filter must be a boolean, got {type_name(keep)}",
+            fix='write ["py","filter"] for truthy, or ["py","filter",false] for falsy',
+        )
+    return Ok([item for item in items if bool(item) is keep])
+
+
+def _py_sleep(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
+    """Block for ``seconds`` and answer the upstream value unchanged."""
+    del scope
+    seconds = params.get("seconds")
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"py.sleep needs a non-negative number of seconds, got {type_name(seconds)}",
+            fix='write a number: ["py","sleep",2]',
+        )
+    if seconds < 0:
+        return Failed(
+            code="UP2-E2002",
+            reason=f"py.sleep needs a non-negative number of seconds, got {seconds!r}",
+            fix='write a number: ["py","sleep",2]',
+        )
+    time.sleep(seconds)
+    return Ok(value)
 
 
 def _py_urljoin(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
@@ -965,6 +1002,8 @@ _SCALAR_PARAMS: Final[Mapping[str, Mapping[str, tuple[str, tuple[type, ...]]]]] 
     "strptime": {"format": ("a string", (str,))},
     "from_timestamp": {"tz": ("a number", (int, float))},
     "to_timestamp": {"tz": ("a number", (int, float))},
+    "sleep": {"seconds": ("a non-negative number", (int, float))},
+    "filter": {"keep": ("a boolean", (bool,))},
 }
 
 
@@ -993,6 +1032,11 @@ def _scalar_value_problem(action: str, name: str, value: Any) -> tuple[str, str]
             return 'a slice notation such as ":20" or "1:5"', 'write ":20" / "1:5" / "::-1"'
     elif action in ("from_timestamp", "to_timestamp") and name == "tz" and isinstance(value, bool):
         return "a number of hours", "write 8, -5 or 5.5; no quotes, no booleans"
+    elif action == "sleep" and name == "seconds":
+        if isinstance(value, bool):
+            return "a non-negative number of seconds", 'write a number: ["py","sleep",2]'
+        if isinstance(value, (int, float)) and value < 0:
+            return "a non-negative number of seconds", 'write a number: ["py","sleep",2]'
     return None
 
 
@@ -1137,6 +1181,18 @@ _TABLE: Final[tuple[_Entry, ...]] = (
     _Entry("sort", "Python's sorted", _py_sort),
     _Entry("sort_desc", "Python's sorted(reverse=True)", _py_sort_desc),
     _Entry("uniq", "deduplicate while preserving order", _py_uniq),
+    _Entry(
+        "filter",
+        "keep truthy elements (or falsy ones when keep is false)",
+        _py_filter,
+        (ParamSpec("keep", Kind.LITERAL, required=False, default=True),),
+    ),
+    _Entry(
+        "sleep",
+        "block for the given seconds and return the upstream value",
+        _py_sleep,
+        (ParamSpec("seconds", Kind.REF_OR_LITERAL),),
+    ),
     _Entry(
         "find_jsons",
         "every JSON object/array embedded in the text, parsed, in document order",

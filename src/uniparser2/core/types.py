@@ -1,22 +1,21 @@
 """The type registry: the host's type name → constructor table (design doc 03 §3).
 
-A step's ``type`` is a **shape**, not a Python object: the host registers a name → constructor pair,
-and the kernel builds that constructor from the step's product at the step boundary (``03`` §3.2).
-The declared shape is therefore validated where the product is produced, and the constructor is a
-**validator**: it receives the JSON and the run continues with the JSON (``03`` §3.3).
+A ``["type", name]`` stage validates a value against a **shape**, not a Python object: the host
+registers a name → constructor pair, and the stage builds that constructor from the value at the
+chain tail (``03`` §3.2). The constructor is a **validator**: it receives the JSON and the run
+continues with the JSON (``03`` §3.3).
 
 **Why the registration is not part of the bundle.** The registry is process-wide host state, exactly
 like ``core.udfs``: the host installs its own vocabulary at start-up, and a story references it by
 name only, so the bundle stays library-independent data (``03`` §3.1). Keeping it in the kernel also
-keeps the check where the product exists — a name that no host registered fails at the step that
+keeps the check where the value exists — a name that no host registered fails at the stage that
 declared it, with ``UP2-E1011`` naming the types that are registered.
 
 **Built-in names need no registration** (``03`` §3.1): the JSON basics (``null`` / ``bool`` /
-``str`` / ``int`` / ``float`` / ``list`` / ``dict``) and the two effect types ``Request`` /
-``RequestBatch``. ``list`` / ``dict`` and the effect types are the product's own kind, so they take
-it as it is (a dictionary product must keep its keys), while the scalar names go through their
-Python constructor — the same coercion a host constructor would perform (`"int"` on `"2026"` answers
-`2026`).
+``str`` / ``int`` / ``float`` / ``list`` / ``dict``). ``list`` / ``dict`` are the product's own
+kind, so they take it as it is (a dictionary product must keep its keys), while the scalar names go
+through their Python constructor — the same coercion a host constructor would perform (``"int"`` on
+``"2026"`` answers ``2026``).
 
 The module is **pure dictionary operations + one call**: no third-party import, no file read, no IO.
 """
@@ -32,7 +31,7 @@ type TypeConstructor = Callable[..., Any]
 _TYPES: dict[str, TypeConstructor] = {}
 
 BUILTIN_TYPES: Final[frozenset[str]] = frozenset(
-    {"null", "bool", "str", "int", "float", "list", "dict", "Request", "RequestBatch"}
+    {"null", "bool", "str", "int", "float", "list", "dict"}
 )
 """The names no host has to register (``03`` §3.1); a registration may shadow one deliberately."""
 
@@ -45,7 +44,7 @@ _SCALARS: Final[Mapping[str, Callable[[Any], Any]]] = {
 
 UNREGISTERED_FIX: Final = (
     "call register_type(name, constructor) in the host before the run, or declare one of the names "
-    "the kernel already knows (the JSON basics and Request / RequestBatch)"
+    "the kernel already knows (the JSON basics)"
 )
 
 

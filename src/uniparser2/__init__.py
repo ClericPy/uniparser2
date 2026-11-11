@@ -14,13 +14,11 @@ import logging
 from . import ops as _ops  # noqa: F401  register built-in operators (explicit registry)
 from .core import (
     CODES,
-    EFFECT_BATCH,
-    EFFECT_CALL,
-    EFFECT_REQUEST,
     PREVIEW_LIMIT,
     STATE_FAILED,
     STATE_OK,
     CompiledField,
+    CompiledNode,
     CompiledStory,
     Diagnostic,
     Failed,
@@ -31,8 +29,6 @@ from .core import (
     Outcome,
     Ref,
     Scope,
-    StoryRun,
-    StoryStep,
     Trace,
     TraceEvent,
     TypeConstructionError,
@@ -51,7 +47,7 @@ from .core import (
     pack,
     parse_ref,
     register_type,
-    start,
+    run,
     type_names,
     unregister_type,
     value_view,
@@ -59,7 +55,7 @@ from .core import (
 from .core.udfs import get_udf, register_udf, udf_names, unregister_udf
 from .host import load_entry_point_udfs
 
-__version__ = "0.5.0"
+__version__ = "0.7.0"
 """The single source of the version: ``[tool.hatch.version]`` in ``pyproject.toml`` reads it."""
 
 logger = logging.getLogger("uniparser2")
@@ -73,13 +69,11 @@ _ENV_UDFS = load_entry_point_udfs()
 
 __all__ = [
     "CODES",
-    "EFFECT_BATCH",
-    "EFFECT_CALL",
-    "EFFECT_REQUEST",
     "PREVIEW_LIMIT",
     "STATE_FAILED",
     "STATE_OK",
     "CompiledField",
+    "CompiledNode",
     "CompiledStory",
     "Diagnostic",
     "Failed",
@@ -90,8 +84,6 @@ __all__ = [
     "Outcome",
     "Ref",
     "Scope",
-    "StoryRun",
-    "StoryStep",
     "Trace",
     "TraceEvent",
     "TypeConstructionError",
@@ -115,7 +107,7 @@ __all__ = [
     "parse_ref",
     "register_type",
     "register_udf",
-    "start",
+    "run",
     "type_names",
     "udf_names",
     "unregister_type",

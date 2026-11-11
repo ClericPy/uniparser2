@@ -36,8 +36,8 @@ from .model import (
     utc_now,
 )
 
-STORY_KEY: Final = "steps"
-"""A chain file carrying ``steps`` is a story bundle; anything else is a field chain (`03` §2)."""
+STORY_KEY: Final = "nodes"
+"""A chain file carrying ``nodes`` is a story bundle; anything else is a field chain (`03` §2)."""
 
 TPL_KEY_RULE: Final = r"^[\w\u4e00-\u9fff][\w\u4e00-\u9fff.-]{0,63}$"
 """The character set of ``tpl_key`` (`04` §2). ``FileStore`` uses the key as a file name."""

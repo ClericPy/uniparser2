@@ -12,12 +12,12 @@ from typing import Any, ClassVar, Final
 
 from ..core.ast import CompiledField, Param
 from ..core.errors import Failed, Ok, Outcome
+from ..core.evaluator import eval_field_map
 from ..core.limits import MAX_EACH_ITER
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.values import type_name
 
 _EACH_ACTION: Final = "each"
-_LOCAL_PREFIX: Final = "_"
 
 
 @op("each")
@@ -73,21 +73,15 @@ class Each(Op):
         if isinstance(call.payload, CompiledField):
             return self._run_chain(call, value)
         fields: Mapping[str, CompiledField] = call.payload
-        rows: list[dict[str, Any]] = []
+        rows: list[Any] = []
         for position, element in enumerate(value):
             # The element's own position is what the trace reports as the fan-out index (`06` §5.1),
             # and each element gets its own scope so a field can stash a local for a later one.
             scope = call.scope.child(position)
-            row: dict[str, Any] = {}
-            for name, chain in fields.items():
-                outcome = call.run_chain(chain, element, scope)
-                if isinstance(outcome, Failed):
-                    return outcome
-                if name.startswith(_LOCAL_PREFIX):
-                    scope.write_local((name,), outcome.value)
-                else:
-                    row[name] = outcome.value
-            rows.append(row)
+            outcome = eval_field_map(fields, element, scope=scope, run_chain=call.run_chain)
+            if isinstance(outcome, Failed):
+                return outcome
+            rows.append(outcome.value)
         return Ok(rows)
 
     @staticmethod

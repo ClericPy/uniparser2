@@ -10,8 +10,10 @@ from . import code as _code
 from . import ctx as _ctx
 from . import htmldom as _htmldom
 from . import jsonquery as _jsonquery
+from . import node as _node
 from . import pyops as _pyops
 from . import regex as _regex
+from . import typeop as _typeop
 from . import udf as _udf
 from . import xmlxpath as _xmlxpath
 
@@ -21,8 +23,10 @@ __all__ = [
     "_ctx",
     "_htmldom",
     "_jsonquery",
+    "_node",
     "_pyops",
     "_regex",
+    "_typeop",
     "_udf",
     "_xmlxpath",
 ]

@@ -1,4 +1,4 @@
-"""The behaviour dictionary of ``py``'s 40 allowlisted functions (design doc 02 §6.4).
+"""The behaviour dictionary of ``py``'s 48 allowlisted functions (design doc 02 §6.4).
 
 Design points:
 - ``CASES`` is the behaviour dictionary (at least one ``input → output`` assertion per function);
@@ -60,6 +60,8 @@ COVERS_PAIRS = (
     ("py", "sort_desc"),
     ("py", "uniq"),
     ("py", "find_jsons"),
+    ("py", "filter"),
+    ("py", "sleep"),
     ("py", "between"),
     ("py", "urljoin"),
     ("py", "urlsplit"),
@@ -79,7 +81,7 @@ COVERS_PAIRS = (
     ("py", "from_json"),
 )
 
-WHITELIST_SIZE = 46
+WHITELIST_SIZE = 48
 
 _SHA256_ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
@@ -142,6 +144,9 @@ CASES: tuple[tuple[str, object, object, Callable[[Outcome], bool]], ...] = (
     ("sort", [3, 1, 2], (), ok([1, 2, 3])),
     ("sort_desc", [1, 3, 2], (), ok([3, 2, 1])),
     ("uniq", [1, 1, 2], (), ok([1, 2])),
+    ("filter", [0, 1, "", "a", None], (), ok([1, "a"])),
+    ("filter", [0, 1, "", "a", None], False, ok([0, "", None])),
+    ("sleep", "kept", 0, ok("kept")),
     ("between", 3, [1, 5], ok(True)),
     ("const", None, {"a": [1, 2]}, ok({"a": [1, 2]})),
     ("const", None, None, ok(None)),
@@ -240,6 +245,24 @@ def test_alias_python_works() -> None:
 )
 def test_text_functions_reject_non_text(value: Any, checker: Callable[[Outcome], bool]) -> None:
     assert checker(run([["py", "upper"]], value))
+
+
+def test_sleep_rejects_a_negative_or_non_numeric_value() -> None:
+    for bad in (-1, "2", True):
+        with pytest.raises(Up2Error) as info:
+            compile_field([["py", "sleep", bad]])
+        assert info.value.diagnostic.code == "UP2-E1005"
+
+
+def test_filter_rejects_a_non_boolean_keep() -> None:
+    with pytest.raises(Up2Error) as info:
+        compile_field([["py", "filter", "yes"]])
+    assert info.value.diagnostic.code == "UP2-E1005"
+
+
+def test_filter_needs_a_list() -> None:
+    outcome = run(_chain("filter", ()), "abc")
+    assert isinstance(outcome, Failed) and outcome.code == "UP2-E2002"
 
 
 def test_unknown_function_is_e1003() -> None:

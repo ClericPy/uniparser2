@@ -28,8 +28,8 @@ MAX_EACH_ITER: Final = 10_000
 MAX_FIELDS_PER_MAP: Final = 256
 """How many fields one field map may declare (compile time; exceeding it is ``UP2-E1012``)."""
 
-MAX_STORY_STEPS: Final = 64
-"""How many steps one story bundle may declare (compile time; exceeding it is ``UP2-E1012``)."""
+MAX_STORY_NODES: Final = 64
+"""How many nodes one story bundle may declare (compile time; exceeding it is ``UP2-E1012``)."""
 
 MAX_MATERIALIZE_BYTES: Final = 64 * 1024 * 1024
 """Cap on one run's materialization cache, accounted in **materialized** bytes (`03` §6).

@@ -1,117 +1,85 @@
-"""The story layer: compile a site bundle, then run it to its next suspension (design doc 03 §2-§5).
+"""The story layer: a story is a map of callable nodes, run synchronously (design doc 03 §2-§5).
 
-A **story** is a linear sequence of typed steps (`03` §2). Two things in it are not expressions but
-control flow, and both live here rather than in an operator:
+A **story** is ``{"globals": {...}, "nodes": {...}}``. A node body is a **chain** (an array;
+``[]`` is identity) or a **field map** (an object). A chain calls another node with
+``["node", name]``, and a chain ends with ``["type", name]`` when the product has a registered
+shape.
 
-- a step whose ``type`` is ``Request`` / ``RequestBatch`` **suspends** the run, because the kernel
-  performs no IO: the host sends the request(s) and sends the answer(s) back;
-- ``next`` resolves which step receives those answers, and ``collect`` names the step whose products
-  are the run's output.
+Composition is a call, not a route: there is no ``entry``, ``collect``, ``next`` or effect. ``run``
+compiles the story, executes the node it names (the first node when it names none) and returns that
+node's product. A failure raises ``Up2Error`` carrying the diagnostic and the node's JSON Pointer;
+the run's exit passes through the single exit (``pack``).
 
-The run loop is a **generator**: ``start`` compiles and drives to the first effect, ``run.go()``
-reads it and ``run.feed(answer)`` resumes. A generator keeps the interruptions out of the kernel's
-data (no threads, no callbacks, still synchronous) while letting a fan-out whose receiving step is
-itself a request nest correctly, since the nested suspension travels out through ``yield from``.
-
-A ``Failed`` stage **raises** ``Up2Error`` carrying the stage's diagnostic: the effect vocabulary
-has no failure member, and a run that could not produce a step's product must not hand the host a
-plausible-looking effect.
-
-A caller may pass a ``trace`` (`06` §5.1): every evaluated stage of every step is then recorded, the
-step's name and its field-map key included, and every suspension is recorded as an effect event
-carrying what the kernel handed the host. The trace is a debugging aid and never changes a run
-(`03` §13 O6).
+The kernel performs no IO and is synchronous: host code enters only through ``udf`` (``fetch``
+is the conventional downloader), and a udf that answers an awaitable is rejected.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Generator, Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass
-from typing import Any, Final, Literal
+from collections.abc import Iterable, Mapping
+from contextlib import nullcontext
+from dataclasses import dataclass
+from typing import Any, Final
 
-from .ast import CompiledField, Lit, Param
+from .ast import CompiledField, CompiledStage
 from .compile import compile_field, compile_field_map
 from .errors import Failed, Up2Error, diag
-from .evaluator import eval_field, resolve_params
+from .evaluator import eval_field, eval_field_map
 from .export import pack
-from .limits import MAX_STORY_STEPS
-from .refs import RESERVED_ROOTS, Scope, is_ref_text, parse_ref
-from .trace import EFFECT_BATCH, EFFECT_CALL, EFFECT_REQUEST, Trace, elapsed_ms, stamp
-from .types import (
-    UNREGISTERED_FIX,
-    TypeConstructionError,
-    UnknownTypeError,
-    build_type,
-    type_names,
-)
+from .limits import MAX_STORY_NODES
+from .refs import RESERVED_ROOTS, Scope
+from .trace import Trace
+from .udfs import UdfFn, all_udfs, use_udfs
 from .values import type_name
 
 logger = logging.getLogger("uniparser2")
 
-REQUEST_TYPE: Final = "Request"
-REQUEST_BATCH_TYPE: Final = "RequestBatch"
-REQUEST_TYPES: Final = (REQUEST_TYPE, REQUEST_BATCH_TYPE)
-LOCAL_PREFIX: Final = "_"
-NEXT_KEY: Final = "next"
-ARGS_KEY: Final = "args"
-BODY_KEY: Final = "body"
-COLLECT_KEY: Final = "collect"
-BATCH_ITEMS: Final = "items"
-_BUNDLE_KEYS: Final = frozenset({"entry", "globals", "steps", "collect"})
-_STEP_KEYS: Final = frozenset({"name", "type", "body", "call", NEXT_KEY, ARGS_KEY})
+_BUNDLE_KEYS: Final = frozenset({"globals", "nodes"})
+_FORBIDDEN_NODE_CHARS: Final = (".", "/", "~")
+_NODE_OPERATOR: Final = "node"
+_UDF_OPERATOR: Final = "udf"
+_EACH_OPERATOR: Final = "each"
 _UNVISITED: Final = 0
-"""The flow node a walk has not reached yet."""
+"""The node-call graph node a walk has not reached yet."""
 _ON_PATH: Final = 1
-"""The flow node the walk is standing on: a step it enters again closes a loop."""
+"""The graph node the walk is standing on: entering it again closes a cycle."""
 _WALKED: Final = 2
-"""The flow node whose whole subtree the walk has already left -- it cannot close a loop."""
-
-type Effect = (
-    tuple[Literal["request"], Mapping[str, Any], str]
-    | tuple[Literal["batch"], list[dict[str, Any]], str]
-    | tuple[Literal["call"], str, Mapping[str, Any]]
-    | tuple[Literal["done"], Any]
-)
-"""One suspension the host must answer, or the run's end (`03` §5).
-
-``"request"`` / ``"batch"`` hand over the request(s) and the step that receives the answers;
-``"call"`` hands over a host function and its arguments; ``"done"`` carries the run's output.
-"""
+"""The graph node whose whole subtree the walk has already left."""
 
 
 @dataclass(frozen=True, slots=True)
-class StoryStep:
-    """One compiled step: what it runs, what it is called, and where its answers go."""
+class CompiledNode:
+    """One compiled node: its name, its body (a chain or a field map), and its pointer."""
 
     name: str
-    index: int
-    type: str | None
-    body: CompiledField | Mapping[str, CompiledField] | None
-    call: str | None
-    args: Mapping[str, Param]
-    next: str | None
+    body: CompiledField | Mapping[str, CompiledField]
     pointer: str
-
-    @property
-    def is_request(self) -> bool:
-        return self.type in REQUEST_TYPES
 
 
 @dataclass(frozen=True, slots=True)
 class CompiledStory:
-    """A compiled bundle: the constants, the steps, the named entry and the collected step."""
+    """A compiled bundle: the constants, the nodes and the udf names the story uses."""
 
     globals: Mapping[str, Any]
-    steps: tuple[StoryStep, ...]
-    entry: str
-    collect: str
-    index: Mapping[str, int]
+    nodes: Mapping[str, CompiledNode]
+    udf_names: frozenset[str]
     source: Any
 
 
-def compile_story(bundle: Any, /, *, pointer: str = "") -> CompiledStory:
-    """Compile a story bundle; a bad bundle fails here, never halfway through a run (`N3`)."""
+def compile_story(
+    bundle: Any,
+    /,
+    *,
+    udfs: Mapping[str, UdfFn] | None = None,
+    pointer: str = "",
+) -> CompiledStory:
+    """Compile a story bundle; a bad bundle fails here, never halfway through a run (`N3`).
+
+    ``udfs`` is the table a run will use (its overlay included), so a `udf` signature can be checked
+    at compile time when the function is known. A plain lint passes none and sees the process-wide
+    table.
+    """
     if not isinstance(bundle, Mapping):
         raise _bad(f"a story must be a JSON object, got {type_name(bundle)}", pointer=pointer)
     unknown = sorted(str(key) for key in bundle if key not in _BUNDLE_KEYS)
@@ -119,781 +87,327 @@ def compile_story(bundle: Any, /, *, pointer: str = "") -> CompiledStory:
         raise _bad(
             f"unknown bundle keys: {', '.join(unknown)}",
             pointer=pointer,
-            fix=(
-                "a bundle carries `entry`, `globals`, `steps` and `collect` — a parse rule is a "
-                "step, so there is no `chains` table"
-            ),
+            fix="a story carries `globals` (optional) and `nodes`; every node is callable",
             allowed=tuple(sorted(_BUNDLE_KEYS)),
         )
     globals_map = _globals(bundle.get("globals"), pointer=f"{pointer}/globals")
-    raw_steps = bundle.get("steps")
-    if not isinstance(raw_steps, list) or not raw_steps:
+    raw_nodes = bundle.get("nodes")
+    if not isinstance(raw_nodes, Mapping) or not raw_nodes:
         raise _bad(
-            f"`steps` must be a non-empty array, got {type_name(raw_steps)}",
-            pointer=f"{pointer}/steps",
-            fix='declare at least one step: {"name": "records", "body": {...}, "type": "Record"}',
+            f"`nodes` must be a non-empty object, got {type_name(raw_nodes)}",
+            pointer=f"{pointer}/nodes",
+            fix='declare at least one node: {"nodes": {"parse": [["py","strip"]]}}',
         )
-    if len(raw_steps) > MAX_STORY_STEPS:
+    if len(raw_nodes) > MAX_STORY_NODES:
         raise Up2Error(
             diag(
                 "UP2-E1012",
-                f"the story declares {len(raw_steps)} steps, over "
-                f"MAX_STORY_STEPS={MAX_STORY_STEPS}",
-                fix="split the flow into several stories, or fold steps into one field map",
-                pointer=f"{pointer}/steps",
+                f"the story declares {len(raw_nodes)} nodes, over "
+                f"MAX_STORY_NODES={MAX_STORY_NODES}",
+                fix="split the story, or fold several nodes into one field map",
+                pointer=f"{pointer}/nodes",
             )
         )
-    names = _step_names(raw_steps, pointer=f"{pointer}/steps")
-    steps = tuple(
-        _compile_step(
-            raw,
-            name=name,
-            index=position,
-            names=names,
-            pointer=f"{pointer}/steps/{position}",
-        )
-        for position, (raw, name) in enumerate(zip(raw_steps, names, strict=True))
-    )
-    collect_name = _collect_name(bundle.get("collect"), names, pointer=f"{pointer}/collect")
-    entry_name = _entry_name(bundle.get("entry"), names, pointer=f"{pointer}/entry")
-    entry = names.index(entry_name)
-    _lint_flow(steps, entry=entry)
-    logger.debug(
-        "compiled story: steps=%d entry=%s collect=%s", len(steps), entry_name, collect_name
-    )
-    return CompiledStory(
+    names = _node_names(raw_nodes, pointer=f"{pointer}/nodes")
+    context = use_udfs(udfs) if udfs is not None else nullcontext()
+    with context:
+        nodes = {
+            name: _compile_node(
+                raw,
+                name=name,
+                names=names,
+                pointer=f"{pointer}/nodes/{name}",
+            )
+            for name, raw in raw_nodes.items()
+        }
+    story = CompiledStory(
         globals=globals_map,
-        steps=steps,
-        entry=entry_name,
-        collect=collect_name,
-        index={name: position for position, name in enumerate(names)},
+        nodes=nodes,
+        udf_names=frozenset(_used_udfs(nodes.values())),
         source=bundle,
     )
+    _lint_node_graph(story)
+    logger.debug("compiled story: nodes=%s", ", ".join(story.nodes))
+    return story
 
 
-def start(bundle: Any, value: Any = None, /, *, trace: Trace | None = None) -> StoryRun:
-    """Compile a story and run it to the first suspension (`03` §5).
-
-    ``trace`` is where the run records its events (`06` §5.1); a run without one records nothing.
-    """
-    return StoryRun(compile_story(bundle), value, trace=trace)
-
-
-@dataclass(slots=True)
-class _RunState:
-    """What every step of one run shares: the story, its scope, the output and the trace."""
-
-    story: CompiledStory
-    scope: Scope
-    output: list[Any]
-    trace: Trace | None = None
-
-
-class StoryRun:
-    """One run of one story: ``go()`` reads the current effect, ``feed()`` resumes it.
-
-    The answer to a suspension resumes **this same run** — there is no hand-off, so a story is one
-    flow from its first request to its collected product.
-
-    One scope spans the whole run, so the run's materialization cache (`03` §6) lives exactly as
-    long as the run does.
-    """
-
-    __slots__ = ("_done", "_drive", "_effect", "_state", "_value")
-
-    def __init__(self, story: CompiledStory, value: Any, *, trace: Trace | None = None) -> None:
-        self._value = value
-        self._state = _RunState(
-            story=story,
-            scope=Scope(globals=story.globals, step_input=value),
-            output=[],
-            trace=trace,
-        )
-        self._drive = _drive(self._state, value)
-        self._effect: Effect = next(self._drive)
-        self._done = self._effect[0] == "done"
-
-    @property
-    def story(self) -> CompiledStory:
-        """The compiled story this run executes."""
-        return self._state.story
-
-    @property
-    def value(self) -> Any:
-        """The value the run started from."""
-        return self._value
-
-    @property
-    def scope(self) -> Scope:
-        """The run's evaluation scope, which carries the run's materialization cache (`03` §6)."""
-        return self._state.scope
-
-    @property
-    def trace(self) -> Trace | None:
-        """The trace this run records into, or ``None`` when the caller asked for none."""
-        return self._state.trace
-
-    def go(self) -> Effect:
-        """The current effect: the suspension the host must answer, or ``("done", product)``.
-
-        Idempotent by design: the documented host loop reads the effect and then answers it.
-        """
-        return self._effect
-
-    def feed(self, answer: Any) -> Effect:
-        """Resume the run with ``answer`` and return the next effect (or ``done``)."""
-        if self._done:
-            raise ValueError("the run is already done; there is no suspension to answer")
-        self._effect = self._drive.send(answer)
-        self._done = self._effect[0] == "done"
-        return self._effect
-
-    def close(self) -> None:
-        """Release the run's generator (a run abandoned before ``done``)."""
-        self._drive.close()
-
-
-# ---------------------------------------------------------------- the run loop
-
-
-def _drive(state: _RunState, value: Any) -> Generator[Effect, Any, None]:
-    """The run loop: step from the step `entry` names until the counter passes the last one.
-
-    ``state.scope`` is the run's own scope, re-pointed at each step's input; it carries the run's
-    materialization cache, so the cache lives exactly as long as the run (`03` §6).
-    """
-    pc = state.story.index[state.story.entry]
-    while pc < len(state.story.steps):
-        pc, value = yield from _step_product(state, pc, value)
-    yield ("done", state.output)
-
-
-def _step_product(
-    state: _RunState,
-    pc: int,
-    value: Any,
-    item: int | None = None,
-) -> Generator[Effect, Any, tuple[int, Any]]:
-    """Run the step at ``pc``, resolving every suspension it causes.
-
-    ``item`` is the fan-out result this evaluation belongs to (`06` §5.1): the position of a batch
-    answer for a receiving step, and ``None`` for a step the linear flow reaches.
-    """
-    step = state.story.steps[pc]
-    scope = state.scope
-    trace = state.trace
-    # `$in` names **this** step's input; a receiving step evaluated inside a fan-out sets it too,
-    # which is why it is recorded here rather than by the loop that drives the run.
-    scope.step_input = value
-    if trace is not None:
-        trace.enter(step.name, item=item)
-    if step.call is not None:
-        started_at = stamp(trace)
-        arguments = _call_arguments(step, value, scope)
-        _record_effect(
-            trace,
-            EFFECT_CALL,
-            step=step.name,
-            action=step.call,
-            params=step.args,
-            incoming=value,
-            handed_out=arguments,
-            started_at=started_at,
-        )
-        product = yield ("call", step.call, arguments)
-    else:
-        product = _body_product(step, value, scope, trace)
-    product = _built_product(step, product)
-    scope.products = {**scope.products, step.name: product}
-    if step.name == state.story.collect:
-        state.output.append(product)
-    if not step.is_request:
-        return pc + 1, product
-    if step.type == REQUEST_TYPE:
-        return (yield from _request_effect(state, step, value, product, item))
-    return (yield from _batch_effect(state, step, value, product))
-
-
-def _request_effect(
-    state: _RunState,
-    step: StoryStep,
-    value: Any,
-    product: Any,
-    item: int | None,
-) -> Generator[Effect, Any, tuple[int, Any]]:
-    """Hand one request over, then let the step `next` names continue the run (`03` §4.1)."""
-    started_at = stamp(state.trace)
-    request = _single_request(step, product)
-    receiver = _receiver(state.story, step, product, position=0)
-    _record_effect(
-        state.trace,
-        EFFECT_REQUEST,
-        step=step.name,
-        incoming=value,
-        handed_out=request,
-        started_at=started_at,
-    )
-    answer = yield ("request", request, receiver)
-    return (yield from _step_product(state, state.story.index[receiver], answer, item))
-
-
-def _batch_effect(
-    state: _RunState, step: StoryStep, value: Any, product: Any
-) -> Generator[Effect, Any, tuple[int, Any]]:
-    """Hand one batch of tasks over, then run the receiving step once per answer (`03` §4.1.1).
-
-    The run continues past **everything** the fan-out ran: with a per-task `next` the receiving
-    steps differ, so "the step after the default" could re-run a step that already answered.
-    """
-    started_at = stamp(state.trace)
-    tasks, receivers = _batch_tasks(state.story, step, product)
-    _record_effect(
-        state.trace,
-        EFFECT_BATCH,
-        step=step.name,
-        incoming=value,
-        handed_out=tasks,
-        started_at=started_at,
-    )
-    answer = yield ("batch", tasks, step.next or "")
-    answers = _batch_answers(step, tasks, answer)
-    received_products: list[Any] = []
-    continuations: list[int] = []
-    for position, (task_answer, receiver) in enumerate(zip(answers, receivers, strict=True)):
-        next_pc, received = yield from _step_product(
-            state, state.story.index[receiver], task_answer, position
-        )
-        received_products.append(received)
-        continuations.append(next_pc)
-    return max(continuations), received_products
-
-
-def _record_effect(
-    trace: Trace | None,
-    kind: str,
+def run(
+    bundle: Any,
+    node: str | None = None,
+    input: Any = None,  # noqa: A002 - the facade's public name
     *,
-    step: str,
-    incoming: Any,
-    handed_out: Any,
-    started_at: float,
-    action: str | None = None,
-    params: Mapping[str, Param] | None = None,
-) -> None:
-    """One suspension as a trace event; a run without a trace records nothing (`06` §5.1)."""
-    if trace is None:
-        return
-    trace.effect(
-        kind,
-        step=step,
-        action=action,
-        params=params,
-        incoming=incoming,
-        handed_out=handed_out,
-        ms=elapsed_ms(started_at),
-    )
+    globals: Mapping[str, Any] | None = None,  # noqa: A002 - the story's own key
+    udfs: Mapping[str, UdfFn] | None = None,
+    trace: Trace | None = None,
+) -> Any:
+    """Compile the story, run one node synchronously, and return its product.
 
-
-def _built_product(step: StoryStep, product: Any) -> Any:
-    """The step boundary: the product must be JSON, and the declared type is built from it (§3.3).
-
-    The product **continues as JSON** (``03`` §3.3): the JSON the constructor was handed is what the
-    run carries on, so a validating container (a dataclass, a model) approves the shape without ever
-    becoming the product — the constructor is a validator, not a place to put an object.
-
-    An unregistered `type` is `UP2-E1011` and a constructor that refuses the product is `UP2-E2019`;
-    either way the run stops **at this step**, which is the one that declared the shape.
+    ``node`` defaults to the first node in the document. ``globals`` merges over the story's
+    constants for this run; ``udfs`` merges over the process-wide udf table. A udf name the story
+    uses but the effective table lacks is ``UP2-E1010``, raised before evaluation. The product
+    passes through ``pack``; a non-JSON exit is ``UP2-E2003`` at the entry node.
     """
-    if step.type is not None:
-        try:
-            built = build_type(step.type, product)
-        except UnknownTypeError as exc:
-            raise _failed(
-                step,
-                "UP2-E1011",
-                f"the step declares type {exc.name!r}, which no host registered",
-                UNREGISTERED_FIX,
-                allowed=type_names(),
-            ) from exc
-        except TypeConstructionError as exc:
-            raise _failed(
-                step,
-                "UP2-E2019",
-                f"the type {exc.name!r} rejected the step product: {exc.reason}",
-                "match the product's shape to the constructor, or fix the constructor",
-            ) from exc
-        carried = pack(built)
-        # A constructor that answered a container rather than a JSON value (a dataclass, a pydantic
-        # model) approved the payload it was handed: the run carries that JSON on, not the Python
-        # object (`03` §3.3). A JSON answer is the product as it is; one that carries anything else
-        # is left for `pack` below to refuse.
-        product = built if not isinstance(carried, Failed) else _same_json(built, product)
+    merged_udfs = {**all_udfs(), **(udfs or {})}
+    story = compile_story(bundle, udfs=merged_udfs)
+    entry = _entry_name(story, node)
+    missing = sorted(story.udf_names - merged_udfs.keys())
+    if missing:
+        raise Up2Error(
+            diag(
+                "UP2-E1010",
+                f"the story uses udf(s) the run did not register: {', '.join(missing)}",
+                fix="pass them as run(..., udfs={...}) or register_udf(name, function)",
+                pointer=f"{story.nodes[entry].pointer}",
+                allowed=tuple(sorted(merged_udfs)),
+            )
+        )
+    effective_globals = {**story.globals, **(globals or {})}
+    scope = Scope(globals=effective_globals, step_input=input, udfs=merged_udfs)
+    runner = _NodeRunner(story, scope, trace)
+    product = runner.call(entry, input)
     packed = pack(product)
     if isinstance(packed, Failed):
-        raise _failed(step, packed.code, packed.reason, packed.fix)
+        raise Up2Error(
+            diag(
+                packed.code,
+                packed.reason,
+                fix=packed.fix,
+                pointer=story.nodes[entry].pointer,
+            )
+        )
     return product
 
 
-def _same_json(built: Any, product: Any) -> Any:
-    """The JSON a validating container approved, rebuilt from its own output (`03` §3.3).
-
-    A dataclass (or a model) answers an object, which cannot be a product; what it **approved** is
-    the payload it was handed, and that is what the run carries on. The mapping is rebuilt from the
-    dataclass's own fields, and the payload's nested structures are preserved (a list stays a list),
-    so the result is the JSON the constructor validated. A dataclass that answers a field the
-    payload does not carry is not that payload: `pack` refuses the extra key at the same step
-    (`UP2-E2003`).
-    """
-    if is_dataclass(built) and not isinstance(built, type):
-        fields_of = {field.name: getattr(built, field.name) for field in fields(built)}
-        return {key: _same_json(fields_of[key], source) for key, source in _items_of(product)}
-    return built
-
-
-def _items_of(product: Any) -> Any:
-    """The key/value pairs of a mapping product; an empty view when the product is not a mapping."""
-    return product.items() if isinstance(product, Mapping) else ()
-
-
-def _single_request(step: StoryStep, product: Any) -> dict[str, Any]:
-    """One request: the product without the kernel's own `next` key."""
-    if not isinstance(product, Mapping):
-        raise _failed(
-            step,
-            "UP2-E2005",
-            f"the step declares type Request, but its product is {type_name(product)}",
-            "build the request as a field map with a url key",
-        )
-    return _without_next(product)
-
-
-def _batch_tasks(
-    story: CompiledStory, step: StoryStep, product: Any
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Every task of a batch: what the host sees, and the receiving step of each one."""
-    items = product.get(BATCH_ITEMS) if isinstance(product, Mapping) else None
-    if not isinstance(items, list):
-        raise _failed(
-            step,
-            "UP2-E2005",
-            f"the step declares type {REQUEST_BATCH_TYPE}, but its product is "
-            f"{type_name(product)} without an `items` list",
-            'build the batch as {"items": [...]}, one request object per task',
-        )
-    tasks: list[dict[str, Any]] = []
-    receivers: list[str] = []
-    for position, item in enumerate(items):
-        if not isinstance(item, Mapping):
-            raise _failed(
-                step,
-                "UP2-E2005",
-                f"task {position} of the batch is {type_name(item)}, not a request object",
-                "write every task as an object with a url key",
+def _entry_name(story: CompiledStory, node: str | None) -> str:
+    """The node the run starts at: the named one, or the first node in the document."""
+    if node is None:
+        return next(iter(story.nodes))
+    if node not in story.nodes:
+        raise Up2Error(
+            diag(
+                "UP2-E1016",
+                f"the story has no node named {node!r}",
+                fix="name a node of this story, or omit the name to run the first node",
+                pointer="",
+                allowed=tuple(story.nodes),
             )
-        tasks.append(_without_next(item))
-        receivers.append(_receiver(story, step, item, position=position))
-    return tasks, receivers
-
-
-def _without_next(task: Mapping[str, Any]) -> dict[str, Any]:
-    """A task as the host sees it: the routing key is the kernel's, not the host's."""
-    stripped = dict(task)
-    stripped.pop(NEXT_KEY, None)
-    return stripped
-
-
-def _receiver(
-    story: CompiledStory, step: StoryStep, task: Mapping[str, Any], *, position: int
-) -> str:
-    """The step that receives one answer: the task's own `next`, else the step's default."""
-    name = task.get(NEXT_KEY) or step.next or ""
-    if name not in story.index:
-        raise _failed(
-            step,
-            "UP2-E1016",
-            f"task {position} routes to {name!r}, which is not a step of this story",
-            "point the task at a declared step",
         )
-    return name
+    return node
 
 
-def _batch_answers(step: StoryStep, tasks: Sequence[Mapping[str, Any]], answer: Any) -> list[Any]:
-    """The host's answers, one per task; a mismatched answer is a host bug, not a chain failure."""
-    answers = list(answer) if _is_sequence(answer) else [answer]
-    if len(answers) != len(tasks):
-        raise ValueError(
-            f"the batch of step {step.name!r} has {len(tasks)} tasks, so feed() needs {len(tasks)} "
-            f"answers in order, got {len(answers)}"
+class _NodeRunner:
+    """Execute nodes against one run's scope, restoring the caller's ``$in`` after every call."""
+
+    __slots__ = ("_scope", "_story", "_trace")
+
+    def __init__(self, story: CompiledStory, scope: Scope, trace: Trace | None) -> None:
+        self._story = story
+        self._scope = scope
+        self._trace = trace
+
+    def call(self, name: str, value: Any, scope: Scope | None = None) -> Any:
+        node = self._story.nodes[name]
+        active = scope if scope is not None else self._scope
+        previous = active.step_input
+        active.step_input = value
+        if self._trace is not None:
+            self._trace.enter(name)
+        try:
+            outcome = (
+                eval_field_map(
+                    node.body,
+                    value,
+                    scope=active,
+                    run_chain=self._chain_runner,
+                )
+                if isinstance(node.body, Mapping)
+                else eval_field(
+                    node.body,
+                    value,
+                    scope=active,
+                    trace=self._trace,
+                    node_runner=self.call,
+                )
+            )
+            if isinstance(outcome, Failed):
+                raise Up2Error(
+                    diag(outcome.code, outcome.reason, fix=outcome.fix, pointer=node.pointer)
+                )
+            return outcome.value
+        finally:
+            active.step_input = previous
+            if self._trace is not None:
+                self._trace.leave()
+
+    def _chain_runner(self, chain: CompiledField, value: Any, scope: Scope) -> Any:
+        return eval_field(
+            chain,
+            value,
+            scope=scope,
+            trace=self._trace,
+            node_runner=self.call,
         )
-    return answers
-
-
-def _is_sequence(value: Any) -> bool:
-    return isinstance(value, Sequence) and not isinstance(value, (str, bytes))
-
-
-# ---------------------------------------------------------------- one step's work
-
-
-def _body_product(step: StoryStep, value: Any, scope: Scope, trace: Trace | None) -> Any:
-    """Evaluate a step's `body`: a chain produces one value, a field map one dictionary.
-
-    ``scope`` is the run's scope, from which this step's field chains see the run's materialization
-    cache (`03` §6) and the products the run has recorded so far.
-    """
-    if isinstance(step.body, Mapping):
-        return _field_map_product(step, step.body, value, scope, trace)
-    if step.body is None:  # pragma: no cover - compile time guarantees body or call
-        raise _failed(step, "UP2-E1005", "the step has neither body nor call", "declare one")
-    outcome = eval_field(step.body, value, scope=scope, trace=trace)
-    if isinstance(outcome, Failed):
-        raise _from_failed(step, outcome)
-    return outcome.value
-
-
-def _field_map_product(
-    step: StoryStep,
-    fields: Mapping[str, CompiledField],
-    value: Any,
-    scope: Scope,
-    trace: Trace | None,
-) -> dict[str, Any]:
-    """One dictionary from a field map: a `_` field is a local, every other field is a key.
-
-    Every chain of the map was compiled with its own field name, which is what the trace reports as
-    `field` (`06` §5.1), so the two fields of one map stay apart.
-    """
-    row: dict[str, Any] = {}
-    for name, chain in fields.items():
-        outcome = eval_field(chain, value, scope=scope, trace=trace)
-        if isinstance(outcome, Failed):
-            raise _from_failed(step, outcome)
-        if name.startswith(LOCAL_PREFIX):
-            scope.write_local((name,), outcome.value)
-        else:
-            row[name] = outcome.value
-    return row
-
-
-def _call_arguments(step: StoryStep, value: Any, scope: Scope) -> dict[str, Any]:
-    """Resolve a `call` step's `args` (the same leaves as an operator's parameter)."""
-    resolved = resolve_params(step.args, scope)
-    if isinstance(resolved, Mapping):
-        return dict(resolved)
-    if isinstance(resolved, Failed):
-        raise _from_failed(step, resolved)
-    raise _failed(step, "UP2-E2005", "a call argument is missing", "make it present first")
 
 
 # ---------------------------------------------------------------- compile time
 
 
-def _compile_step(
+def _compile_node(
     raw: Any,
     *,
     name: str,
-    index: int,
     names: tuple[str, ...],
     pointer: str,
-) -> StoryStep:
-    if not isinstance(raw, Mapping):
-        raise _bad(f"step {index} must be an object, got {type_name(raw)}", pointer=pointer)
-    unknown = sorted(str(key) for key in raw if key not in _STEP_KEYS)
-    if unknown:
+) -> CompiledNode:
+    if isinstance(raw, Mapping):
+        body: CompiledField | Mapping[str, CompiledField] = compile_field_map(
+            name, raw, nodes=names, pointer=pointer
+        )
+    elif isinstance(raw, (list, tuple)):
+        body = compile_field(raw, nodes=names, pointer=pointer)
+    else:
         raise _bad(
-            f"unknown step keys: {', '.join(unknown)}",
+            f"node {name!r} must be a chain (array) or a field map (object), got {type_name(raw)}",
             pointer=pointer,
-            fix="a step carries name / type / body / call / next / args",
-            allowed=tuple(sorted(_STEP_KEYS)),
+            fix="write an array of stages, [] for identity, or an object of field name to chain",
         )
-    declared_type = raw.get("type")
-    if declared_type is not None and (not isinstance(declared_type, str) or not declared_type):
-        raise _bad(
-            f"`type` must be a non-empty string, got {declared_type!r}",
-            pointer=f"{pointer}/type",
-        )
-    body = raw.get(BODY_KEY)
-    call = raw.get("call")
-    if (body is None) == (call is None):
-        raise _bad(
-            f"a step declares exactly one of `{BODY_KEY}` and `call`",
-            pointer=pointer,
-            fix='write "body": {...} for extraction, or "call": "host.fn" for a host function',
-        )
-    if ARGS_KEY in raw and call is None:
-        raise _bad(f"`{ARGS_KEY}` only belongs to a `call` step", pointer=f"{pointer}/{ARGS_KEY}")
-    if call is not None and (not isinstance(call, str) or not call):
-        raise _bad(f"`call` must name a host function, got {call!r}", pointer=f"{pointer}/call")
-    others = tuple(item for item in names if item != name)
-    compiled_body: CompiledField | Mapping[str, CompiledField] | None = None
-    if body is not None:
-        compiled_body = (
-            compile_field_map(BODY_KEY, body, products=others, pointer=f"{pointer}/{BODY_KEY}")
-            if isinstance(body, Mapping)
-            else compile_field(body, products=others, pointer=f"{pointer}/{BODY_KEY}")
-        )
-    return StoryStep(
-        name=name,
-        index=index,
-        type=declared_type,
-        body=compiled_body,
-        call=call,
-        args=_args_of(raw, pointer=pointer),
-        next=_next_of(raw, declared_type, names, pointer=pointer),
-        pointer=pointer,
-    )
+    return CompiledNode(name=name, body=body, pointer=pointer)
 
 
-def _next_of(
-    raw: Mapping[str, Any], declared_type: str | None, names: tuple[str, ...], *, pointer: str
-) -> str | None:
-    """`next` is required on a request step and refused everywhere else (`03` §4.1)."""
-    declared = raw.get(NEXT_KEY)
-    if declared_type not in REQUEST_TYPES:
-        if declared is not None:
-            raise _bad(
-                f"`next` belongs to a Request / RequestBatch step, and this step's type is "
-                f"{declared_type!r}",
-                pointer=f"{pointer}/{NEXT_KEY}",
-            )
-        return None
-    if not isinstance(declared, str) or not declared:
-        raise _bad(
-            f"a step whose type is {declared_type} must declare `next`, naming the step that "
-            "receives the responses",
-            pointer=f"{pointer}/{NEXT_KEY}",
-            fix="name a step of this story",
-            allowed=names,
-        )
-    if declared not in names:
-        raise Up2Error(
-            diag(
-                "UP2-E1016",
-                f"`next` names {declared!r}, which is not a step of this story",
-                fix="name a declared step",
-                pointer=f"{pointer}/{NEXT_KEY}",
-                allowed=names,
-            )
-        )
-    return declared
-
-
-def _args_of(raw: Mapping[str, Any], *, pointer: str) -> Mapping[str, Param]:
-    """A `call`'s arguments: a mapping of name to a `ref_or_literal` leaf (`03` §13 O2)."""
-    declared = raw.get(ARGS_KEY)
-    if declared is None:
-        return {}
-    if not isinstance(declared, Mapping):
-        raise _bad(
-            f"`{ARGS_KEY}` must be an object of arguments, got {type_name(declared)}",
-            pointer=f"{pointer}/{ARGS_KEY}",
-        )
-    return {
-        str(key): parse_ref(item, pointer=f"{pointer}/{ARGS_KEY}/{key}")
-        if is_ref_text(item)
-        else Lit(item)
-        for key, item in declared.items()
-    }
-
-
-def _step_names(raw_steps: list[Any], *, pointer: str) -> tuple[str, ...]:
-    """Every step's name: non-empty, unique, and not a reserved reference root (`UP2-E1009`)."""
+def _node_names(raw_nodes: Mapping[Any, Any], *, pointer: str) -> tuple[str, ...]:
+    """Every node name: non-empty, unique by key, addressable, and not a reserved root."""
     names: list[str] = []
-    for position, raw in enumerate(raw_steps):
-        where = f"{pointer}/{position}"
-        if not isinstance(raw, Mapping):
-            raise _bad(f"step {position} must be an object, got {type_name(raw)}", pointer=where)
-        name = raw.get("name")
+    for name in raw_nodes:
         if not isinstance(name, str) or not name:
-            raise _bad(
-                f"every step declares a non-empty `name`, got {name!r}",
-                pointer=f"{where}/name",
-                fix='name the step, e.g. "records"',
+            raise Up2Error(
+                diag(
+                    "UP2-E1009",
+                    f"every node needs a non-empty name, got {name!r}",
+                    fix='name the node, e.g. "parse"',
+                    pointer=pointer,
+                )
             )
         if name in RESERVED_ROOTS:
             raise Up2Error(
                 diag(
                     "UP2-E1009",
-                    f"the step name {name!r} is a reserved reference root",
-                    fix="rename the step; the reserved roots are used by references",
-                    pointer=f"{where}/name",
+                    f"the node name {name!r} is a reserved reference root",
+                    fix="rename the node; the reserved roots are used by references",
+                    pointer=f"{pointer}/{name}",
                     allowed=RESERVED_ROOTS,
                 )
             )
-        if name in names:
+        bad = next((char for char in _FORBIDDEN_NODE_CHARS if char in name), None)
+        if bad is not None:
             raise Up2Error(
                 diag(
                     "UP2-E1009",
-                    f"the step name {name!r} is declared twice",
-                    fix="give every step a unique name",
-                    pointer=f"{where}/name",
+                    f"the node name {name!r} contains {bad!r}, which a JSON Pointer cannot name",
+                    fix="use letters, digits, `_` or `-`",
+                    pointer=f"{pointer}/{name}",
                 )
             )
         names.append(name)
     return tuple(names)
 
 
-def _entry_name(raw: Any, names: tuple[str, ...], *, pointer: str) -> str:
-    """`entry` names the step the run starts at: required, and a step of this bundle (`03` §2)."""
-    if not isinstance(raw, str) or not raw:
-        raise _bad(
-            f"`entry` must name the step the run starts at, got {raw!r}",
-            pointer=pointer,
-            fix="name a step of this story; the start is declared, never derived from array order",
-            allowed=names,
-        )
-    if raw not in names:
-        raise Up2Error(
-            diag(
-                "UP2-E1016",
-                f"`entry` names {raw!r}, which is not a step of this story",
-                fix="name a declared step",
-                pointer=pointer,
-                allowed=names,
-            )
-        )
-    return raw
+def _used_udfs(nodes: Iterable[CompiledNode]) -> set[str]:
+    """Every udf name the story's stages mention (nested `each` sub-chains included)."""
+    found: set[str] = set()
+    for node in nodes:
+        for stage in _stages_of(node.body):
+            if stage.op_name == _UDF_OPERATOR:
+                found.add(stage.action)
+    return found
 
 
-def _collect_name(raw: Any, names: tuple[str, ...], *, pointer: str) -> str:
-    if not isinstance(raw, str) or not raw:
-        raise _bad(
-            f"`{COLLECT_KEY}` must name the step whose products are the run's output, got {raw!r}",
-            pointer=pointer,
-            fix="name a step of this story; with jumps the last step is not unique",
-            allowed=names,
-        )
-    if raw not in names:
-        raise Up2Error(
-            diag(
-                "UP2-E1016",
-                f"`{COLLECT_KEY}` names {raw!r}, which is not a step of this story",
-                fix="name a declared step",
-                pointer=pointer,
-                allowed=names,
-            )
-        )
-    return raw
+def _stages_of(body: CompiledField | Mapping[str, CompiledField]) -> Iterable[CompiledStage]:
+    if isinstance(body, Mapping):
+        for chain in body.values():
+            yield from chain.stages
+            for stage in chain.stages:
+                yield from _nested_stages(stage)
+        return
+    yield from body.stages
+    for stage in body.stages:
+        yield from _nested_stages(stage)
 
 
-def _lint_flow(steps: tuple[StoryStep, ...], *, entry: int) -> None:
-    """Reject a story whose steps can lead the run back into a step it is already executing (`L12`).
+def _nested_stages(stage: CompiledStage) -> Iterable[CompiledStage]:
+    """The stages inside an `each` payload, recursively."""
+    if stage.op_name != _EACH_OPERATOR:
+        return
+    payload = stage.payload
+    if isinstance(payload, Mapping):
+        for chain in payload.values():
+            yield from chain.stages
+            for nested in chain.stages:
+                yield from _nested_stages(nested)
+    elif isinstance(payload, CompiledField):
+        yield from payload.stages
+        for nested in payload.stages:
+            yield from _nested_stages(nested)
 
-    The run's only way forward is the program counter: the step after this one, or the step a
-    request's `next` names. Both are drawn in one graph, and a node the walk enters twice is a loop
-    the run can take -- a story the host would have to interrupt rather than finish. Every backward
-    `next` the samples use (a fan-out whose answers are parsed by a step written earlier, the
-    task-override pattern) is accepted: its target cannot reach the jumping step again, so no node
-    is entered twice.
 
-    The walk then answers the second question the same graph settles: what the run can **not** reach
-    (`L13`). The entry step is where it starts, so a step nothing jumps to and that the fall-through
-    never passes is dead, and it is reported rather than silently kept.
-    """
-    walk = _LoopWalk(steps)
-    unreachable = walk.reachable(entry)
-    if unreachable:
-        _raise_unreachable(steps, unreachable)
-    for position in range(len(steps)):
-        closed = walk.enter(position)
+# ---------------------------------------------------------------- the node-call graph
+
+
+def _lint_node_graph(story: CompiledStory) -> None:
+    """Reject a node-call graph that closes a cycle (`UP2-E1017`)."""
+    edges = {
+        name: [(target, stage) for target, stage in _node_edges(node.body)]
+        for name, node in story.nodes.items()
+    }
+    colours = dict.fromkeys(story.nodes, _UNVISITED)
+    for name in story.nodes:
+        closed = _walk(name, edges, colours, path=[])
         if closed is not None:
-            raise _cycle(steps, closed)
+            raise _cycle(closed, story)
 
 
-def _raise_unreachable(steps: tuple[StoryStep, ...], unreachable: list[int]) -> None:
-    """The diagnostic for the first step the flow from the entry cannot arrive at (`L13`)."""
-    step = steps[unreachable[0]]
-    raise Up2Error(
-        diag(
-            "UP2-E1018",
-            f"the step {step.name!r} is unreachable from the entry: no step falls through to it "
-            "and no `next` names it",
-            fix=(
-                f"point a `next` at {step.name!r}, take it out of the flow, or make it the entry "
-                "if the run should start there"
-            ),
-            pointer=f"{step.pointer}/name",
-        )
-    )
+def _node_edges(body: CompiledField | Mapping[str, CompiledField]) -> Iterable[tuple[str, Any]]:
+    for stage in _stages_of(body):
+        if stage.op_name == _NODE_OPERATOR:
+            yield stage.payload, stage
 
 
-class _LoopWalk:
-    """One depth-first walk of a story's flow: the positions of the first loop found, or ``None``.
-
-    ``flow`` holds the program counter's own edge per step (see ``_lint_flow``); ``path`` is the
-    steps the walk is currently standing on, so a successor already on it closes a loop and a
-    successor it has left cannot.
-    """
-
-    __slots__ = ("_colour", "_flow", "_index", "_path", "_steps")
-
-    def __init__(self, steps: tuple[StoryStep, ...]) -> None:
-        self._steps = steps
-        self._flow = [
-            [step.next]
-            if step.next is not None
-            else ([steps[position + 1].name] if position + 1 < len(steps) else [])
-            for position, step in enumerate(steps)
-        ]
-        self._index = {step.name: position for position, step in enumerate(steps)}
-        self._colour = [_UNVISITED] * len(steps)
-        self._path: list[int] = []
-
-    def enter(self, node: int) -> list[int] | None:
-        """Walk ``node`` unless it has been walked already; the loop's positions, or ``None``."""
-        if self._colour[node] != _UNVISITED:
-            return None
-        return self._walk(node)
-
-    def reachable(self, node: int) -> list[int]:
-        """Walk the flow from ``node``; answer every position it never arrived at, in array order.
-
-        A loop inside that subtree is reported exactly as a walk from any other position reports it,
-        so "no loop" and "nothing unreachable" share one traversal instead of one walking the entry
-        and the other the array.
-        """
-        closed = self.enter(node)
-        if closed is not None:
-            raise _cycle(self._steps, closed)
-        return [position for position, colour in enumerate(self._colour) if colour == _UNVISITED]
-
-    def _walk(self, node: int) -> list[int] | None:
-        self._colour[node] = _ON_PATH
-        self._path.append(node)
-        loop = self._first_loop(node)
-        self._path.pop()
-        self._colour[node] = _WALKED
-        return loop
-
-    def _first_loop(self, node: int) -> list[int] | None:
-        """The loop one of ``node``'s successors closes, in travel order, or ``None``."""
-        for successor in self._flow[node]:
-            target = self._index[successor]
-            if self._colour[target] == _ON_PATH:
-                return [*self._path[self._path.index(target) :], target]
-            closed = self._walk(target) if self._colour[target] == _UNVISITED else None
-            if closed is not None:
-                return closed
+def _walk(
+    name: str,
+    edges: Mapping[str, list[tuple[str, CompiledStage]]],
+    colours: dict[str, int],
+    *,
+    path: list[str],
+) -> list[str] | None:
+    colours[name] = _ON_PATH
+    path.append(name)
+    try:
+        for target, _stage in edges[name]:
+            if colours[target] == _ON_PATH:
+                return [*path[path.index(target) :], target]
+            if colours[target] == _UNVISITED:
+                closed = _walk(target, edges, colours, path=path)
+                if closed is not None:
+                    return closed
         return None
+    finally:
+        path.pop()
+        colours[name] = _WALKED
 
 
-def _cycle(steps: tuple[StoryStep, ...], closed: list[int]) -> Up2Error:
-    """The diagnostic for one loop: where it closes, and every step the run passes in order."""
-    loop = [steps[position] for position in sorted(set(closed))]
-    travel = " -> ".join([*(step.name for step in loop), loop[0].name])
-    # The pointer names the backward jump: of the loop's jumps, the one latest in array order is the
-    # one that runs into the region it came from -- the transition to break.
-    jumper = [step for step in loop if step.next is not None][-1]
+def _cycle(closed: list[str], story: CompiledStory) -> Up2Error:
+    travel = " -> ".join(closed)
+    node = story.nodes[closed[0]]
     return Up2Error(
         diag(
             "UP2-E1017",
-            f"the flow of this story closes a loop: {travel}",
-            fix=(
-                f"point `next` at a step that runs after {jumper.name!r}, or take the step that "
-                "closes the loop out of it"
-            ),
-            pointer=f"{jumper.pointer}/{NEXT_KEY}",
+            f"the node calls close a cycle: {travel}",
+            fix="break the cycle by inlining one node, or by running two calls from the host",
+            pointer=node.pointer,
         )
     )
+
+
+# ---------------------------------------------------------------- small helpers
 
 
 def _globals(raw: Any, *, pointer: str) -> Mapping[str, Any]:
@@ -908,27 +422,9 @@ def _bad(message: str, *, pointer: str, fix: str = "", allowed: tuple[str, ...] 
     return Up2Error(diag("UP2-E1005", message, fix=fix, pointer=pointer, allowed=allowed))
 
 
-def _failed(
-    step: StoryStep,
-    code: str,
-    reason: str,
-    fix: str,
-    *,
-    allowed: tuple[str, ...] = (),
-) -> Up2Error:
-    return Up2Error(diag(code, reason, fix=fix, pointer=step.pointer, allowed=allowed))
-
-
-def _from_failed(step: StoryStep, failed: Failed) -> Up2Error:
-    """A step that cannot produce its product stops the run with the stage's own diagnostic."""
-    return Up2Error(diag(failed.code, failed.reason, fix=failed.fix, pointer=step.pointer))
-
-
 __all__ = [
+    "CompiledNode",
     "CompiledStory",
-    "Effect",
-    "StoryRun",
-    "StoryStep",
     "compile_story",
-    "start",
+    "run",
 ]

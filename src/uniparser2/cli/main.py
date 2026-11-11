@@ -53,7 +53,7 @@ from uniparser2 import (
     compile_story,
     eval_field,
     pack,
-    start,
+    run,
 )
 from uniparser2.core import compare_products, registry
 from uniparser2.core.conformance import check
@@ -90,7 +90,7 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_USAGE = 2
 MAIN_INPUT_KEY = "text"
-STORY_KEY = "steps"
+STORY_KEY = "nodes"
 UNKNOWN_ACTOR = "unknown"
 AGENT_SOURCE = "agent"
 DOCTOR_ACTOR = "doctor"
@@ -167,6 +167,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="NAME=JSON",
         help="inject outputs of preceding nodes",
+    )
+    trial.add_argument(
+        "--node",
+        default=None,
+        metavar="NAME",
+        help="the story node to run (default: the first node)",
     )
     trial.add_argument(
         "--trace",
@@ -334,7 +340,7 @@ def _cmd_lint(args: argparse.Namespace) -> int:
 
 
 def _lint_story(source: Any, args: argparse.Namespace) -> int:
-    """A story declares its own step names, so ``--product`` has nothing to say here."""
+    """A story declares its own node names, so ``--product`` has nothing to say here."""
     if args.product:
         print("--product cannot be used with a story file", file=sys.stderr)
         return EXIT_USAGE
@@ -343,19 +349,11 @@ def _lint_story(source: Any, args: argparse.Namespace) -> int:
     except Up2Error as exc:
         _print_diagnostic(exc.diagnostic, as_json=args.json)
         return EXIT_FAILED
+    names = list(story.nodes)
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "steps": len(story.steps),
-                    "entry": story.entry,
-                    "collect": story.collect,
-                }
-            )
-        )
+        print(json.dumps({"ok": True, "nodes": len(names), "names": names}, ensure_ascii=False))
     else:
-        print(f"OK: {len(story.steps)} steps, entry {story.entry}, collect {story.collect}")
+        print(f"OK: {len(names)} nodes: {', '.join(names)}")
     return EXIT_OK
 
 
@@ -391,13 +389,16 @@ def _cmd_trial(args: argparse.Namespace) -> int:
 
 
 def _trial_story(source: Any, args: argparse.Namespace, trace: Trace | None) -> int:
-    """Run a story to its first effect. Without a host there is nothing to answer a request."""
-    if args.product or args.global_vars:
+    """Run one story node. Without a host, a story that calls a udf reports `UP2-E1010`."""
+    if args.product:
         print(
-            "--product and --global cannot be used with a story file: a story carries its own "
-            "globals and its own step names",
+            "--product cannot be used with a story file: a story carries its own node names",
             file=sys.stderr,
         )
+        return EXIT_USAGE
+    globals_map, error = _key_value_map(args.global_vars)
+    if error is not None:
+        print(error, file=sys.stderr)
         return EXIT_USAGE
     inputs, error = _read_inputs(args.input)
     if error is not None:
@@ -405,7 +406,13 @@ def _trial_story(source: Any, args: argparse.Namespace, trace: Trace | None) -> 
         return EXIT_USAGE
     value = inputs.get(MAIN_INPUT_KEY, inputs)
     try:
-        effect = start(source, value, trace=trace).go()
+        product = run(
+            source,
+            args.node,
+            value,
+            globals=globals_map,
+            trace=trace,
+        )
     except Up2Error as exc:
         if trace is None:
             _print_diagnostic(exc.diagnostic, as_json=args.json)
@@ -414,16 +421,7 @@ def _trial_story(source: Any, args: argparse.Namespace, trace: Trace | None) -> 
         # reason) is what says where the run stopped.
         _emit_state({"state": "failed", **exc.diagnostic.to_dict()}, as_json=args.json, trace=trace)
         return EXIT_FAILED
-    if effect[0] == "done":
-        return _report_outcome(Ok(effect[1]), args.json, trace=trace)
-    payload: dict[str, Any] = {
-        "state": "suspended",
-        "effect": effect[0],
-        "detail": list(effect[1:]),
-        "note": "a suspension is not an error; a host answers it with run.feed(answer)",
-    }
-    _emit_state(payload, as_json=args.json, trace=trace)
-    return EXIT_OK
+    return _report_outcome(Ok(product), args.json, trace=trace)
 
 
 def _cmd_publish(args: argparse.Namespace) -> int:
@@ -736,12 +734,12 @@ def _print_trace(trace: Trace) -> None:
 
 
 def _trace_line(event: TraceEvent) -> str:
-    where = event.step or "-"
+    where = event.node or "-"
     if event.field:
         where = f"{where}.{event.field}"
     item = "-" if event.item is None else str(event.item)
     stage = "-" if event.stage is None else str(event.stage)
-    doing = f"effect:{event.effect}" if event.effect else f"{event.op}.{event.action}"
+    doing = f"{event.op}.{event.action}"
     return (
         f"{event.seq:>4}  {where:<24} item={item:<4} stage={stage:<3} {doing:<22} "
         f"{event.state:<8}{event.ms:>8.3f}ms  "
@@ -801,7 +799,7 @@ def _load_types(path_text: str) -> str | None:
 
 
 def _is_story(source: Any) -> bool:
-    """A story is a JSON object carrying ``steps``; anything else is a field chain (03 §2)."""
+    """A story is a JSON object carrying ``nodes``; anything else is a field chain (03 §2)."""
     return isinstance(source, Mapping) and STORY_KEY in source
 
 

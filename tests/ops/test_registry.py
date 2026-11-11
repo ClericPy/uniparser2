@@ -40,9 +40,11 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
         "udf",
         "ctx",
         "code",
+        "node",
+        "type",
     }
-    assert len(pairs) == 77
-    assert len([pair for pair in pairs if pair[0] == "py"]) == 46
+    assert len(pairs) == 81
+    assert len([pair for pair in pairs if pair[0] == "py"]) == 48
     assert len([pair for pair in pairs if pair[0] == "css"]) == 8
     assert len([pair for pair in pairs if pair[0] == "css1"]) == 8
     assert len([pair for pair in pairs if pair[0] == "xpath"]) == 3

@@ -47,7 +47,7 @@ def test_the_demo_case_matches_its_snapshot() -> None:
     assert result.ok, result.error
     assert compare_products(expected, result.value) == []
     # The story's own product, spelled out: a change to either file lands here first.
-    assert result.value == [{"headings": ["First   section", "Second section"]}]
+    assert result.value == {"headings": ["First   section", "Second section"]}
 
 
 def test_a_snapshot_carrying_a_non_json_constant_is_an_error(tmp_path: Path) -> None:

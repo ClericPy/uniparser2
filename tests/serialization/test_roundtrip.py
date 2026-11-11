@@ -29,7 +29,6 @@ CHAINS: tuple[Any, ...] = (
     [["ctx", "dict", {"title": "locals._t", "base": "globals.base"}]],
     [["py", "urljoin", "$globals.base_url"]],
     [["try", "skip"], ["py", "int"]],
-    [["$in", ["py", "getattr", "url"]]],
 )
 
 
@@ -70,12 +69,10 @@ def test_non_ascii_is_not_escaped() -> None:
     assert "café" in dumps(loads([["py", "const", "café"]]))
 
 
-def test_empty_chain_is_rejected() -> None:
-    from uniparser2 import Up2Error
-
-    with pytest.raises(Up2Error) as info:
-        loads([])
-    assert info.value.diagnostic.code == "UP2-E1004"
+def test_an_empty_chain_is_identity() -> None:
+    """`[]` is the only identity form: it loads as no stages and dumps back as `[]`."""
+    assert loads([]) == ()
+    assert dumps(loads([])) == "[]"
 
 
 @pytest.mark.parametrize(

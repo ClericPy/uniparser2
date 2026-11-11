@@ -51,6 +51,10 @@ declaration.
    syntax must land in the design drafts).
 3. Run the gates above; all green.
 4. `openspec-archive-change` to archive, merging the delta into `openspec/specs/`.
+5. **Record future syntax changes in the CHANGELOG**: a change that alters DSL syntax or observable
+   behavior adds an entry to `CHANGELOG.md` under the version it ships in, with breaking changes
+   marked. Do not backfill earlier versions (the `0.7.0` story model included): start recording with
+   the next syntax change after the version that introduces this rule.
 
 `openspec/config.yaml` sets artifacts to English, with structural headings and SHALL/MUST keywords kept
 in English.

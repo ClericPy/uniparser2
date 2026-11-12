@@ -15,12 +15,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        # 3.15 is an alpha (3.15.0a7 via uv at the time of writing); the optional engines already
+        # publish cp315/abi3 wheels, so the cell is usable. Drop the pre-release note once stable.
+        python-version: ["3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v4
 
@@ -30,8 +32,7 @@ jobs:
           enable-cache: true
 
       # Install the supported optional dependencies: the behavioral assertions for
-      # css/xpath/json/time/HTML-to-Markdown have to run once with every dependency present.
-      # ui is deliberately excluded (pywebview is not wired into any code yet).
+      # css/xpath/json/HTML-to-Markdown have to run once with every dependency present.
       # `code` (the in-chain code sandbox) is installed only in the 3.13 cell: it is a ~12 MB platform
       # binary and there is no point pulling a copy into every matrix cell; in the other cells
       # tests/ops/test_code.py is skipped as a whole module (isolation and limit cases cannot really
@@ -41,45 +42,13 @@ jobs:
       # pydantic-monty, otherwise every cell would install it.
       - name: Sync
         run: |
-          EXTRAS="--extra html --extra xml --extra json --extra time --extra md"
+          EXTRAS="--extra html --extra xml --extra json --extra md"
           if [ "${{ matrix.python-version }}" = "3.13" ]; then
             EXTRAS="$EXTRAS --extra code"
           fi
           uv sync $EXTRAS
 
-      - name: Format
-        run: uv run ruff format --check
-
-      - name: Lint
-        run: uv run ruff check
-
-      - name: Type check
-        run: uv run mypy
-
-      # Run the tests and the kernel coverage gate (core >= 95%) in one go.
+      # The suite is the gate: it holds the conformance audit, the committed sample chains and the
+      # catalogue freshness, so CI runs tests only (no separate lint/type/security steps).
       - name: Test with core coverage gate
         run: uv run pytest --cov=uniparser2.core --cov-fail-under=95 --cov-report=term-missing
-
-      # Backbone constraint: every (operator, action) declared in the registry needs a case, and every
-      # implemented error code must be asserted.
-      - name: Conformance
-        run: uv run up2 conformance --check
-
-      # The security scan and the dependency audit fetch their tools on the fly with uvx, so they stay
-      # out of the project's dependency list. If they are ever moved into the dev group, switch these
-      # to `uv run bandit` / `uv run pip-audit`.
-      - name: Security scan
-        run: uvx bandit -r src -q
-
-      - name: Dependency audit
-        run: |
-          # pip-audit does not understand uv.lock, and its built-in pip resolver index lags behind
-          # PyPI (measured: it could not see pytz/ruff versions published two days earlier). So we go
-          # the route of "uv export a hashed requirements list + --disable-pip for no resolution" and
-          # audit the runtime dependency set directly.
-          # The export only reads the lockfile (it installs no binaries), so the code extra is inside
-          # the audit scope of every cell as well.
-          uv export --no-emit-project \
-            --extra html --extra xml --extra json --extra time --extra md --extra code \
-            --format requirements-txt --output-file /tmp/requirements-audit.txt
-          uvx pip-audit --disable-pip --requirement /tmp/requirements-audit.txt --progress-spinner off

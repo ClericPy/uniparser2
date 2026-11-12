@@ -49,6 +49,7 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.9",
     "mypy>=1.14",
+    "pytest-xdist>=3.6",
 ]
 
 [build-system]

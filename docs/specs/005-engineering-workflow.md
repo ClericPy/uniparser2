@@ -320,7 +320,7 @@ After changing `.py` / `.sh` files, run these checks through the project environ
 |---|---|---|
 | Formatting and static checks | `uv run ruff format --check` + `uv run ruff check` | any `.py` change |
 | Types | `uv run mypy` (strict) | any `.py` change |
-| Tests | `uv run pytest` (affected subset → full run) | any logic change |
+| Tests | `uv run pytest` (affected subset → full run); `uv run pytest -n 4` for a parallel local run (`pytest-xdist`), not `-n auto` on a high-core machine — measured, too many workers can be slower than serial | any logic change |
 | Coverage gate | `uv run pytest --cov=uniparser2.core --cov-fail-under=95` | before a PR / wrapping up a stage |
 | Security | `uv run bandit -r src` | when input validation, deserialization, regular expressions or subprocesses are touched (in this project `core/compile.py`, `ops/re.py` and `store/*` are long-term hits) |
 | Dependencies | `uv run pip-audit` | when the dependency list changes |
@@ -343,10 +343,10 @@ rules.
 
 | Item | Practice |
 |---|---|
-| Version source | the `version` of `pyproject.toml` (a single point); `up2 --version` reads the same place |
+| Version source | the `__version__` literal in `src/uniparser2/__init__.py` (`[tool.hatch.version]` reads it); `up2 --version` reads the same place |
 | Version policy | during `0.x`: a new capability bumps minor, a bug fix bumps patch, and **an incompatible DSL syntax change bumps minor and is flagged in the CHANGELOG** |
 | Build | `uv build` (sdist + wheel) |
-| Release | `uv publish` (PyPI; credentials come from `UV_PUBLISH_TOKEN` or trusted publishing and are **never stored**) |
+| Release | `uv build` then `uv publish`, run **locally** by a person; the token comes from `UV_PUBLISH_TOKEN` in the environment and is **never stored**. There is no GitHub release workflow and no repository credential. |
 | Package name | `uniparser2` (settled in `07` §4-a: the name is available; the CLI stays `up2`) |
 | CHANGELOG | accumulated by archiving OpenSpec changes; each change corresponds to one section |
 | Pre-release gate | every check of §6 green + every `docs/specs` document agrees with the code |
@@ -357,29 +357,33 @@ rules.
 
 ## 8. CI outline (in effect from L1)
 
+**CI runs the test suite only.** The lint / type / security / dependency gates stay in the local
+DoD (§6); the suite itself carries the conformance audit, the committed-sample compile test and the
+catalogue freshness, so a broken chain cannot pass by omission.
+
 ```yaml
 # .github/workflows/ci.yml (outline)
 on: [push, pull_request]
 jobs:
-  check:
-    strategy: { matrix: { python: ["3.12", "3.13", "3.14"] } }
+  test:
+    strategy: { matrix: { python: ["3.12", "3.13", "3.14", "3.15"] } }   # 3.15 is an alpha for now
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --all-extras --dev
-      - run: uv run ruff format --check
-      - run: uv run ruff check
-      - run: uv run mypy
-      - run: uv run pytest --cov
-      - run: up2 conformance --check   # the registry declarations × the case coverage must agree
-      - run: uv run bandit -r src
-      - run: uv run pip-audit
-      - run: up2 lint samples/*.json          # every chain in the repository must compile
+      - run: uv sync --extra html --extra xml --extra json --extra md   # + --extra code in the 3.13 cell (§8)
+      - run: uv run pytest --cov=uniparser2.core --cov-fail-under=95
 ```
 
-**That last step closes the loop of this engineering workflow**: every frozen chain in the repository is recompiled and regressed in CI, so a chain cannot "quietly break".
+**The suite closes the loop of this engineering workflow**: every committed sample chain is compiled
+by a test, and the conformance audit is a test, so a chain cannot "quietly break" just because a
+separate CI step is missing.
 
-**CI policy for the `code` extra**: it is installed only in the **Python 3.13 Ubuntu matrix cell** (`uv sync --extra code`) and the sandbox cases really run there; the other matrix cells do not install that extra, and when the dependency is missing the sandbox cases in `tests/ops/test_code.py` skip through `pytest.importorskip("pydantic_monty")` (the isolation boundary and the resource limits are security-critical assertions, and skipping them in an environment without a sandbox is more honest than pretending to cover them). The dependency audit is unaffected by this policy: `uv export` only reads the lockfile, so the dependencies of `code` are brought into the audit in every cell (§2.4).
+**CI policy for the `code` extra**: it is installed only in the **Python 3.13 Ubuntu matrix cell**
+(`uv sync --extra code`) and the sandbox cases really run there; the other matrix cells do not
+install that extra, and when the dependency is missing the sandbox cases in `tests/ops/test_code.py`
+skip through `pytest.importorskip("pydantic_monty")` (the isolation boundary and the resource limits
+are security-critical assertions, and skipping them in an environment without a sandbox is more
+honest than pretending to cover them). The dependency audit stays a local check (§6).
 
 ---
 

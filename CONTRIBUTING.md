@@ -13,8 +13,9 @@ place, so nothing here is authoritative — start from these instead:
 Start here:
 
 ```bash
-uv sync        # create .venv and install the dev dependencies
-uv run pytest  # the test suite (sandbox cases skip unless you add `--extra code`)
+uv sync           # create .venv and install the dev dependencies
+uv run pytest     # the test suite (sandbox cases skip unless you add `--extra code`)
+uv run pytest -n 4  # the same suite in parallel (pytest-xdist); CI stays serial
 ```
 
 Read note `005` before your first change. If a note and the code disagree, reconcile them in the same

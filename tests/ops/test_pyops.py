@@ -387,8 +387,10 @@ def test_getattr_accepts_a_reference_as_the_name() -> None:
 
 def test_getattr_on_a_selectolax_node() -> None:
     """The real case: a node's own attributes are values, `.text` is a method."""
-    selectolax = pytest.importorskip("selectolax.parser")
-    tree = selectolax.HTMLParser("<div id='a'><p>hi</p></div>")
+    pytest.importorskip("selectolax")
+    from uniparser2.ops.htmldom import _html_parser
+
+    tree = _html_parser()("<div id='a'><p>hi</p></div>")
     node = tree.css_first("div")
     assert run([["py", "getattr", "tag"]], node) == Ok("div")
     assert run([["py", "getattr", "attributes"]], node) == Ok({"id": "a"})

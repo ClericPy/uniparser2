@@ -114,22 +114,36 @@ class DomNode(Opaque):
         return f"<DomNode {type(self.raw).__name__}>"
 
 
+def _html_parser() -> Any:
+    """The parser class the adapter builds with.
+
+    selectolax 1.0 removed ``selectolax.parser`` (the modest backend) and raises ``ImportError`` on
+    import, pointing at ``selectolax.lexbor.LexborHTMLParser``. Both classes expose the methods
+    used here (``css`` / ``css_first`` / ``text`` / ``html`` / ``attributes`` / ``decompose`` /
+    ``strip_tags`` / ``iter(include_text=)``), so the adapter only has to pick one.
+    """
+    try:
+        return importlib.import_module("selectolax.parser").HTMLParser
+    except ImportError:
+        return importlib.import_module("selectolax.lexbor").LexborHTMLParser
+
+
 class SelectolaxEngine:
     """selectolax adapter layer.
 
-    **Three API facts hit by measurement (selectolax 0.4.12)** (writing from old memory gets them
-    wrong): ``Node`` has no ``clone()`` and no ``outer_html``; ``node.html`` returns the **outer**
-    HTML. So "take a copy" can only re-parse ``node.html``, and "inner HTML" can only concatenate
-    the ``html`` of the direct children.
+    **Three API facts hit by measurement** (writing from old memory gets them wrong): ``Node`` has
+    no ``clone()`` and no ``outer_html``; ``node.html`` returns the **outer** HTML. So "take a
+    copy" can only re-parse ``node.html``, and "inner HTML" can only concatenate the ``html`` of
+    the direct children. The facts hold for both the modest backend (0.x) and lexbor (1.x).
     """
 
     name = _SELECTOLAX
 
     def __init__(self) -> None:
-        self._parser = importlib.import_module("selectolax.parser")
+        self._HTMLParser = _html_parser()
 
     def parse(self, text: str) -> Any:
-        return self._parser.HTMLParser(text)
+        return self._HTMLParser(text)
 
     def size(self, document: Any) -> int:
         """The document's materialized size in bytes, for the run-scoped cache (`03` §6).
@@ -143,7 +157,7 @@ class SelectolaxEngine:
         return len(str(document.html or "").encode("utf-8"))
 
     def copy(self, node: Any) -> Any:
-        return self._parser.HTMLParser(node.html)
+        return self._HTMLParser(node.html)
 
     def select(self, node: Any, selector: str) -> list[Any]:
         return list(node.css(selector))

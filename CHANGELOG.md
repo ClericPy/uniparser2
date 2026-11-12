@@ -10,6 +10,16 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-12
+
+### Fixed
+
+- **The `html` extra supports selectolax 1.x**: 1.0 removed the `selectolax.parser` (modest)
+  module, so the adapter now falls back to `selectolax.lexbor.LexborHTMLParser` and the extra no
+  longer pins `<1`. The suite runs on 1.0.2; the 0.4.x modest backend stays supported.
+
+## [0.7.0] - 2026-11-12
+
 ### Changed
 
 - **BREAKING — one stage shape, one parameter rule** (change `simplify-dsl-syntax`): a stage is
@@ -71,6 +81,10 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Fixed
 
+- **The `html` extra pins selectolax below 1.0**: selectolax 1.0 removed the `selectolax.parser`
+  module the adapter imports (its error points at the lexbor backend), so the unconstrained extra
+  installed an engine every `css` / `css1` stage rejected. The extra now declares `<1`; porting the
+  adapter to lexbor is a separate change.
 - **Whole-project review fixes**: a `["type", …]` stage no longer turns a value rejection into an
   operator defect (`["type","int"]` on `"abc"` is `UP2-E2019`, not `UP2-E2099`), and a dataclass
   constructor built from a list or a scalar continues with the payload instead of `{}`; `ctx.get` /

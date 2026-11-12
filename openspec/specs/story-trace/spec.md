@@ -14,8 +14,7 @@ The trace SHALL record one event for every stage the engine **evaluates**, and n
 failure stopped the chain before. A stage event SHALL carry `seq` (1-based, in evaluation order),
 `node`, `item`, `field`, `stage` (the stage's index inside its own chain), `op`, `action`, `params`,
 `input`, `output`, `state`, `detail` and `ms`. `state` SHALL be `Ok` or `Failed`, and `detail` SHALL
-carry the stage's `code` and `reason` when it is `Failed` and nothing otherwise. A chain that is
-evaluated without a trace SHALL collect nothing.
+carry the stage's `code` and `reason` when it is `Failed` and nothing otherwise.
 
 #### Scenario: Every stage of a chain is one event
 
@@ -28,6 +27,11 @@ evaluated without a trace SHALL collect nothing.
 - **WHEN** the second stage of a chain fails, so the third stage is never evaluated
 - **THEN** the trace SHALL hold two events, the second of them `Failed`, carrying that stage's code
 
+### Requirement: A run without a trace collects nothing
+
+A chain evaluated without a trace SHALL collect no events, and its outcome SHALL be exactly what a
+traced run produces.
+
 #### Scenario: A run without a trace collects nothing and is unchanged
 
 - **WHEN** the same chain is evaluated with no trace
@@ -39,7 +43,7 @@ A stage event's `input` and `output` SHALL be a view carrying `type`, `preview` 
 the value: `preview` SHALL be the first 200 characters of the value's display text, and `size` SHALL
 be the length of that text. The trace SHALL expose `get_value(seq)` returning the full value of the
 event with that `seq`, and SHALL make the event's input available as well. A value the kernel cannot
-render as JSON (a host object, an `Opaque` handle, the missing sentinel) SHALL still be viewable.
+render as JSON SHALL still be viewable.
 
 #### Scenario: A long value is truncated, and the full value is still reachable
 
@@ -72,7 +76,7 @@ for a field chain and for a story, and SHALL also be reported when the run fails
 diagnostic in the same document. A story trial SHALL accept `--node` and default to the first node.
 Without `--trace` the command's output SHALL be exactly what it was before.
 
-#### Scenario: A story suspends and the trace says why
+#### Scenario: A missing host function and the trace say why
 
 - **WHEN** `up2 trial story.json --node store --input text=@sample.txt --trace --json` runs a story
   whose `store` node calls a udf the CLI has no host for

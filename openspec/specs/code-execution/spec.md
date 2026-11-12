@@ -10,8 +10,8 @@ Let a chain author (a human or an LLM agent) write a small piece of processing l
 
 The `code` operator SHALL be a **2-slot** stage (it declares a single action, so slot 2 is the
 parameter), shaped as `["code", <non-empty source string>]`. The source text itself SHALL be the only
-parameter: `inputs` is retired and MUST be rejected as an unknown parameter. The stage length MUST be
-exactly 2; writing an extra slot MUST raise `UP2-E1004`.
+parameter: `inputs` is retired, and a parameter object MUST be rejected because the parameter is the
+source string. The stage length MUST be exactly 2; writing an extra slot MUST raise `UP2-E1004`.
 
 #### Scenario: A valid chain compiles
 
@@ -32,24 +32,12 @@ exactly 2; writing an extra slot MUST raise `UP2-E1004`.
 #### Scenario: The retired `inputs` object is rejected
 
 - **WHEN** given `["code", {"src": "x + 1", "inputs": {"x": 1}}]`
-- **THEN** compile time raises `UP2-E1005` at `/0/1`, and the fix line shows the accepted writing
+- **THEN** compile time raises `UP2-E1005` at `/0/1/src`, and the fix line shows the accepted writing
   `["code", "x + 1"]`
 
-### Requirement: Input binding: `obj` and `ctx`
+### Requirement: The sandbox binds `obj` and `ctx`
 
-The `code` operator SHALL **bind two fixed names**, usable with no configuration at all: `obj` = the upstream value; `ctx` = the **scope object**
-(which MUST NOT be treated as a JSON dict), and MUST support attribute access `ctx.locals.<name>` and
-`ctx.globals.<name>`. `ctx.locals` MUST contain **all temporary variables produced by parsing behavior in the current node**; `ctx.globals`
-MUST be the story/environment-level environment (identical across nodes). A nonexistent attribute MUST raise an observable failure such as
-`AttributeError`, and MUST NOT silently return an empty value.
-
-Values in `ctx` MUST fall in the JSON value domain: `Opaque` handles (DOM/XPath nodes) and non-JSON values MUST NOT appear in
-`ctx`, and excluding handles MUST NOT cause evaluation to fail (same principle as `UP2-E2003`, "handles cannot leave the chain").
-
-There SHALL be no `inputs` parameter and no configured binding: `obj` is the upstream value, and every
-other value is already reachable through `ctx.locals` / `ctx.globals` / `ctx.public`, so naming it
-again would only rename an existing read. The trade is explicit: a reference was resolved at compile
-time, while `ctx.locals.<name>` is a runtime attribute read that fails when the key is missing.
+The `code` operator SHALL bind two fixed names with no configuration: `obj` is the upstream value and `ctx` is the scope object, which MUST NOT be treated as a JSON dict and MUST support attribute reads `ctx.locals.<name>` and `ctx.globals.<name>`. `ctx.locals` MUST hold the current node's field values and `ctx.globals` the story-level environment. A missing attribute MUST raise an observable `AttributeError`, never return an empty value.
 
 #### Scenario: Minimal shape (no configuration at all)
 
@@ -71,6 +59,10 @@ time, while `ctx.locals.<name>` is a runtime attribute read that fails when the 
 - **WHEN** the chain is `["code", "ctx.locals.nope"]`
 - **THEN** evaluation fails (an `AttributeError` class of failure) rather than returning `None` or an empty string
 
+### Requirement: Values in `ctx` are JSON-only, and `inputs` is retired
+
+Values in `ctx` MUST fall in the JSON value domain: `Opaque` handles (DOM/XPath nodes) and non-JSON values MUST NOT appear, and excluding a handle MUST NOT cause evaluation to fail (same principle as `UP2-E2003`). There SHALL be no `inputs` parameter and no configured binding: a value is read as `ctx.locals.<name>` at runtime, and naming it again would only rename an existing read.
+
 #### Scenario: Handles do not appear in `ctx`
 
 - **WHEN** `locals` contains a DOM/XPath node handle and the chain is `["code", "'ok'"]`
@@ -79,8 +71,8 @@ time, while `ctx.locals.<name>` is a runtime attribute read that fails when the 
 #### Scenario: The named entry point keeps compile-time validation
 
 - **WHEN** the chain is `["code", {"src": "x + 1", "inputs": {"x": "$locals.n"}}]` and it is compiled
-- **THEN** compilation fails with `UP2-E1005` at `/0/1`, because the named entry point is retired: the
-  source is the parameter itself, and the value it held is read as `ctx.locals.n` inside the source
+- **THEN** compilation fails with `UP2-E1005` at `/0/1/src`, because the named entry point is retired:
+  the source is the parameter itself, and the value it held is read as `ctx.locals.n` inside the source
 
 #### Scenario: An upstream handle is rejected
 
@@ -89,10 +81,7 @@ time, while `ctx.locals.<name>` is a runtime attribute read that fails when the 
 
 ### Requirement: Allowlist functions directly available inside the sandbox
 
-The `code` sandbox namespace SHALL preload a set of **engine-owned pure functions** (same source as the `py` allowlist, JSON in JSON out,
-no IO), so that a snippet can call them directly with no `import` (e.g. `normalize_space(obj)`, `strip_tags(obj)`). The preloaded
-functions MUST NOT include any function with file/environment/network/process capability. Every call of these functions MUST count against the host
-round-trip allowance, and the implementation MUST NOT configure that allowance as `0` (otherwise no preloaded function could ever be called).
+The `code` sandbox namespace SHALL preload the engine-owned pure functions of the `py` allowlist (JSON in, JSON out, no IO), so a snippet calls `normalize_space(obj)` with no `import`. It MUST NOT preload any function with file, environment, network or process capability. A preloaded call MUST count against the host round-trip allowance, which MUST NOT be configured as `0` (otherwise no preloaded function could run).
 
 #### Scenario: Allowlist functions need no import
 
@@ -153,7 +142,7 @@ These prohibitions MUST surface as **observable failures** (exception/non-zero e
 
 ### Requirement: Resource limits are decided by the host
 
-Sandbox execution SHALL be constrained by host-configured limits: memory ceiling, per-feed execution duration, per-request timeout, suspension count,
+Sandbox execution SHALL be constrained by host-configured limits: memory ceiling, per-feed execution duration, per-request timeout, host round-trip count,
 and recursion depth. Chain data MUST NOT be able to override or loosen any limit. The host SHALL be able to specify the worker binary path explicitly, and the default implementation
 MUST NOT resolve that binary via `PATH` alone.
 
@@ -204,27 +193,15 @@ An exception raised by sandbox code itself SHALL map to `Failed` (`UP2-E2017`, r
 - **WHEN** sandbox code returns `{1, 2}` (a set)
 - **THEN** evaluation returns `Failed` with code `UP2-E2009`
 
-### Requirement: In-chain code and host functions share one parameter convention
+### Requirement: In-chain code and host functions add no new chain shape
 
-The `code` operator and the `udf` operator SHALL add no new shape to the chain syntax: both are called
-with the upstream value as the only positional argument, and the sandbox mounts the `py` allowlist
-functions so a snippet calls them positionally with no `import`. `udf` SHALL take no chain parameter
-and SHALL NOT inject `ctx`: the host function receives the upstream value as its only positional
-argument (`f(value)`), or no argument when it declares none (`f()`), and a function that requires a
-second argument MUST be a compile error (`UP2-E1005`) whose fix says to bind it at registration or to
-take a payload object. Configuration a host function needs SHALL travel in a payload the chain builds
-with `ctx` (`["ctx","dict",…]` followed by `["udf",name]`), so a host function stays a pure value
-transformation and writing the scope remains the chain's job through `ctx.set`.
+The `code` and `udf` operators SHALL add no new chain shape. `code` is `["code", <source>]`. `udf` is `["udf", <name>]`, passing the upstream value as one argument, or `["udf", <name>, <form>]`, where `*` spreads a list, `**` spreads a mapping and any other value is one explicit argument. A signature the form cannot call MUST fail with `UP2-E1005`. Neither operator SHALL inject `ctx`; configuration travels in a `["ctx","dict",…]` payload.
 
-Inside the sandbox, `ctx` SHALL remain readable and **read-only** with respect to the scope in v1
-(assignments inside the sandbox do not propagate back), so writing to the scope MUST go through
-explicit operators such as the chain's `ctx.set`.
-
-#### Scenario: A `udf` that declares `ctx` receives the scope
+#### Scenario: A `udf` that declares `ctx` receives the upstream value
 
 - **WHEN** the host-registered function's only parameter is named `ctx` and the chain is `["udf", "f"]`
   with the upstream value `"a"`
-- **THEN** it receives `"a"`: `ctx` is an ordinary parameter name now, so the engine scope is not
+- **THEN** it receives `"a"`: `ctx` is an ordinary parameter name, so the engine scope is not
   injected and the stage stays a unary value transformation
 
 #### Scenario: Existing functions that do not declare `ctx` keep working
@@ -240,22 +217,26 @@ explicit operators such as the chain's `ctx.set`.
 - **THEN** the host function receives one object holding the stage's value and the language, because
   configuration is a payload and the call stays unary
 
+#### Scenario: The call forms are explicit
+
+- **WHEN** the chain is `["udf","f","*"]` with the upstream value `[1, 2]`, or `["udf","f","**"]` with
+  `{"a": 1}`, or `["udf","f",42]`
+- **THEN** the calls are `f(1, 2)`, `f(a=1)` and `f(42)` respectively
+
 #### Scenario: A function that needs a second argument
 
 - **WHEN** the registered function requires a second positional parameter and the chain is `["udf","f"]`
 - **THEN** compilation fails with `UP2-E1005`, whose fix says to bind the argument at registration or to
-  take a payload object
+  use the `*` or `**` form
+
+### Requirement: The sandbox scope is read-only
+
+Inside the sandbox, `ctx` SHALL stay readable and read-only with respect to the run's scope: an assignment such as `ctx.locals.added = 7` affects only the snippet's copy and MUST NOT propagate back. Writing the scope SHALL go through `ctx.set` in the chain.
 
 #### Scenario: Assignments to `ctx` inside the sandbox do not propagate back
 
 - **WHEN** the snippet executes `ctx.locals.added = 7` and then ends, and the chain's next stage reads `$locals.added`
 - **THEN** that name does not exist (in-sandbox assignment only affects the copy inside the snippet); writing into the scope MUST use the chain's `ctx.set`
-
-#### Scenario: `ctx` is a reserved name
-
-- **WHEN** the chain writes `["udf", "f", {"ctx": 1}]` and it is compiled
-- **THEN** compilation fails with `UP2-E1004`, because `udf` takes two slots: the name is not a reserved
-  parameter but an ordinary one, and the stage has no parameter slot to pass it in
 
 ### Requirement: Conformance audit and conformance declaration
 

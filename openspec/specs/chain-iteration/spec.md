@@ -7,26 +7,13 @@ fan-out mechanism, a named chain container or a template directive.
 
 ## Requirements
 
-### Requirement: `each` turns a list into one dictionary per element
+### Requirement: `each` selects its mode from the parameter's shape
 
-`each` SHALL be an operator with arity 2 and exactly one action, written `["each", <parameter>]`, so the
-stage carries its argument in slot 2 and no action text. The **parameter's shape selects the mode**:
-
-- an **object** is a field map — every element produces one dictionary, in input order;
-- an **array** is one chain — every element produces that chain's product, so the result is a list of
-  products (`["each",[["py","strip"]]]` over `[" a ", " b "]` is `["a","b"]`).
-
-Its input MUST be a list. In the field-map mode the result MUST be a list of dictionaries holding
-exactly one dictionary per input element, in input order, and each field chain SHALL be evaluated with
-the element as its input value. In the chain mode the result MUST be a list holding one product per
-input element, in input order, and the chain SHALL be evaluated with the element as its input value.
-Calling a registered host function per element is the chain mode with a `udf` stage
-(`["each",["udf","normalize"]]`), so no dedicated call action exists.
-
-An empty list MUST yield an empty list. A non-list input MUST fail with `UP2-E2002`, naming the type
-that arrived. A parameter that is neither an object nor an array MUST be `UP2-E1005`, naming both
-shapes, and an empty array MUST be `UP2-E1004`, because it is an empty chain. A stage before `each` that
-cannot read its path fails the chain before the operator runs.
+`each` SHALL be an operator with arity 2 and exactly one action, written `["each", <parameter>]`.
+An **object** parameter is a field map: every element produces one dictionary, in input order. An
+**array** parameter is one chain: every element produces that chain's product. The input MUST be a
+list, and the element is the input value of every field chain or the chain. An empty list yields an
+empty list. Calling a host function per element is the chain mode with a `udf` stage.
 
 #### Scenario: A list of two strings
 
@@ -61,15 +48,26 @@ cannot read its path fails the chain before the operator runs.
   value is `[{"url": "a.html"}, {"url": "b.html"}]` and `globals.base` is `https://x/`
 - **THEN** the result is `["https://x/a.html", "https://x/b.html"]`
 
-#### Scenario: An empty chain
+### Requirement: `each` rejects malformed input
 
-- **WHEN** the chain is `[["each", []]]` and it is compiled
-- **THEN** compilation fails with `UP2-E1004`, because an empty array is an empty chain
+A non-list input MUST fail with `UP2-E2002`, naming the type that arrived. A parameter that is neither
+an object nor an array MUST be `UP2-E1005`, naming both shapes. An empty array is **identity**: the
+chain mode answers each element unchanged.
 
 #### Scenario: An input that is not a list
 
 - **WHEN** the chain is `[["each", {"n": [["py","len"]]}]]` and the value is `{"a": 1}`
 - **THEN** the outcome is `UP2-E2002`, naming an object as the type that arrived
+
+#### Scenario: An empty chain is identity
+
+- **WHEN** the chain is `[["each", []]]` and the value is `["a", "b"]`
+- **THEN** the result is `["a", "b"]`, each element unchanged
+
+#### Scenario: A parameter that is neither an object nor an array
+
+- **WHEN** the chain is `[["each", 7]]` and it is compiled
+- **THEN** compilation fails with `UP2-E1005`, naming both accepted shapes
 
 ### Requirement: The field map is one ordered program per element
 
@@ -99,19 +97,16 @@ element; a field without the prefix MUST appear in the dictionary as well.
 
 #### Scenario: A temporary that two fields consume
 
-- **WHEN** the chain is `[["each", {"_t": [["py","strip",""]], "a": [["ctx","get","locals._t"]],
+- **WHEN** the chain is `[["each", {"_t": [["py","strip"]], "a": [["ctx","get","locals._t"]],
   "b": [["ctx","get","locals._t"], ["py","upper",""]]}]]` and the value is `[" x "]`
 - **THEN** the result is `[{"a": "x", "b": "X"}]`, with no `_t` key
 
 ### Requirement: Every element is evaluated in its own scope
 
-Each element SHALL be evaluated in a fresh child scope of the scope that called `each`. Reads SHALL fall
-back outward **by name**: the innermost scope that holds the first segment of a path resolves the whole
-path, so a name the element itself wrote is resolved in the element's own locals and nowhere else — a key
-missing under such a name MUST NOT fall through to an outer scope holding the same name. A name the
-element did not write falls back outward as usual (the calling scope's locals, then the chain-level
-values). Writes SHALL land in the element's own scope, and the element's locals MUST NOT outlive the
-element or be visible to another element.
+Each element SHALL be evaluated in a fresh child scope of the calling scope. A `$locals` read falls
+back outward by name: a name the element wrote resolves in its own scope and never in an outer one; a
+name it did not write falls back as usual. Writes stay in the element, and its locals MUST NOT outlive
+it or be visible to another element.
 
 #### Scenario: An element local shadows an outer one
 
@@ -127,14 +122,14 @@ element or be visible to another element.
 
 #### Scenario: A missing key does not fall through to a name an outer scope owns
 
-- **WHEN** the chain is `[["each", {"_a": [["const", {"b": 1}]], "kids": [["each", {"_a":
-  [["const", {"c": 2}]], "seen": [["ctx","get","locals._a.b"]]}]]}]]` and the value is `[["x"]]`
+- **WHEN** the chain is `[["each", {"_a": [["py","const",{"b": 1}]], "kids": [["each", {"_a":
+  [["py","const",{"c": 2}]], "seen": [["ctx","get","locals._a.b"]]}]]}]]` and the value is `[["x"]]`
 - **THEN** the result is `[{"kids": [{}]}]`: the inner element owns `_a`, so the read is a miss, never the
   outer element's `{"b": 1}`
 
 #### Scenario: An element's local does not outlive the element
 
-- **WHEN** the chain is `[["each", {"_t": [["py","strip",""]]}], ["ctx","get","locals._t"]]` and the
+- **WHEN** the chain is `[["each", {"_t": [["py","strip"]]}], ["ctx","get","locals._t"]]` and the
   value is `["a"]`
 - **THEN** the final read SHALL fail with `UP2-E2001` — the key is not there — and SHALL NOT resolve
   the element's temporary
@@ -159,13 +154,11 @@ the code the failing stage reported.
 
 ### Requirement: The field map is validated recursively at compile time
 
-The argument of `each` — and a story node's field map, which is the same object shape — MUST be an
-object of field name to chain, or an array holding exactly one chain; anything else MUST be rejected at
-compile time with `UP2-E1005` and a fix line showing both accepted writings. Every sub-chain MUST be
-compiled like a top-level chain — so an unknown operator, an unknown action, a malformed parameter or a
-dangling reference inside it is reported at compile time with a pointer that reaches that stage inside
-the field map — and each sub-chain MUST respect the per-chain stage limit. A field map nested deeper
-than `MAX_EACH_DEPTH` MUST fail at compile time with `UP2-E1012`.
+The argument of `each` — and a story node's field map — MUST be an object of field name to chain, or
+an array holding exactly one chain; anything else is `UP2-E1005`. Every sub-chain is compiled like a
+top-level chain (an unknown operator/action, a bad parameter or a dangling reference reports at its
+own pointer and respects the stage limit). A field map nested deeper than `MAX_EACH_DEPTH` is
+`UP2-E1012`.
 
 #### Scenario: An argument that is not an object
 
@@ -200,17 +193,9 @@ An input list longer than `MAX_EACH_ITER` MUST fail with `UP2-E2012` before any 
 
 ### Requirement: A run carries a `public` scope, shared by every node
 
-A run SHALL expose a third scope, `public`, beside `globals` and `locals`: it is **writable** and
-**readable from any node of the run**, and it lives exactly as long as the run. It SHALL NOT be part
-of the chain data, so it never enters the fingerprint: a run's `public` values are runtime notes, not
-a property of the chain.
-
-The reference root `public` SHALL be reserved, and `$public.<path>` SHALL read it. A write through
-`ctx.set` SHALL accept a `public.` path; a write to `globals`, `in`, `obj` or any other
-root SHALL still be refused.
-
-`globals` SHALL stay read-only and `locals` SHALL stay private to the scope that wrote it, so the
-three scopes read as constants / shared / private.
+A run SHALL expose a third scope, `public`, beside `globals` and `locals`: it is writable and readable
+from any node of the run, and it lives exactly as long as the run. It SHALL NOT be part of the chain
+data, so it never enters the fingerprint.
 
 #### Scenario: A node writes and the next node reads
 
@@ -222,6 +207,12 @@ three scopes read as constants / shared / private.
 
 - **WHEN** a run writes `public.page` and the chain is fingerprinted
 - **THEN** the fingerprint SHALL be the same as it was before the write
+
+### Requirement: `public` is the only shared writable root
+
+The reference root `public` SHALL be reserved, and `$public.<path>` SHALL read it. `ctx.set` SHALL
+accept a `public.` path; a write to `globals`, `in`, `obj` or any other root SHALL be refused.
+`globals` stays read-only and `locals` stays private to the scope that wrote it.
 
 #### Scenario: A write outside the writable roots is refused
 
@@ -236,51 +227,47 @@ three scopes read as constants / shared / private.
 ### Requirement: A `try` directive guards the next stage only
 
 A chain MAY carry a `try` stage whose parameter is one policy: `raise`, `skip` or `break`. It SHALL
-guard **the stage immediately after it** and nothing else.
-
-- `raise` SHALL be the default behaviour of a failing stage: the chain stops and the run fails.
-- `skip` SHALL keep the value the chain already carried into the failing stage and continue with the
-  next stage.
-- `break` SHALL end the chain at that point and answer with the value the chain carried into the
-  failing stage.
-
-A guarded stage that **succeeds** SHALL disarm the guard, so a `try` never affects a later failure.
-Two `try` stages in a row SHALL be a compile error, and a `try` as the last stage of a chain SHALL be a
-compile error, because it would guard nothing.
-
-The policies are **control, not degradation**: `skip` and `break` keep a value the chain already had;
-neither of them SHALL turn an exception into a value.
+guard **the stage immediately after it**. `raise` is the default behaviour of a failing stage (the
+chain stops and the run fails); `skip` keeps the value the chain carried into the failing stage and
+continues; `break` ends the chain there with that value. A guarded stage that **succeeds** SHALL
+disarm the guard, so a `try` never affects a later failure.
 
 #### Scenario: A guarded failure is skipped
 
-- **WHEN** the chain is `[["const", "keep"], ["try", "skip"], ["py", "int", ""]]` and the input is
+- **WHEN** the chain is `[["py","const","keep"], ["try", "skip"], ["py", "int"]]` and the input is
   `"not-a-number"`
 - **THEN** the outcome SHALL be `Ok("keep")`
 
 #### Scenario: A guarded failure breaks the chain
 
-- **WHEN** the chain is `[["const", "keep"], ["try", "break"], ["py", "int", ""]]` and the input is
+- **WHEN** the chain is `[["py","const","keep"], ["try", "break"], ["py", "int"]]` and the input is
   `"not-a-number"`
 - **THEN** the outcome SHALL be `Ok("keep")`, and the stages after the guarded one SHALL NOT be
   evaluated
 
 #### Scenario: A guarded success disarms the guard
 
-- **WHEN** the chain is `[["const", ""], ["try", "skip"], ["py", "strip", ""], ["py", "int", ""]]` and
+- **WHEN** the chain is `[["py","const",""], ["try", "skip"], ["py", "strip"], ["py", "int"]]` and
   the input is `"not-a-number"`
 - **THEN** the chain SHALL fail at the `py.int` stage — the guard covered only the stage next to it
 
 #### Scenario: An unguarded failure fails the run
 
-- **WHEN** the chain is `[["const", "keep"], ["py", "int", ""]]` and the input is `"not-a-number"`
+- **WHEN** the chain is `[["py","const","keep"], ["py", "int"]]` and the input is `"not-a-number"`
 - **THEN** the run SHALL fail with `UP2-E2005`
+
+### Requirement: A `try` placement is validated at compile time
+
+Two `try` stages in a row SHALL be a compile error, and a `try` as the last stage of a chain SHALL be
+a compile error, because it would guard nothing. The policies are control, not degradation: `skip` and
+`break` keep a value the chain already had and SHALL NOT turn an exception into a value.
 
 #### Scenario: Two guards in a row are a compile error
 
-- **WHEN** the chain is `[["try", "skip"], ["try", "skip"], ["py", "strip", ""]]`
+- **WHEN** the chain is `[["try", "skip"], ["try", "skip"], ["py", "strip"]]`
 - **THEN** compilation SHALL fail with `UP2-E1005`, naming the rule
 
 #### Scenario: A guard at the end of a chain is a compile error
 
-- **WHEN** the chain is `[["py", "strip", ""], ["try", "skip"]]`
+- **WHEN** the chain is `[["py", "strip"], ["try", "skip"]]`
 - **THEN** compilation SHALL fail with `UP2-E1005`, naming the rule

@@ -9,26 +9,10 @@ self-describes both to a chain writer.
 
 ### Requirement: A scalar action parameter is validated at compile time
 
-When an action declares a parameter that only accepts a scalar (a string or an integer), a chain that
-gives that parameter a JSON container MUST be rejected at compile time with `UP2-E1005`, reporting the
-position of that parameter and a fix line that shows the accepted writing. An action that declares
-**two or more fixed parameters** SHALL take one **positional array** whose length is exactly the
-declared arity — `["py", "replace", ["old", "new"]]` — and never a named object: a parameter that is
-missing, unknown or of the wrong length MUST be reported with `UP2-E1005` at `/0/2`, or at the array
-index `/0/2/<index>` the offending parameter occupies. A **literal of another type** MUST be rejected
-the same way, and a string whose content the runtime parses MUST be parsed at compile time, so a value
-the run would deterministically reject is never deferred to evaluation. This applies to every operator,
-`py`'s function table included: the selector family's selector, `re`'s pattern, `ctx`'s path and
-`json`'s expression already behave this way, and `py`'s scalar parameters MUST behave the same way
-instead of failing during evaluation.
-
-A parameter that accepts any JSON value MUST keep accepting containers: a container written for such a
-parameter is a value, not a malformed parameter binding. An array that is itself a value stays a value
-(`["py", "in", [200, 301]]`), because the action's declaration decides whether the slot holds a
-parameter list or a value, never the shape alone. An **object** is reserved for a data map (`each`'s
-field map, `ctx.dict`, `xpath`'s namespace map), so an object written where a scalar or a positional
-parameter is expected MUST be rejected, naming the key. A parameter whose value the runtime **coerces**
-rather than rejects MUST keep accepting that value.
+When an action declares a scalar parameter (a string or an integer), a chain that gives it a JSON
+container MUST be rejected at compile time with `UP2-E1005` at that parameter, with a fix line showing
+the accepted writing. A literal of another type, and a string the runtime parses but would reject,
+MUST fail the same way. `py`'s scalar parameters follow this rule too.
 
 #### Scenario: A named object written for a single-parameter `py` function
 
@@ -51,6 +35,19 @@ rather than rejects MUST keep accepting that value.
 - **WHEN** the chain is `["py", "slice", "bogus"]` and it is compiled
 - **THEN** compilation fails with `UP2-E1005` at `/0/2`
 
+#### Scenario: The same mistake on an operator that already validates it
+
+- **WHEN** the chain is `["css1", "text", {"selector": "h1"}]` and it is compiled
+- **THEN** compilation still fails with `UP2-E1005` at `/0/2`
+
+### Requirement: Fixed parameters are one positional array
+
+An action with two or more fixed parameters SHALL take one **positional array** whose length is exactly
+the declared arity, never a named object. A missing, unknown or wrong-length parameter MUST be
+`UP2-E1005` at `/0/2` or at the array index `/0/2/<index>` it occupies. An object is reserved for a
+data-map parameter (`each`'s field map, `ctx.dict`, xpath's namespace map), so a named object where a
+positional array belongs is rejected.
+
 #### Scenario: A maxsplit that is not an integer
 
 - **WHEN** the chain is `["py", "split", {"sep": ",", "maxsplit": "x"}]` and it is compiled
@@ -61,21 +58,6 @@ rather than rejects MUST keep accepting that value.
 
 - **WHEN** the chain is `["py", "split", ","]` and it is evaluated on `a,b,c`
 - **THEN** the result is `["a", "b", "c"]`, because a split without a limit is now the only spelling
-
-#### Scenario: A value the runtime coerces is not rejected
-
-- **WHEN** the chain is `["py", "join", 42]` and it is evaluated on `["a", "b"]`
-- **THEN** compilation succeeds and the result is `"a42b"`, because the separator is coerced
-
-#### Scenario: The same mistake on an operator that already validates it
-
-- **WHEN** the chain is `["css1", "text", {"selector": "h1"}]` and it is compiled
-- **THEN** compilation still fails with `UP2-E1005` at `/0/2`
-
-#### Scenario: A container value for a parameter that accepts any type
-
-- **WHEN** the chain is `[["py", "or", [{"a": 1}, "fallback"]]]` and the value is `""`
-- **THEN** compilation succeeds and the result is the container `{"a": 1}`
 
 #### Scenario: The named form of a multi-parameter action is unaffected
 
@@ -101,16 +83,28 @@ rather than rejects MUST keep accepting that value.
 - **THEN** compilation fails with `UP2-E1005` at `/0/2`, because `maxsplit` is retired and the no-limit
   spelling is `["py", "split", ","]`
 
+### Requirement: A parameter that accepts any JSON value keeps containers
+
+A parameter that accepts any JSON value MUST keep accepting containers: a container is a value, not a
+malformed parameter binding. An array that is itself a value stays a value (`["py","in",[200,301]]`).
+A parameter the runtime coerces rather than rejects MUST keep accepting the value.
+
+#### Scenario: A container value for a parameter that accepts any type
+
+- **WHEN** the chain is `[["py", "or", [{"a": 1}, "fallback"]]]` and the value is `""`
+- **THEN** compilation succeeds and the result is the container `{"a": 1}`
+
+#### Scenario: A value the runtime coerces is not rejected
+
+- **WHEN** the chain is `["py", "join", 42]` and it is evaluated on `["a", "b"]`
+- **THEN** compilation succeeds and the result is `"a42b"`, because the separator is coerced
+
 ### Requirement: The operator self-description states the parameter-slot shape
 
-For every action, the capability self-description printed by `up2 ops` MUST state which writing the
-action's parameter slot takes — the value itself (`value`), one positional array holding the action's
-fixed parameters in declaration order (`array`), or no parameter at all (`none`) — and the
-machine-readable and human views MUST use the same three tokens and agree on the value. `array` means
-the slot holds exactly one array whose length is the action's declared arity, never a named object. The
-shape is decided by the number of parameters the action still has to fill, so a parameter that the
-action slot itself already provides does not count towards it. The reported shape MUST agree with what
-compilation accepts for that action.
+For every action, `up2 ops` MUST state the parameter-slot shape: `value` (the value itself), `array`
+(one positional array of the declared parameters) or `none`. The machine-readable and human views
+MUST use the same tokens. The shape is decided by the parameters the action still has to fill, so a
+parameter the action slot provides does not count, and it MUST agree with what compilation accepts.
 
 #### Scenario: A single-parameter action
 
@@ -145,27 +139,17 @@ compilation accepts for that action.
 - **WHEN** the same action is reported once by `up2 ops` and once by `up2 ops --json`
 - **THEN** both report the same parameter-slot shape token
 
-### Requirement: A parameter whose value is a field map is validated recursively at compile time
+### Requirement: A field-map parameter is validated at compile time
 
-An action MAY declare a parameter whose value is a **field map**: an object mapping a field name to a
-chain, rather than a scalar or an arbitrary JSON value. For such a parameter, a value that is not an
-object MUST be rejected at compile time with `UP2-E1005` at that parameter, and the fix line MUST show
-the accepted writing. A map with **no** fields MUST be rejected with `UP2-E1005`, because every element
-would then yield an empty dictionary; a field name that is empty or contains `.` MUST also be rejected
-with `UP2-E1005`, because no reference path can address such a key — both fix lines MUST name the
-offending key and show a legal one. A map MUST hold at most `MAX_FIELDS_PER_MAP` fields, and exceeding
-that bound MUST be rejected with `UP2-E1012` at compile time, naming the count and the bound.
-
-Every value of the map MUST be compiled like a top-level chain, so an unknown operator, an unknown
-action, a wrong stage length or a malformed parameter inside a sub-chain is reported at compile time with
-a pointer that reaches the offending stage inside that sub-chain. Containers that appear where a chain is
-expected are NOT values: the rule that a container written for a parameter accepting any JSON value is a
-value MUST NOT be applied to a field map. The parameter-slot shape reported by `up2 ops` remains decided
-by the existing rule (the number of parameters the action still has to fill).
+A parameter whose value is a **field map** (an object mapping a field name to a chain) MUST be an
+object with at least one field. A non-object is `UP2-E1005` at the parameter with the accepted writing;
+an empty map is `UP2-E1005` because every element would be an empty dictionary; a field name that is
+empty or contains `.` is `UP2-E1005` because no reference path can address it. A map over
+`MAX_FIELDS_PER_MAP` fields is `UP2-E1012`.
 
 #### Scenario: A field map compiles and evaluates
 
-- **WHEN** the chain is `[["each", {"title": [["py","strip",""]]}]]` and the value is `[" a "]`
+- **WHEN** the chain is `[["each", {"title": [["py","strip"]]}]]` and the value is `[" a "]`
 - **THEN** compilation succeeds and the result is `[{"title": "a"}]`
 
 #### Scenario: A value that is not an object
@@ -181,7 +165,7 @@ by the existing rule (the number of parameters the action still has to fill).
 
 #### Scenario: A field name no reference can address
 
-- **WHEN** the chain is `[["each", {"_a.b": [["py","strip",""]]}]]` and it is compiled
+- **WHEN** the chain is `[["each", {"_a.b": [["py","strip"]]}]]` and it is compiled
 - **THEN** compilation fails with `UP2-E1005` at that key, and the fix line names it and shows a legal
   name
 
@@ -189,6 +173,14 @@ by the existing rule (the number of parameters the action still has to fill).
 
 - **WHEN** a field map with 257 fields is compiled
 - **THEN** compilation fails with `UP2-E1012`, naming the count and `MAX_FIELDS_PER_MAP`
+
+### Requirement: A field-map parameter's chains are compiled recursively
+
+Every value of a field map MUST be compiled like a top-level chain, so an unknown operator, an unknown
+action, a wrong stage length or a malformed parameter inside a sub-chain reports at compile time with a
+pointer that reaches the offending stage. Containers where a chain is expected are NOT values: the
+"any JSON value accepts containers" rule MUST NOT apply to a field map. `up2 ops` reports the
+parameter-slot shape by the usual rule.
 
 #### Scenario: An unknown operator inside a sub-chain
 
@@ -245,11 +237,9 @@ with no type coercion.
 
 ### Requirement: A text-consuming operator materializes through the run's cache
 
-Every operator that must turn text into structure — `css` / `css1` (HTML), `xpath` (XML) and `json`
-(JSON text) — SHALL obtain that structure from the run's materialization cache, keyed by its own target
-format and the source text, instead of building one structure per stage. The operator SHALL behave
-identically whether the structure was freshly materialized or came from the cache, and it SHALL NOT
-depend on the cache being present: a chain evaluated outside a run SHALL still materialize on demand.
+Every operator that turns text into structure — `css`/`css1`, `xpath`, `json` — SHALL take it from the
+run's materialization cache, keyed by target format and source text. A hit and a miss MUST be
+observationally identical, and a chain evaluated outside a run SHALL still materialize on demand.
 
 #### Scenario: Two stages over one document
 
@@ -286,16 +276,10 @@ consuming operator, not only for the ones whose pruning is visible today.
 
 ### Requirement: The ctx surface names its readable and writable roots
 
-The `ctx` operator's readable roots SHALL be `globals`, `locals`, `public` and `obj`, and its writable
-roots SHALL be `locals` and `public`. A `ctx.get` / `ctx.dict` / `ctx.list` path whose root is none of
-them SHALL be `UP2-E1005` naming the accepted roots, and a `ctx.set` / `ctx.del` path outside `locals`
-and `public` SHALL be `UP2-E1015`. `globals` is read-only because a chain's constants must not change
-mid-run (`01` §4); `public` is writable because it is the run's own notes, not chain data
-(`chain-iteration`, "A run carries a `public` scope"). `obj` is the whole value the stage received,
-read-only, and it is a value rather than a scope: it takes no path, so `ctx.get "obj.x"` SHALL be
-`UP2-E1005` and `ctx.set obj` / `ctx.del obj` SHALL be `UP2-E1015`. Reading a field of the stage's
-value is `["py","getitem",…]` after `ctx.get "obj"`. `fields` SHALL NOT be accepted by either: it was a
-second name for `locals` and is retired (`chain-iteration`, "A reference path may walk an object").
+The `ctx` readable roots SHALL be `globals`, `locals`, `public` and `obj`; writable roots SHALL be
+`locals` and `public`. A read path with another root is `UP2-E1005` listing the readable roots; a write
+path outside the writable roots is `UP2-E1015`. `globals` is read-only because a chain's constants must
+not change mid-run; `public` is the run's own notes; `fields` is retired and accepted by neither.
 
 #### Scenario: a write to the retired root
 
@@ -318,6 +302,13 @@ second name for `locals` and is retired (`chain-iteration`, "A reference path ma
 - **WHEN** the chain is `[["ctx","set","public.page"], ["ctx","get","public.page"]]` and the input is `7`
 - **THEN** the result SHALL be `7`, because `public` is the run's shared scope (`chain-iteration`)
 
+### Requirement: `obj` names the whole stage value
+
+`obj` SHALL name the whole value the stage received, read-only, and it SHALL be a value rather than a
+scope: it takes no path. `ctx.get "obj"` reads it, `ctx.get "obj.x"` is `UP2-E1005`, and
+`ctx.set obj` / `ctx.del obj` are `UP2-E1015`. A field is read with `["py","getitem",…]` after
+`ctx.get "obj"`.
+
 #### Scenario: the value the stage received
 
 - **WHEN** the chain is `[["py","strip"], ["ctx","get","obj"]]` and the input is `"  a  "`
@@ -330,10 +321,30 @@ second name for `locals` and is retired (`chain-iteration`, "A reference path ma
 - **THEN** compilation SHALL fail with `UP2-E1005`, because `obj` names the whole value and a field is
   read with `["py","getitem","x"]` after `ctx.get "obj"`
 
-### Requirement: A query that matches nothing yields the empty value of its shape
+### Requirement: A query that matches nothing is a value, not an error
 
-When a query action finds nothing it SHALL return `Ok` carrying the empty value of the shape that action
-produces, and SHALL NOT raise. The mapping SHALL be:
+When a query action finds nothing it SHALL return `Ok` carrying the empty value of the shape that
+action produces, and SHALL NOT raise. `css exists` / `css1 exists` answer `False` for a selector that
+matches nothing; that is a boolean and is unchanged.
+
+#### Scenario: a text accessor that matched nothing
+
+- **WHEN** the chain is `[["css1","text","h1"]]` and the document has no `h1`
+- **THEN** the outcome SHALL be `Ok("")`
+
+#### Scenario: a regex that matched nothing
+
+- **WHEN** the chain is `[["re","search","\\d+"]]` and the input has no digits
+- **THEN** the outcome SHALL be `Ok("")`
+
+#### Scenario: a JSON query that matched nothing
+
+- **WHEN** the chain is `[["json","data.nope"]]`
+- **THEN** the outcome SHALL be `Ok(None)`
+
+### Requirement: The no-match value follows the action's shape
+
+The empty value SHALL be decided by the action family:
 
 | Action family | No-match result |
 |---|---|
@@ -344,14 +355,6 @@ produces, and SHALL NOT raise. The mapping SHALL be:
 | `re` `search` | `""` |
 | `py.first` / `py.last` over an empty list | `None` |
 
-`css exists` and `css1 exists` answer `False` for a selector that matches nothing; that is a boolean and
-is unchanged.
-
-#### Scenario: a text accessor that matched nothing
-
-- **WHEN** the chain is `[["css1","text","h1"]]` and the document has no `h1`
-- **THEN** the outcome SHALL be `Ok("")`
-
 #### Scenario: a list accessor that matched nothing
 
 - **WHEN** the chain is `[["css","nodes","li"]]` and the document has no `li`
@@ -360,16 +363,6 @@ is unchanged.
 #### Scenario: an element handle that matched nothing
 
 - **WHEN** the chain is `[["css1","self","div.missing"]]`
-- **THEN** the outcome SHALL be `Ok(None)`
-
-#### Scenario: a regex that matched nothing
-
-- **WHEN** the chain is `[["re","search","\\d+"]]` and the input has no digits
-- **THEN** the outcome SHALL be `Ok("")`
-
-#### Scenario: a JSON query that matched nothing
-
-- **WHEN** the chain is `[["json","data.nope"]]`
 - **THEN** the outcome SHALL be `Ok(None)`
 
 ### Requirement: The scope actions name the shape they produce
@@ -403,17 +396,17 @@ that is not a mapping it SHALL fail with the operator's input-type code rather t
 
 #### Scenario: A mapping becomes pairs
 
-- **WHEN** the chain is `[["const",{"a":1,"b":2}], ["py","items",""]]`
+- **WHEN** the chain is `[["py","const",{"a":1,"b":2}], ["py","items"]]`
 - **THEN** the outcome SHALL be `Ok([["a",1],["b",2]])`
 
 #### Scenario: The pairs feed each
 
-- **WHEN** the chain is `[["const",{"a":1}], ["py","items",""], ["each",{"k":[["py","getitem",0]],"v":[["py","getitem",1]]}]]`
+- **WHEN** the chain is `[["py","const",{"a":1}], ["py","items"], ["each",{"k":[["py","getitem",0]],"v":[["py","getitem",1]]}]]`
 - **THEN** the outcome SHALL be `Ok([{"k":"a","v":1}])`
 
 #### Scenario: A non-mapping is refused
 
-- **WHEN** the chain is `[["const",[1,2]], ["py","items",""]]`
+- **WHEN** the chain is `[["py","const",[1,2]], ["py","items"]]`
 - **THEN** the outcome SHALL be `Failed` with the operator's input-type code
 
 ### Requirement: A conversion failure describes its input, not a fallback
@@ -425,7 +418,7 @@ failure.
 
 #### Scenario: A conversion failure names what was expected
 
-- **WHEN** the chain is `[["py","int",""]]` and the input is `"not-a-number"`
+- **WHEN** the chain is `[["py","int"]]` and the input is `"not-a-number"`
 - **THEN** the `fix` SHALL describe the accepted input and the upstream stage, and SHALL NOT name another
   operator as a fallback
 
@@ -447,10 +440,11 @@ naming the escape.
 - **THEN** compilation succeeds and the result is the string `"$a"` — not the object
   `{"$lit": "$a"}`, and not a reference read
 
-#### Scenario: The escape inside a named object
+#### Scenario: The escape inside a nested object
 
-- **WHEN** the chain is `["code", {"src": "x", "inputs": {"a": {"$lit": "$k"}}}]` and it is compiled
-- **THEN** compilation succeeds and the value of the `a` input is the literal `"$k"`
+- **WHEN** the chain is `["py", "or", [{"a": {"$lit": "$k"}}, "fallback"]]` and the input is `null`
+- **THEN** compilation succeeds and the result is the object `{"a": "$k"}`, not
+  `{"a": {"$lit": "$k"}}`
 
 #### Scenario: An unsupported directive at depth
 

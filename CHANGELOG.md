@@ -71,11 +71,31 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Fixed
 
-- **`json`'s root expression works with the real engine**: `02` §6.2 says an empty expression is the
-  root, and `["json",""]` / `["json",null]` were tested — but only against the stub engine, which
-  answered `""` by itself. Real `jmespath` raises `EmptyExpressionError` for it, so the documented
-  spelling failed at compile time with `UP2-E1005`. The operator now maps an empty expression to
-  jmespath's `@`, and a real-engine test covers it.
+- **Whole-project review fixes**: a `["type", …]` stage no longer turns a value rejection into an
+  operator defect (`["type","int"]` on `"abc"` is `UP2-E2019`, not `UP2-E2099`), and a dataclass
+  constructor built from a list or a scalar continues with the payload instead of `{}`; `ctx.get` /
+  `set` / `del` / `dict` / `list` validate the whole path at compile time (an empty segment, an exact
+  root, and a key below the root), so no path raises mid-run; `xpath text` wraps a scalar expression
+  (`string(...)`, `count(...)`) as one list item and an invalid namespace map is `UP2-E1005`; a
+  non-finite `tz`, `py.int(inf)` and `py.from_json("NaN")` are coded failures, and `py.from_json`,
+  the `json` operator and `Response.json()` read strictly; the documented `MAX_TEXT_BYTES` (16 MiB)
+  limit is now enforced as `UP2-E2013` at the evaluator entry. Smaller fixes: a product whose value
+  is `None` is readable, a `try` directive with a third slot is `UP2-E1004`, an `each` field map
+  with a `$`-prefixed key is read as a field map, a request's query goes before its fragment, an
+  unknown response charset falls back to UTF-8, a corrupt cache entry is a miss, and
+  `up2 doctor --fix` reports the same `at` it stores. `demo.py` is rewritten against the current
+  syntax and a test runs it; CI is now **test-only** (the conformance audit, the committed-sample
+  compile check and the catalogue freshness live in the suite), its matrix includes 3.15, and the
+  GitHub release workflow is gone — publishing is a local `uv publish`. The report's case run and
+  the test-tree scan are cached, so the suite no longer repeats that work; the workflow's `--extra`
+  names are checked against `pyproject.toml` by a test, and `pytest-xdist` is available in the dev
+  group for `-n 4` local runs (CI stays serial).
+- **`json`'s root expression works with the real engine** (change `simplify-dsl-syntax`): `02` §6.2
+  says an empty expression is the root, and `["json",""]` / `["json",null]` were tested — but only
+  against the stub engine, which answered `""` by itself. Real `jmespath` raises
+  `EmptyExpressionError` for it, so the documented spelling failed at compile time with
+  `UP2-E1005`. The operator now maps an empty expression to jmespath's `@`, and a real-engine test
+  covers it.
 - **Every text boundary reads and writes strict JSON** (change `reject-non-json-text`): the store and
   the sample runner still called `json.dumps` / `json.loads` bare, so a graph carrying `Infinity`
   published successfully and landed in the chain file, a snapshot containing `Infinity` was read as

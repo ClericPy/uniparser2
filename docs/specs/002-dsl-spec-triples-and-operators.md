@@ -697,7 +697,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2011` | `output="single"` but several products or several terminals exist | change `output` to `auto` / `list` |
 | `UP2-E2012` | the list given to `each` is longer than `MAX_EACH_ITER` | truncate it first with `["py","slice",":100"]` |
 | `UP2-E2013` | the input text exceeds `MAX_TEXT_BYTES` | truncate in the outer layer first, or switch to a streaming upstream |
-| `UP2-E2014` | exit schema validation failed | give the JSON Pointer, the expected type and the actual type |
+| ~~`UP2-E2014`~~ | **retired**: a schema is the registered type itself, applied by a `["type", …]` stage (`03` §3); the exit only packs, so there is no separate exit-schema validation | the number is retired, not reused |
 | ~~`UP2-E2015`~~ | **retired** with the settlement policy (`01` `D-01-1`): it reported "the value is missing and the effective policy is raise", and a missing value is not an error any more. The number is **retired, not reused**, so an older reference still points at the same rule | — |
 | `UP2-E2016` | sandbox execution exceeded its limits (execution duration / memory / host round-trip budget) | reduce the amount of data or rewrite the algorithm; the limits are configured by the host (`uniparser2.ops.code.configure`) and cannot be changed from the chain |
 | `UP2-E2017` | the sandboxed code raised an exception (including syntax errors and unsupported constructs) | fix `src`; the sandbox implements only a subset of CPython 3.14 (see Monty's limitations document) |

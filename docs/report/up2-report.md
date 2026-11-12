@@ -1,14 +1,14 @@
 # uniparser2 parsing-chain report
 
-What each case ran on, what its selector matched, and what came out: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `--md --check` fails when it is stale. The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
+What each case ran on, what its selector matched, and what came out: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `tests/report/test_catalogue.py` fails when it is stale (`UP2_UPDATE_REPORT=1 uv run pytest tests/report` rewrites it). The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
 
-Generated from `uniparser2` 0.7.0 · one case per `(operator, action)` pair declared by the registry, plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
+Generated from `uniparser2` 0.7.0 · one case per `(operator, action)` pair the catalogue covers (the coverage check above names any pair it does not), plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
 
 ## Coverage check
 
-- **Coverage gap**: missing [('node', 'call'), ('py', 'const'), ('py', 'filter'), ('py', 'from_timestamp'), ('py', 'sleep'), ('py', 'sort_desc'), ('py', 'strftime'), ('py', 'strptime'), ('py', 'to_timestamp'), ('re', 'sub'), ('type', 'check')] · non-Ok behavior cases []
-- the registry declares **81** pairs = **72** pairs covered by cases
-- states across every run: `Failed` 10, `Ok` 105
+- **Coverage gap**: missing [('node', 'call'), ('type', 'check')] · non-Ok behavior cases []
+- the registry declares **81** pairs = **80** pairs covered by cases
+- states across every run: `Failed` 10, `Ok` 113
 
 | operator | arity | slots | summary | actions |
 |---|---|---|---|---|
@@ -308,6 +308,13 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 48 actions (
 
 ### Actions (sorted by commonness)
 
+#### `const` — produce the literal value verbatim (never resolved as a reference)
+- tier ★★★ Core · parameter slot: the value itself · `value: literal`
+- note: a literal written in the chain; the upstream is never read
+- chain: `[["py", "const", "article"]]`
+- input: not used — the value comes from the chain, never from the upstream
+- output: `Ok(value='article')` (Ok)
+
 #### `strip` — strip leading and trailing whitespace, or the given characters
 - tier ★★★ Core · parameter slot: the value itself · `chars: literal?, default None`
 - note: strip leading/trailing whitespace
@@ -481,6 +488,31 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 48 actions (
 - input: `in`
 - output: `Ok(value='')` (Ok)
 
+#### `strptime` — parse text with an explicit format into a datetime
+- tier ★★ Common · parameter slot: the value itself · `format: literal`
+- note: text → datetime, rendered back to text
+- chain:
+  - `["py", "strptime", "%Y-%m-%d %H:%M:%S"]` → `Ok(value='datetime datetime.datetime(2026, 9, 24, 15, 30)')`
+  - `["py", "strftime", "%Y-%m-%d"]` → `Ok(value='2026-09-24')`
+- input: `2026-09-24 15:30:00`
+- output: `Ok(value='2026-09-24')` (Ok)
+
+#### `filter` — keep truthy elements (or falsy ones when keep is false)
+- tier ★★ Common · parameter slot: the value itself · `keep: literal?, default True`
+- note: keep truthy elements
+- chain: `[["py", "filter"]]`
+- input: `[0, 1, '', 'a', None]`
+- output: `Ok(value=[1, 'a'])` (Ok)
+
+#### `strftime` — render a datetime with a layout
+- tier ★★ Common · parameter slot: the value itself · `layout: literal`
+- note: a datetime → text
+- chain:
+  - `["py", "strptime", "%Y-%m-%d %H:%M:%S"]` → `Ok(value='datetime datetime.datetime(2026, 9, 24, 15, 30)')`
+  - `["py", "strftime", "%Y-%m-%d"]` → `Ok(value='2026-09-24')`
+- input: `2026-09-24 15:30:00`
+- output: `Ok(value='2026-09-24')` (Ok)
+
 #### `upper` — convert to uppercase
 - tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
 - note: uppercase
@@ -593,12 +625,44 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 48 actions (
 - input: `{'a': 1, 'b': 2}`
 - output: `Ok(value=[['a', 1], ['b', 2]])` (Ok)
 
+#### `sort_desc` — Python's sorted(reverse=True)
+- tier ★ Advanced · parameter slot: no parameter (write two positions, or "")
+- note: stable descending sort
+- chain: `[["py", "sort_desc"]]`
+- input: `[2, 3, 1]`
+- output: `Ok(value=[3, 2, 1])` (Ok)
+
+#### `from_timestamp` — epoch seconds -> an aware datetime at a fixed offset
+- tier ★ Advanced · parameter slot: the value itself · `tz: ref_or_literal?, default None`
+- note: epoch seconds → aware datetime → text
+- chain:
+  - `["py", "from_timestamp", 8]` → `Ok(value='datetime datetime.datetime(1970, 1, 1, 8, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=28800)))')`
+  - `["py", "strftime", "%Y-%m-%d %H:%M:%S"]` → `Ok(value='1970-01-01 08:00:00')`
+- input: `0`
+- output: `Ok(value='1970-01-01 08:00:00')` (Ok)
+
+#### `to_timestamp` — a datetime -> epoch seconds (a naive value is read at tz, UTC by default)
+- tier ★ Advanced · parameter slot: the value itself · `tz: ref_or_literal?, default None`
+- note: a datetime → epoch seconds
+- chain:
+  - `["py", "strptime", "%Y-%m-%d"]` → `Ok(value='datetime datetime.datetime(2026, 9, 24, 0, 0)')`
+  - `["py", "to_timestamp"]` → `Ok(value=1790208000)`
+- input: `2026-09-24`
+- output: `Ok(value=1790208000)` (Ok)
+
 #### `b64_encode` — Base64 encode
 - tier ○ Rare · parameter slot: no parameter (write two positions, or "")
 - note: Base64 encode
 - chain: `[["py", "b64_encode"]]`
 - input: `abc`
 - output: `Ok(value='YWJj')` (Ok)
+
+#### `sleep` — block for the given seconds and return the upstream value
+- tier ○ Rare · parameter slot: the value itself · `seconds: ref_or_literal`
+- note: block for the given seconds, return the upstream
+- chain: `[["py", "sleep", 0]]`
+- input: `kept`
+- output: `Ok(value='kept')` (Ok)
 
 ### Compositions (multi-stage chains)
 
@@ -788,6 +852,13 @@ arity 3 · slot 2=mode / slot 3=pattern · dependencies: none · 3 actions (Core
 - chain: `[["re", "findall", "\\d+"]]`
 - input: `a1b22c333`
 - output: `Ok(value=['1', '22', '333'])` (Ok)
+
+#### `sub` — replace every match (Python's \N / \g<name> in the replacement)
+- tier ★ Advanced · parameter slot: array · `pattern: literal`, `replacement: literal`
+- note: replace every match
+- chain: `[["re", "sub", ["\\d+", "#"]]]`
+- input: `a1b22`
+- output: `Ok(value='a#b#')` (Ok)
 
 ### Compositions (multi-stage chains)
 
@@ -1239,4 +1310,4 @@ answer = cache.get(request) or fetch(request)   # a miss is a miss
 cache.put(request, answer)                      # → Response(text=…, url=…)
 ```
 
-The request is the kernel's own `Request` product: `url` (required), `method`, `headers`, `timeout`, `params`, and a body that is `body` (base64) or `json`. The `up2 snapshot` / `up2 test` runner replays the cached answers, so a chain that fetches can be frozen and regressed **offline**; a request with no cached answer is a miss, and the runner never reaches the network.
+The request is an ordinary object a chain builds: `url` (required), `method`, `headers`, `timeout`, `params`, and a body that is `body` (base64) or `json`. The `up2 snapshot` / `up2 test` runner replays the cached answers, so a chain that fetches can be frozen and regressed **offline**; a request with no cached answer is a miss, and the runner never reaches the network.

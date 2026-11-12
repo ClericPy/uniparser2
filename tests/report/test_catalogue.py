@@ -34,12 +34,16 @@ CATALOGUE = _ROOT / "docs" / "report" / "up2-report.md"
 
 
 def _load_report_tool() -> ModuleType:
-    """Import ``tools/demo_report.py`` by path.
+    """Import ``tools/demo_report.py`` by path, once per process.
 
     It lives outside the package on purpose (a development tool, not shipped), and the type checkers
-    infer ``src/`` as the import root, so a plain ``import tools.demo_report`` is not resolvable for
-    all of them.
+    infer ``src/`` as the import root, so a plain ``import tools.demo_report`` is not resolvable.
+    The module name is shared with ``test_rendering`` so both modules read the tool's cached case
+    run (``_collect``).
     """
+    existing = sys.modules.get("demo_report")
+    if existing is not None:
+        return existing
     spec = importlib.util.spec_from_file_location("demo_report", _ROOT / "tools" / "demo_report.py")
     assert spec is not None and spec.loader is not None  # the file is in this repository
     module = importlib.util.module_from_spec(spec)

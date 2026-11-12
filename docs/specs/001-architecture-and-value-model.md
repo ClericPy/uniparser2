@@ -211,18 +211,25 @@ Key points:
 ## 6. Export packing (the single implementation point of N5)
 
 ```python
-def pack(value: Value, schema: SchemaSpec | None) -> Ok | Failed: ...
+def pack(value: Value) -> Ok | Failed: ...
 ```
 
-Two stages, in a fixed order:
+Two steps, in a fixed order:
 
-1. **Reject `Opaque`**: hitting a DOM handle yields `UP2-E2003` and points out which field it is (with the hint "serialize it through `text`/`html`/`@attr` first").
-2. **Schema validation** (if declared): type, optionality, list elements, nested objects; a failure yields `Failed` with a JSON Pointer path.
+1. **Reject what cannot leave the run**: an `Opaque` handle, a `datetime`, or any value outside the
+   JSON domain (a non-finite float included) yields `UP2-E2003` with a fix naming the operator that
+   turns it into text.
+2. **Return the value unchanged** once it passes.
 
-There is **no empty-value settlement step**: a query that matched nothing already carries its shape's
-empty value, so packing sees an ordinary JSON value (§4.2).
+There is **no schema argument and no empty-value settlement step**. A schema is the **registered
+type itself**, applied by a `["type", name]` stage at the chain tail (`03` §3): the stage validates
+the product and the exit only packs, so packing sees an ordinary JSON value (§4.2).
 
-### 6.1 Own Schema description (JSON Schema is not adopted)
+### 6.1 Own Schema description (superseded)
+
+> **Superseded by `03` §3**: the schema is the registered type, applied by a `["type", name]` stage.
+> The vocabulary below is the earlier draft and is not implemented; it is kept as the record of the
+> rejected JSON-Schema alternative.
 
 The export structure is limited and must be friendly to LLM generation, so a **restricted type vocabulary** is defined (an order of magnitude shorter than JSON Schema, with zero third-party dependencies):
 

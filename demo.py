@@ -5,32 +5,33 @@ Run:
     uv run python demo.py
 
 Every section prints the real chains it ran and the real outcome, so the file doubles as a
-cheat-sheet: 10 operators, the tri-state settlement, and what a bad chain looks like.
+cheat-sheet: 12 operators, the outcome model, and what a bad chain looks like.
 
 How to read a chain stage (**one rule for every operator**):
 
 - **Slot 2 = action**: the action enumeration declared by that operator (`text` / `@href` /
   `search` / `get`…), or the function name for `py` / `udf`
 - **Slot 3 = parameter**: the data this stage operates on (CSS selector / XPath / regex /
-  function argument)
-- **An operator with a single action takes only two positions**: ``["json", "data.html"]`` /
-  ``["const", "article"]``
+  function argument); it is **omitted** when nothing required remains (`["py","strip"]`)
 
 Example: ``["css1", "@href", "a.download"]`` = the css1 "attribute" action on ``a.download``.
 ``$globals.x`` inside a parameter is a **reference** (``$`` means "read from the scope").
 
 Optional engines are declared per operator: if an extra is missing (``lxml`` / ``jmespath`` /
 ``pydantic_monty``), the compile step reports ``UP2-E1107`` with the install command instead of
-crashing, and the section below says so.
+crashing, and that one chain is skipped.
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Final
 
 import uniparser2 as up2
+from uniparser2.core import registry
 
 SAMPLE_HTML = """
 <html>
@@ -74,28 +75,36 @@ SAMPLE_JSON = json.dumps(
 SAMPLE_TEXT = "a1b22c333"
 BASE_URL = "https://www.example.gov.cn/public/"
 
-# One field = one field chain; a stage = [operator, action, parameter].
+# One field = one field chain; a stage is [operator, action, parameter].
 HTML_CHAINS: dict[str, Any] = {
-    "title": [["css1", "text", "h1.article-title"], ["py", "normalize_space", ""]],
-    "pub_time": [["css1", "@content", "meta[name=PubDate]"], ["py", "parse_time", ""]],
+    "title": [["css1", "text", "h1.article-title"], ["py", "normalize_space"]],
+    "pub_time": [
+        ["css1", "@content", "meta[name=PubDate]"],
+        ["py", "strptime", "%Y-%m-%d %H:%M:%S"],
+        ["py", "strftime", "%Y-%m-%d"],
+    ],
     "pdf_url": [["css1", "@href", "a.download"], ["py", "urljoin", BASE_URL]],
-    "rel_count": [["css", "nodes", "ul.rel a"], ["py", "len", ""]],
+    "rel_count": [["css", "nodes", "ul.rel a"], ["py", "len"]],
     "rel_links": [["css", "@href", "ul.rel a"]],
+    "has_download": [["css", "exists", "a.download"]],
     "content": [
         ["css", "remove", "script,style"],  # pure function: returns a pruned copy
         ["css1", "html", "div.content"],  # first match only ⇒ scalar
-        ["py", "html_to_markdown", ""],
+        ["py", "html_to_markdown"],
     ],
 }
 
 # XML uses the xpath operator (lxml); the sitemap has a default namespace, hence local-name().
 XML_CHAINS: dict[str, Any] = {
     "sitemap_urls": [["xpath", "text", "//*[local-name()='loc']"]],
-    "sitemap_count": [["xpath", "nodes", "//*[local-name()='url']"], ["py", "len", ""]],
-    "sitemap_last": [["xpath", "text", "//*[local-name()='lastmod']"], ["py", "first", ""]],
+    "sitemap_count": [
+        ["xpath", "text", "count(//*[local-name()='url'])"],
+        ["py", "first"],
+    ],
+    "sitemap_last": [["xpath", "text", "//*[local-name()='lastmod']"], ["py", "last"]],
 }
 
-# RSS 2.0: CDATA bodies, RFC 822 dates, and two namespaced extensions (dc:, content:).
+# RSS 2.0: CDATA bodies, ISO dates, and two namespaced extensions (dc:, content:).
 SAMPLE_RSS2 = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"
      xmlns:content="http://purl.org/rss/1.0/modules/content/">
@@ -104,7 +113,7 @@ SAMPLE_RSS2 = """<?xml version="1.0" encoding="UTF-8"?>
     <item>
       <title><![CDATA[Notice on <b>Service Items</b>]]></title>
       <link>https://www.example.gov.cn/p/1.html</link>
-      <pubDate>Thu, 24 Sep 2026 15:30:00 +0800</pubDate>
+      <pubDate>2026-09-24T15:30:00+08:00</pubDate>
       <guid isPermaLink="false">notice-1</guid>
       <dc:creator>Reporter A</dc:creator>
       <description><![CDATA[<p>To all <b>municipal</b> governments:</p>]]></description>
@@ -113,7 +122,7 @@ SAMPLE_RSS2 = """<?xml version="1.0" encoding="UTF-8"?>
     <item>
       <title>Plain second item</title>
       <link>https://www.example.gov.cn/p/2.html</link>
-      <pubDate>Fri, 25 Sep 2026 09:00:00 +0800</pubDate>
+      <pubDate>2026-09-25T09:00:00+08:00</pubDate>
       <guid>notice-2</guid>
     </item>
   </channel>
@@ -146,84 +155,92 @@ SAMPLE_RDF = """<?xml version="1.0" encoding="UTF-8"?>
 </rdf:RDF>
 """
 
+_STRIP_TAGS: Final = ["re", "sub", [r"<[^>]+>", ""]]
+
 # Multi-match operators return a list, so single-value functions need `py.first` first; a
 # namespaced element is reached with local-name(), a namespaced *attribute* with @*[local-name()].
 RSS2_CHAINS: dict[str, Any] = {
     "feed_title": [
         ["xpath", "text", "//*[local-name()='channel']/*[local-name()='title']"],
-        ["py", "first", ""],
+        ["py", "first"],
     ],
-    "item_count": [["xpath", "nodes", "//*[local-name()='item']"], ["py", "len", ""]],
+    "item_count": [["xpath", "nodes", "//*[local-name()='item']"], ["py", "len"]],
     "item_titles": [["xpath", "text", "//*[local-name()='item']/*[local-name()='title']"]],
     "first_title": [
         ["xpath", "text", "//*[local-name()='item']/*[local-name()='title']"],
-        ["py", "first", ""],
-        ["py", "strip_tags", ""],
+        ["py", "first"],
+        _STRIP_TAGS,
+        ["py", "normalize_space"],
     ],
-    "first_link": [["xpath", "text", "//*[local-name()='link']"], ["py", "first", ""]],
+    "first_link": [["xpath", "text", "//*[local-name()='link']"], ["py", "first"]],
     "first_pub_date": [
         ["xpath", "text", "//*[local-name()='pubDate']"],
-        ["py", "first", ""],
-        ["py", "parse_time", ""],
+        ["py", "first"],
+        ["py", "strptime", "%Y-%m-%dT%H:%M:%S%z"],
+        ["py", "strftime", "%Y-%m-%d %H:%M"],
     ],
-    "first_creator": [["xpath", "text", "//*[local-name()='creator']"], ["py", "first", ""]],
+    "first_creator": [["xpath", "text", "//*[local-name()='creator']"], ["py", "first"]],
     "guid_is_permalink": [
         ["xpath", "text", "//*[local-name()='guid']/@isPermaLink"],
-        ["py", "first", ""],
+        ["py", "first"],
     ],
-    "first_description_md": [
+    "first_description": [
         ["xpath", "text", "//*[local-name()='description']"],
-        ["py", "first", ""],
-        ["py", "html_to_markdown", ""],
+        ["py", "first"],
+        _STRIP_TAGS,
+        ["py", "normalize_space"],
     ],
     "first_content_md": [
         ["xpath", "text", "//*[local-name()='encoded']"],
-        ["py", "first", ""],
-        ["py", "html_to_markdown", ""],
+        ["py", "first"],
+        ["py", "html_to_markdown"],
     ],
 }
 
 ATOM_CHAINS: dict[str, Any] = {
     "entry_title": [
         ["xpath", "text", "//*[local-name()='entry']/*[local-name()='title']"],
-        ["py", "first", ""],
+        ["py", "first"],
     ],
-    "entry_link": [["xpath", "text", "//*[local-name()='link']/@href"], ["py", "first", ""]],
+    "entry_link": [["xpath", "text", "//*[local-name()='link']/@href"], ["py", "first"]],
     "entry_updated": [
         ["xpath", "text", "//*[local-name()='updated']"],
-        ["py", "first", ""],
-        ["py", "parse_time", {"lang": "en"}],
+        ["py", "first"],
+        ["py", "strptime", "%Y-%m-%dT%H:%M:%S%z"],
+        ["py", "strftime", "%Y-%m-%d %H:%M"],
     ],
     "entry_summary": [
         ["xpath", "text", "//*[local-name()='summary']"],
-        ["py", "first", ""],
-        ["py", "strip_tags", ""],
+        ["py", "first"],
+        _STRIP_TAGS,
+        ["py", "normalize_space"],
     ],
     "entry_summary_md": [
         ["xpath", "text", "//*[local-name()='summary']"],
-        ["py", "first", ""],
-        ["py", "html_to_markdown", ""],
+        ["py", "first"],
+        ["py", "html_to_markdown"],
     ],
 }
 
 RDF_CHAINS: dict[str, Any] = {
     "item_about": [
         ["xpath", "text", "//*[local-name()='item']/@*[local-name()='about']"],
-        ["py", "first", ""],
+        ["py", "first"],
     ],
     "item_title": [
         ["xpath", "text", "//*[local-name()='item']/*[local-name()='title']"],
-        ["py", "first", ""],
+        ["py", "first"],
     ],
     "item_date": [
         ["xpath", "text", "//*[local-name()='date']"],
-        ["py", "first", ""],
-        ["py", "parse_time", ""],
+        ["py", "first"],
+        ["py", "strptime", "%Y-%m-%d"],
+        ["py", "strftime", "%Y/%m/%d"],
     ],
 }
 
 FEED_DOCS: tuple[tuple[str, str, dict[str, Any]], ...] = (
-    ("RSS 2.0 — CDATA, RFC 822 dates, dc:/content: extensions", SAMPLE_RSS2, RSS2_CHAINS),
+    ("RSS 2.0 — CDATA, ISO dates, dc:/content: extensions", SAMPLE_RSS2, RSS2_CHAINS),
     ("Atom 1.0 — default namespace, attribute links, ISO 8601", SAMPLE_ATOM, ATOM_CHAINS),
     ("RSS 1.0 / RDF — rdf:about, dc:date", SAMPLE_RDF, RDF_CHAINS),
 )
@@ -266,30 +283,54 @@ def show_source(title: str, source: str) -> None:
     print(source.strip())
 
 
+def _skippable(exc: up2.Up2Error) -> bool:
+    """A missing optional engine skips one chain; anything else is a real failure."""
+    return exc.diagnostic.code == "UP2-E1107"
+
+
 def run(chain: list[Any], value: Any) -> up2.Outcome:
-    """Compile + evaluate one chain on a fresh scope; remember which operators it used."""
-    for step in chain:
-        SHOWN.add(step[0])
-    return up2.eval_field(up2.compile_field(chain), value, scope=make_scope())
+    """Compile + evaluate one chain on a fresh scope; remember which operators it used.
+
+    The operators are recorded only after the whole chain compiled, so a chain skipped for a
+    missing optional engine does not count as exercised.
+    """
+    compiled = up2.compile_field(chain)
+    for stage in chain:
+        SHOWN.add(stage[0])
+    return up2.eval_field(compiled, value, scope=make_scope())
 
 
 def one(label: str, chain: list[Any], value: Any) -> None:
     """Print a single chain and its outcome."""
-    outcome = run(chain, value)
     print(f"   {json.dumps(chain, ensure_ascii=False)}")
+    try:
+        outcome = run(chain, value)
+    except up2.Up2Error as exc:
+        if _skippable(exc):
+            print(f"       skipped: {exc.diagnostic.code} {exc.diagnostic.message}")
+            print(f"       fix: {exc.diagnostic.fix}")
+            return
+        raise
     print(f"       {label}: {render_outcome(outcome)}")
 
 
-def trace(name: str, chain: list[Any], source: str) -> None:
+def trace(name: str, chain: list[Any], source: Any) -> None:
     """Print every rule a field went through with each stage's output, then the final output."""
     print(f"\n-- field {name} " + "-" * max(4, 46 - len(name)))
     width = max(len(json.dumps(step, ensure_ascii=False)) for step in chain)
     shown = ""
-    for index in range(1, len(chain) + 1):
-        outcome = run(chain[:index], source)
-        shown = render_outcome(outcome)
-        step = json.dumps(chain[index - 1], ensure_ascii=False)
-        print(f"   {step:<{width}}  -> {shown}")
+    try:
+        for index in range(1, len(chain) + 1):
+            outcome = run(chain[:index], source)
+            shown = render_outcome(outcome)
+            step = json.dumps(chain[index - 1], ensure_ascii=False)
+            print(f"   {step:<{width}}  -> {shown}")
+    except up2.Up2Error as exc:
+        if _skippable(exc):
+            print(f"   skipped: {exc.diagnostic.code} {exc.diagnostic.message}")
+            print(f"       fix: {exc.diagnostic.fix}")
+            return
+        raise
     print(f"   {'output':<{width}}  =  {shown}")
 
 
@@ -300,7 +341,8 @@ def section_selectors() -> None:
     for name, chain in HTML_CHAINS.items():
         trace(name, chain, SAMPLE_HTML)
     print("\n   `css` returns every match, `css1` only the first one; `nodes`/`self` give handles,")
-    print("   `text`/`html`/`outer`/`@<attribute>` turn a handle into text.")
+    print("   `text`/`html`/`outer`/`@<attribute>` turn a handle into text, and `exists` answers a")
+    print("   boolean for a decision.")
 
 
 def section_xpath() -> None:
@@ -314,21 +356,20 @@ def section_xpath() -> None:
         for name, chain in chains.items():
             trace(name, chain, source)
     print("\n   Reading real feeds: a CDATA section is just text — HTML inside it still needs")
-    print("   `py.strip_tags` / `py.html_to_markdown`. Multi-match operators return a list, so a")
+    print("   `re.sub` or `py.html_to_markdown`. Multi-match operators return a list, so a")
     print("   single-value function needs `py.first` first. A namespaced element is reached with")
-    print("   `local-name()`; a namespaced *attribute* needs `@*[local-name()='about']` (`@about`")
-    print("   misses it). `py.parse_time` reads both feed date shapes with no parameters (RFC 822")
-    print("   and zone-bearing ISO 8601); the offset is consumed, so the wall clock is what comes")
-    print('   back — use {"lang": "en"} for natural language, or {"format": ...} for the rest.')
+    print("   `local-name()`; a namespaced *attribute* needs `@*[local-name()='about']`.")
+    print("   The dates here are ISO; an RFC 822 date needs a host `udf` or `code`, because")
+    print("   `%a` / `%b` are locale-dependent and rejected by `strptime` (design D6).")
 
 
 def section_json() -> None:
     show_source("3. `json` — jmespath queries (optional extra: jmespath)", SAMPLE_JSON)
     one("the URLs of every list item", [["json", "data.list[*].url"]], SAMPLE_JSON)
-    one("chain steps compose", [["json", "data.list[*].title"], ["py", "first", ""]], SAMPLE_JSON)
+    one("chain steps compose", [["json", "data.list[*].title"], ["py", "first"]], SAMPLE_JSON)
     one(
         "a JSON field may itself be HTML",
-        [["json", "data.html"], ["py", "strip_tags", ""]],
+        [["json", "data.html"], ["py", "html_to_markdown"]],
         SAMPLE_JSON,
     )
 
@@ -336,20 +377,17 @@ def section_json() -> None:
 def section_regex() -> None:
     show_source("4. `re` — regular expressions (no extra needed)", SAMPLE_TEXT)
     one("first date-like match", [["re", "search", r"\d{4}-\d{2}-\d{2}"]], "2026-09-24T15:30")
-    one(
-        "one capture group",
-        [["re", "group", {"pattern": r"(\d{4})-(\d{2})", "group": 2}]],
-        "2026-09-24",
-    )
-    one("all digit runs", [["re", "findall", r"\d+"]], SAMPLE_TEXT)
-    one("match, then convert", [["re", "search", r"\d+"], ["py", "int", ""]], SAMPLE_TEXT)
+    one("one capture group", [["re", "search", [r"(\d{4})-(\d{2})", 2]]], "2026-09-24")
+    one("every digit run", [["re", "findall", r"\d+"]], SAMPLE_TEXT)
+    one("replace every run", [["re", "sub", [r"\d+", "#"]]], SAMPLE_TEXT)
+    one("match, then convert", [["re", "search", r"\d+"], ["py", "int"]], SAMPLE_TEXT)
 
 
 def section_python() -> None:
-    show_source("5. `py` — the 40-function allowlist (no extra needed)", SAMPLE_TEXT)
+    show_source("5. `py` — the 48-function allowlist (no extra needed)", SAMPLE_TEXT)
     one(
-        "default() catches a Missing upstream",
-        [["re", "search", r"\d+"], ["py", "default", "none"]],
+        "or() is the fallback for an empty stage value",
+        [["re", "search", r"\d+"], ["py", "or", ["none"]]],
         "abc",
     )
     one(
@@ -357,14 +395,27 @@ def section_python() -> None:
         [["css1", "@href", "a.download"], ["py", "urljoin", "$globals.base_url"]],
         SAMPLE_HTML,
     )
-    one("split() + first()", [["py", "split", ","], ["py", "first", ""]], "a,b,c")
-    one("replace()", [["py", "replace", {"old": "b22", "new": "B"}]], SAMPLE_TEXT)
-    one("parse_time()", [["py", "parse_time", ""]], "2026-09-24 15:30:00")
+    one("split() + first()", [["py", "split", ","], ["py", "first"]], "a,b,c")
+    one("replace() takes one positional array", [["py", "replace", ["b22", "B"]]], SAMPLE_TEXT)
+    one(
+        "strptime() → strftime()",
+        [
+            ["py", "strptime", "%Y-%m-%d %H:%M:%S"],
+            ["py", "strftime", "%Y/%m/%d"],
+        ],
+        "2026-09-24 15:30:00",
+    )
+    one(
+        "from_timestamp() → strftime()",
+        [["py", "from_timestamp", 8], ["py", "strftime", "%Y-%m-%d %H:%M:%S"]],
+        0,
+    )
     one(
         "in() — a predicate, spelled the way Python spells it",
         [["py", "in", [200, 301, 302]]],
         301,
     )
+    one("between() is half-open", [["py", "between", [200, 300]]], 250)
 
 
 def section_scope() -> None:
@@ -386,23 +437,23 @@ def section_scope() -> None:
         "v",
     )
     one("reading globals", [["ctx", "get", "globals.base_url"]], "ignored")
-    print("\n   `ctx.set`/`del` may only write `locals`/`fields`; writing `globals` is UP2-E1015.")
+    print("\n   `ctx.set`/`del` may only write `locals`/`public`; writing `globals` is UP2-E1015.")
 
 
 def section_literals() -> None:
-    heading("7. `const` — literals and build-up")
-    one("a plain literal", [["const", "article"]], "ignored")
-    one("a literal that starts with $", [["const", {"$lit": "$not-a-reference"}]], "ignored")
+    heading("7. `py.const` — literals and build-up")
+    one("a plain literal", [["py", "const", "article"]], "ignored")
+    one("a literal that starts with $", [["py", "const", {"$lit": "$not-a-reference"}]], "ignored")
     one(
         "const replaces the value mid-chain",
-        [["css1", "text", "h1.article-title"], ["py", "normalize_space", ""], ["const", "fixed"]],
+        [["css1", "text", "h1.article-title"], ["py", "normalize_space"], ["py", "const", "fixed"]],
         SAMPLE_HTML,
     )
     one(
         "build-up: extract, store in locals, read it back",
         [
             ["css1", "text", "h1.article-title"],
-            ["py", "normalize_space", ""],
+            ["py", "normalize_space"],
             ["ctx", "set", "locals.title"],
             ["ctx", "get", "locals.title"],
         ],
@@ -416,28 +467,22 @@ def section_udf() -> None:
     def shout(value: Any) -> str:
         return str(value).upper()
 
-    def with_ctx(value: Any, ctx: Any) -> str:
-        return f"{value}|{ctx.globals.base_url}|{ctx.locals.k}"
+    def join_two(left: Any, right: Any) -> str:
+        return f"{left}+{right}"
 
     up2.register_udf("demo_shout", shout)
-    up2.register_udf("demo_with_ctx", with_ctx)
+    up2.register_udf("demo_join", join_two)
     one(
         "a plain function",
         [
             ["css1", "text", "h1.article-title"],
-            ["py", "normalize_space", ""],
-            ["udf", "demo_shout", ""],
+            ["py", "normalize_space"],
+            ["udf", "demo_shout"],
         ],
         SAMPLE_HTML,
     )
-    one(
-        "a function that declares ctx",
-        [["ctx", "set", "locals.k"], ["udf", "demo_with_ctx", ""]],
-        "value",
-    )
-    print(
-        '\n   Registering is the trust boundary: the chain holds only the name. `["udf","nope",""]`'
-    )
+    one("the `*` form spreads a list", [["udf", "demo_join", "*"]], ["a", "b"])
+    print('\n   Registering is the trust boundary: the chain holds only the name. `["udf","nope"]`')
     print("   fails at compile time with UP2-E1010.")
 
 
@@ -449,22 +494,15 @@ def section_code() -> None:
         "extract → normalise → store in locals → read it in code",
         [
             ["css1", "text", "h1.article-title"],
-            ["py", "normalize_space", ""],
+            ["py", "normalize_space"],
             ["ctx", "set", "locals.title"],
-            ["code", {"src": "ctx.locals.title.upper()"}],
+            ["code", "ctx.locals.title.upper()"],
         ],
         SAMPLE_HTML,
     )
-    one(
-        "named inputs (checked at compile time)",
-        [
-            ["css1", "text", "h1.article-title"],
-            ["code", {"src": "prefix + normalize_space(obj)", "inputs": {"prefix": "Title: "}}],
-        ],
-        SAMPLE_HTML,
-    )
-    one("the sandbox has no host capability", [["code", {"src": "import socket"}]], "x")
-    one("a sandbox failure is a normal error", [["code", {"src": "1 / 0"}]], "x")
+    one("the sandbox mounts the pure py functions", [["code", "normalize_space(obj)"]], "  a  b  ")
+    one("the sandbox has no host capability", [["code", "import socket"]], "x")
+    one("a sandbox failure is a normal error", [["code", "1 / 0"]], "x")
     print("   Defaults: 64 MB / 0.5 s per evaluation, frozen clock, seeded random; limits live on")
     print("   the host side (uniparser2.ops.code.configure) and the chain cannot widen them.")
 
@@ -476,16 +514,19 @@ def section_tristate() -> None:
         [["re", "search", r"\d+"]],
         "abc",
     )
-    one("a broken rule always fails the run", [["py", "int", ""]], "abc")
+    one("a broken rule always fails the run", [["py", "int"]], "abc")
     one(
         "the failure stops the chain at the stage that failed",
-        [["py", "int", ""], ["py", "strip", ""]],
+        [["py", "int"], ["py", "strip"]],
+        "abc",
+    )
+    one(
+        "or() gives an empty stage value a fallback",
+        [["re", "search", r"\d+"], ["py", "or", ["0"]]],
         "abc",
     )
     print('\n   There is no third state: `""` / `[]` / `null` are ordinary values, and everything')
-    print(
-        "   else fails with a code. `py.default` replaces `None` or an empty string in one field."
-    )
+    print("   else fails with a code.")
 
 
 def section_diagnostics() -> None:
@@ -493,8 +534,9 @@ def section_diagnostics() -> None:
     bad_chains: list[tuple[str, list[Any]]] = [
         ("wrong arity", [["py", "replace", "old,new", "extra"]]),
         ("unknown action", [["css", "innerHTML", "h1"]]),
-        ("dangling reference", [["const", "$nope.x"]]),
+        ("dangling reference", [["py", "getitem", "$nope.x"]]),
         ("a reference to a non-writable root", [["ctx", "set", "globals.x"]]),
+        ("an empty path segment", [["ctx", "get", "locals..x"]]),
         ("a ReDoS-shaped regular expression", [["re", "search", "(a+)+$"]]),
     ]
     for label, chain in bad_chains:
@@ -520,14 +562,47 @@ def section_iteration() -> None:
     )
     one(
         "no engine needed: a list of strings",
-        [["each", {"raw": [["py", "strip", ""]]}]],
+        [["each", {"raw": [["py", "strip"]]}]],
         ["  a  ", "bb"],
     )
     one(
         "a `_`-prefixed field is a per-element temporary, not a key",
-        [["each", {"_raw": [["py", "strip", ""]], "seen": [["ctx", "get", "locals._raw"]]}]],
+        [["each", {"_raw": [["py", "strip"]], "seen": [["ctx", "get", "locals._raw"]]}]],
         ["  a  ", "bb"],
     )
+    one(
+        "nested each stages iterate level by level",
+        [["each", {"lens": [["each", {"n": [["py", "len"]]}]]}]],
+        [["a", "b"], ["c"]],
+    )
+
+
+def section_story() -> None:
+    heading("13. `node` / `type` — a story: nodes calling nodes, and a validated product")
+
+    @dataclass(slots=True)
+    class DemoBook:
+        title: str
+        price: str
+
+    story = {
+        "nodes": {
+            "record": [["node", "fields"], ["type", "DemoBook"]],
+            "fields": {
+                "title": [["py", "getitem", "title"], ["py", "strip"]],
+                "price": [["py", "getitem", "price"], ["py", "strip"]],
+            },
+        }
+    }
+    up2.register_type("DemoBook", DemoBook)
+    try:
+        product = up2.run(story, "record", {"title": "  A  ", "price": "12.00"})
+    finally:
+        up2.unregister_type("DemoBook")
+    print("   story.nodes =", ", ".join(story["nodes"]))
+    print('   run(story, "record", {...}) ->', render(product))
+    print("   the `type` stage validated the record and handed on JSON, not the DemoBook instance.")
+    SHOWN.update({"node", "type"})
 
 
 SECTIONS: Final[tuple[tuple[str, Callable[[], None]], ...]] = (
@@ -537,33 +612,39 @@ SECTIONS: Final[tuple[tuple[str, Callable[[], None]], ...]] = (
     ("re", section_regex),
     ("py", section_python),
     ("ctx", section_scope),
-    ("const", section_literals),
+    ("py.const", section_literals),
     ("udf", section_udf),
     ("code", section_code),
     ("tri-state", section_tristate),
     ("diagnostics", section_diagnostics),
     ("each", section_iteration),
-)
-ALL_OPERATORS: Final = frozenset(
-    {"css", "css1", "py", "xpath", "json", "re", "ctx", "const", "code", "udf", "each"}
+    ("story", section_story),
 )
 
 
-def main() -> None:
-    for _, section in SECTIONS:
+def main() -> int:
+    failed = False
+    for name, section in SECTIONS:
         try:
             section()
-        except up2.Up2Error as exc:  # an optional engine is missing: report it and move on
-            print(f"   skipped: {exc.diagnostic.code} {exc.diagnostic.message}")
+        except up2.Up2Error as exc:
+            if _skippable(exc):
+                print(f"   section {name} skipped: {exc.diagnostic.code} {exc.diagnostic.message}")
+                continue
+            print(f"   section {name} failed: {exc.diagnostic}", file=sys.stderr)
+            failed = True
 
     heading("Covered in this run")
-    shown = SHOWN & ALL_OPERATORS
-    print(f"   operators exercised: {len(shown)}/{len(ALL_OPERATORS)}")
+    declared = set(registry.canonical_names())
+    shown = SHOWN & declared
+    print(f"   operators exercised: {len(shown)}/{len(declared)}")
     print(f"   -> {', '.join(sorted(shown))}")
-    if ALL_OPERATORS - SHOWN:
-        skipped = ", ".join(sorted(ALL_OPERATORS - SHOWN))
-        print(f"   not exercised (optional engine missing): {skipped}")
+    if declared - shown:
+        print(f"   not exercised: {', '.join(sorted(declared - shown))} (optional engine missing?)")
+    if failed:
+        print("   one or more sections failed; see the errors above.", file=sys.stderr)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

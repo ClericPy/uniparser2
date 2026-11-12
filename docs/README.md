@@ -25,8 +25,9 @@ means §6.12 of `002-dsl-spec-triples-and-operators.md`).
   parameter slot is written, and worked examples with their real outputs. It is **hand-maintained**;
   the authority for the action list stays the registry (`uv run up2 ops --json`).
 - **[`report/up2-report.md`](report/up2-report.md)**: the machine-written catalogue — one case per
-  declared `(operator, action)` pair, the multi-stage compositions and the compile-time invalid forms,
-  each produced by a real run. A test keeps it honest:
+  `(operator, action)` pair it covers (its coverage check names any pair still missing), the
+  multi-stage compositions and the compile-time invalid forms, each produced by a real run. A test
+  keeps it honest:
   `uv run pytest tests/report` fails when it is stale, and
   `UP2_UPDATE_REPORT=1 uv run pytest tests/report` rewrites it (`005` §6).
 

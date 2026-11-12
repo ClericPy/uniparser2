@@ -40,6 +40,7 @@ from collections import Counter
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any, Final
 
@@ -64,10 +65,10 @@ TIERS: Final[dict[str, str]] = {
 }
 _TIER_ORDER: Final = {name: index for index, name in enumerate(TIERS)}
 
-# Commonness order of the operators themselves (first section = most common). Every operator the
-# registry declares must appear here: one that does not is flagged at the top of the report, and it
-# would also sort to the end and lose its table-of-contents entry. `each` sits after `const`
-# because it is the fan-out a node set feeds into, which is where the reference page lists it.
+# Commonness order of the operators that have cases (first section = most common). A registry
+# operator missing here has no section; the coverage check at the top names its uncovered pairs.
+# `each` sits after `ctx` because it is the fan-out a node set feeds into, which is where the
+# reference page lists it.
 OPERATOR_ORDER: Final = (
     "css",
     "css1",
@@ -76,7 +77,6 @@ OPERATOR_ORDER: Final = (
     "json",
     "re",
     "ctx",
-    "const",
     "each",
     "code",
     "udf",
@@ -216,13 +216,13 @@ def coverage_cases() -> list[Case]:
     """One case per `(operator, action)` pair (input and parameters picked per operator)."""
     cases: list[Case] = [
         Case(
-            "const",
+            "py",
             "const",
             [["py", "const", "article"]],
             None,
             "Core",
             1,
-            note="2 positions: literal",
+            note="a literal written in the chain; the upstream is never read",
             ignores_input=True,
             input_note="the value comes from the chain, never from the upstream",
         ),
@@ -341,13 +341,58 @@ def coverage_cases() -> list[Case]:
             1,
             note="dynamic action space: slot 2 carries the host-registered function name",
         ),
+        Case(
+            "re",
+            "sub",
+            [["re", "sub", [r"\d+", "#"]]],
+            "a1b22",
+            "Advanced",
+            2,
+            note="replace every match",
+        ),
+        Case(
+            "py",
+            "strptime",
+            [["py", "strptime", "%Y-%m-%d %H:%M:%S"], ["py", "strftime", "%Y-%m-%d"]],
+            "2026-09-24 15:30:00",
+            "Common",
+            17,
+            note="text → datetime, rendered back to text",
+        ),
+        Case(
+            "py",
+            "strftime",
+            [["py", "strptime", "%Y-%m-%d %H:%M:%S"], ["py", "strftime", "%Y-%m-%d"]],
+            "2026-09-24 15:30:00",
+            "Common",
+            18,
+            note="a datetime → text",
+        ),
+        Case(
+            "py",
+            "from_timestamp",
+            [["py", "from_timestamp", 8], ["py", "strftime", "%Y-%m-%d %H:%M:%S"]],
+            0,
+            "Advanced",
+            18,
+            note="epoch seconds → aware datetime → text",
+        ),
+        Case(
+            "py",
+            "to_timestamp",
+            [["py", "strptime", "%Y-%m-%d"], ["py", "to_timestamp"]],
+            "2026-09-24",
+            "Advanced",
+            19,
+            note="a datetime → epoch seconds",
+        ),
     ]
     cases += _selector_op("css") + _selector_op("css1") + _py_cases()
     return cases
 
 
 def _py_cases() -> list[Case]:
-    """`py`  has 41 allowlisted functions, tiered by commonness (module docstring)."""
+    """`py` has 48 allowlisted functions, tiered by commonness (module docstring)."""
     spec: list[tuple[str, int, str, Any, Any, str]] = [
         ("Core", 1, "strip", "  text  ", "", "strip leading/trailing whitespace"),
         ("Core", 2, "normalize_space", "a   b\n c", "", "collapse consecutive whitespace"),
@@ -424,6 +469,9 @@ def _py_cases() -> list[Case]:
         ("Advanced", 14, "<=", 5, 5, "ordering (inclusive)"),
         ("Advanced", 15, ">", 6, 5, "ordering"),
         ("Advanced", 16, ">=", "c", "b", "ordering (inclusive)"),
+        ("Advanced", 17, "sort_desc", [2, 3, 1], "", "stable descending sort"),
+        ("Common", 17, "filter", [0, 1, "", "a", None], "", "keep truthy elements"),
+        ("Rare", 2, "sleep", "kept", 0, "block for the given seconds, return the upstream"),
         ("Rare", 1, "b64_encode", "abc", "", "Base64 encode"),
     ]
     return [
@@ -1331,8 +1379,13 @@ class _RunSet:
         return [row for row in self.bad_rows if row[0][0][0] not in OPERATOR_ORDER]
 
 
+@cache
 def _collect() -> _RunSet:
-    """Run every case once; a fixture that is not ``Ok`` is reported by ``behavior_failures``."""
+    """Run every case once; a fixture that is not ``Ok`` is reported by ``behavior_failures``.
+
+    Memoised for the process: the HTML and Markdown renderers read the same runs, and re-running
+    the whole case set for each build was a measurable part of the report tests' runtime.
+    """
     _register_demo_udf()
     coverage = [_run(case) for case in coverage_cases()]
     chains = [_run(case) for case in chain_cases()]
@@ -1634,14 +1687,15 @@ def build_md() -> str:
         "",
         "What each case ran on, what its selector matched, and what came out: every entry below is "
         "the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is "
-        "generated — regenerate it "
-        "after changing an operator; `--md --check` fails when it is stale. The local HTML build "
+        "generated — regenerate it after changing an operator; "
+        "`tests/report/test_catalogue.py` fails when it is stale "
+        "(`UP2_UPDATE_REPORT=1 uv run pytest tests/report` rewrites it). The local HTML build "
         "(`.cache/report/up2-report.html`) shows installed/missing dependency state and is not "
         "committed.",
         "",
         f"Generated from `uniparser2` {up2.__version__} · one case per `(operator, action)` pair "
-        "declared by the registry, plus multi-stage compositions, the shared mechanisms and the "
-        "compile-time invalid forms.",
+        "the catalogue covers (the coverage check above names any pair it does not), plus "
+        "multi-stage compositions, the shared mechanisms and the compile-time invalid forms.",
         "",
         _md_coverage(runs, unexpected),
         _md_tier_legend(),
@@ -1703,7 +1757,7 @@ def build_md() -> str:
         "cache.put(request, answer)                      # → Response(text=…, url=…)",
         "```",
         "",
-        "The request is the kernel's own `Request` product: `url` (required), `method`, `headers`, "
+        "The request is an ordinary object a chain builds: `url` (required), `method`, `headers`, "
         "`timeout`, `params`, and a body that is `body` (base64) or `json`. The `up2 snapshot` / "
         "`up2 test` runner replays the cached answers, so a chain that fetches can be frozen and "
         "regressed **offline**; a request with no cached answer is a miss, and the runner never "
@@ -1767,8 +1821,8 @@ def behavior_failures() -> list[Ran]:
     nothing but the failure (the ``css → code`` case used ``css``, which yields a *list*, so the
     sandbox function that needs a string rejected it).
     """
-    cases = [*coverage_cases(), *chain_cases()]
-    return [ran for ran in (_run(case) for case in cases) if ran.state != "Ok"]
+    runs = _collect()
+    return [ran for ran in (*runs.coverage, *runs.chains) if ran.state != "Ok"]
 
 
 def _parser() -> argparse.ArgumentParser:

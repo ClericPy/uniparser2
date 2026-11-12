@@ -51,6 +51,8 @@ A chain is data (`N2`), so its lifecycle differs from code's: **written once, re
 
 The character-set constraint on `tpl_key` (lint `UP2-E3002`): `^[\w\u4e00-\u9fff][\w\u4e00-\u9fff.-]{0,63}$` — letters, digits, underscores, Chinese characters, dots and hyphens, and it may not start with a dot or a hyphen.
 
+`root_domain` is also constrained: it must be **one path component** (non-empty, not `.` / `..`, no `/`, `\` or NUL), because `FileStore` uses it as a directory name. The check runs on every read path as well as on `publish`.
+
 > **Why constrain the character set**: `FileStore` uses `tpl_key` as a file name (Windows forbids `\ / : * ? " < > |`); putting the constraint in the lint layer keeps the behaviour of both Stores identical, and it also disposes of the special rule from draft `01` R2 ("`tpl_key` must not start with `:`") — a `:` simply does not make it into the character set.
 
 ### 2.1 `TemplateAudit`
@@ -216,7 +218,7 @@ the three indexes are exactly this section's.
 The fixed steps of `publish` (with identical semantics in both Stores):
 
 ```
-1. Validate the tpl_key character set and that root_domain is non-empty  → failure UP2-E3002
+1. Validate the tpl_key character set and that root_domain is one path component  → failure UP2-E3002
 2. compile(graph)                                → on failure reject outright (a bad chain cannot get in)
 3. Read the old row:
    ├─ absent  → changed = True, old_hash = None
@@ -254,7 +256,7 @@ audit line was lost" look the same.
 | Code | Trigger | Fix hint |
 |---|---|---|
 | `UP2-E3001` | fingerprint conflict: the `graph` written under the same `(root_domain, tpl_key)` does not match the expected fingerprint | run `up2 get` again and compare; make sure there is no concurrent writer |
-| `UP2-E3002` | the `tpl_key` character set is illegal, or `root_domain` is empty | report the character-set regex and the actual value |
+| `UP2-E3002` | the `tpl_key` character set is illegal, or `root_domain` is empty or not one path component | report the character-set regex and the actual value |
 | `UP2-E3003` | chain and audit are inconsistent (a chain without an audit row / an audit row without a chain) | `up2 doctor --fix` (which writes the missing audit row; re-publishing is the other remedy) |
 | `UP2-E3004` | the Store write failed (permissions / disk / SQLite lock / a missing directory) | report the path and the underlying error |
 | `UP2-E3005` | the `publish` gate did not pass (the G2 snapshot regression failed, or `--skip-tests` came without `--note`) | run `up2 test` or supply `--note` |
@@ -415,7 +417,7 @@ up2 doctor [--fix]                           # chains and audit correspond? --fi
 | S3 | `Failed` (`UP2-E2xxx`) | the diagnostic names the stage it failed at (its JSON Pointer) and the `fix`; usually a type mismatch or an unreadable path; `up2 trial --trace` names the step, the field and the stage that failed and carries its `code` / `reason` as data (`06` §5.1) |
 | S3 | too many empty fields | check whether the field chain that carries the `each` stage produced the elements you thought, and whether the selectors match the current page version; a no-match is the shape's empty value, and `--trace` shows the stage that produced it and the `item` it belongs to |
 | S5 | a snapshot difference | first decide whether "the chain regressed" or "the page changed"; the latter needs updated samples, a fresh `--accept`, and a statement of that in the audit `note` |
-| S6 | `UP2-E3002` | the `tpl_key` character set is illegal |
+| S6 | `UP2-E3002` | the `tpl_key` character set is illegal, or `root_domain` is not one path component |
 | S6 | `UP2-E3003` | chain and audit are inconsistent (leftovers of a file-Store crash) → `up2 doctor --fix` |
 
 ---
@@ -450,7 +452,7 @@ up2 doctor [--fix]                           # chains and audit correspond? --fi
 | 11 | putting a node handle straight into the product (forgetting `text`/`@attr`) | `UP2-E2003` | serialize the `Opaque` handle into text first |
 | 12 | a node call that closes a cycle (`a -> b -> a`) | `UP2-E1017` | inline one of the nodes, or run two calls from the host |
 | 13 | a node key using a reserved name (`globals`) or duplicated | `UP2-E1009` | change the key |
-| 14 | `tpl_key` carrying `:` or `/` | `UP2-E3002` | pick a name inside the character set |
+| 14 | `tpl_key` carrying `:` or `/`, or `root_domain` carrying `/` / `\` / `..` | `UP2-E3002` | pick a name inside the character set, and a domain that is one path component |
 | 15 | parsing an answer object as HTML without reading its body first | `UP2-E2002` | `css` sees the object, not text: start the chain with `["py","getattr","text"]` (`03` §4) |
 | 16 | a field chain longer than 32 stages / `each` nested deeper than 3 levels / one field map holding more than 256 fields | `UP2-E1012` | split the chain, spread the nesting over several nodes, or switch to `udf` |
 | 17 | an empty field map, or a field name that is empty or contains `.` | `UP2-E1005` | declare at least one field, and name each one so a `$…` path can address it |

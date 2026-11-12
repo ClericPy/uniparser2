@@ -12,10 +12,12 @@ convention ``tests/ops/test_htmldom.py`` follows).
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
+from uniparser2 import compile_field, compile_story
 from uniparser2.cli.samples import (
     SampleCase,
     read_expected,
@@ -26,6 +28,7 @@ from uniparser2.cli.samples import (
 from uniparser2.core.export import compare_products
 
 ROOT = Path(__file__).resolve().parents[2]
+SAMPLES_ROOT = ROOT / "samples"
 CASE_ROOT = ROOT / "samples" / "local" / "demo"
 STORY_PATH = CASE_ROOT / "site.json"
 CASE = SampleCase(name="case-a", path=CASE_ROOT / "case-a")
@@ -72,3 +75,16 @@ def test_a_finite_product_round_trips(tmp_path: Path) -> None:
     case = SampleCase(name="c", path=tmp_path / "c")
     assert record_expected(case, {"ratio": 1.5, "tags": ["a"]}) is None
     assert read_expected(case) == ({"ratio": 1.5, "tags": ["a"]}, None)
+
+
+def test_every_committed_sample_chain_compiles() -> None:
+    """CI runs tests only, so the "every frozen chain compiles" promise lives here (05 §8)."""
+    pytest.importorskip("selectolax")
+    paths = sorted(SAMPLES_ROOT.glob("*/*/site.json"))
+    assert paths, "no sample chain under samples/"
+    for path in paths:
+        graph = load(path)
+        if isinstance(graph, Mapping) and "nodes" in graph:
+            compile_story(graph)
+        else:
+            compile_field(graph)

@@ -373,8 +373,9 @@ Each line below is a real run; the input is named in the note.
 | `uv run up2 test D K` | regress a stored chain over its samples; a story that fetches replays the **request cache** (`.cache/requests/`), and the CLI never reaches the network |
 
 `tools/demo_report.py` renders the same kind of catalogue as an HTML page for local browsing
-(`.cache/report/up2-report.html`): every declared pair, grouped by operator, with a real run per case,
-the multi-stage compositions and the compile-time invalid forms.
+(`.cache/report/up2-report.html`): a real run per covered `(operator, action)` pair, grouped by
+operator (the coverage check at the top names any pair still missing), the multi-stage compositions
+and the compile-time invalid forms.
 
 ## Fetching a page
 

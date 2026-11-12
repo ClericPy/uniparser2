@@ -32,13 +32,18 @@ _SELECTOR_OPS = frozenset({"css", "css1", "xpath"})
 
 
 def _load_report_tool() -> ModuleType:
-    """Import ``tools/demo_report.py`` by path (it lives outside the package on purpose)."""
-    spec = importlib.util.spec_from_file_location(
-        "demo_report_rendering", _ROOT / "tools" / "demo_report.py"
-    )
-    assert spec is not None and spec.loader is not None
+    """Import ``tools/demo_report.py`` by path, once per process.
+
+    The module name is shared with ``test_catalogue`` so both modules read the tool's cached case
+    run (``_collect``); loading it twice under different names duplicated that work.
+    """
+    existing = sys.modules.get("demo_report")
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location("demo_report", _ROOT / "tools" / "demo_report.py")
+    assert spec is not None and spec.loader is not None  # the file is in this repository
     module = importlib.util.module_from_spec(spec)
-    sys.modules["demo_report_rendering"] = module
+    sys.modules["demo_report"] = module
     spec.loader.exec_module(module)
     return module
 

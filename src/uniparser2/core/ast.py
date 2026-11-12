@@ -88,10 +88,12 @@ class CompiledStage:
     action: str
     params: dict[str, Param]
     payload: Any = None
+    json_pointer: str = ""
+    """The stage's absolute JSON Pointer inside the chain source (`/nodes/a/field/0`)."""
 
     @property
     def pointer(self) -> str:
-        return f"/{self.index}"
+        return self.json_pointer or f"/{self.index}"
 
 
 @dataclass(frozen=True, slots=True)

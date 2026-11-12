@@ -24,6 +24,7 @@ import inspect
 from collections.abc import Mapping
 from typing import Any, ClassVar, Final
 
+from ..core.ast import Lit
 from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 from ..core.udfs import UNREGISTERED_FIX, get_udf, udf_names
@@ -135,7 +136,7 @@ class Udf(Op):
 
 def _mode_of(raw: Any) -> str:
     """The call form from the raw slot-3 parameter."""
-    value = raw.value if hasattr(raw, "value") else raw
+    value = raw.value if isinstance(raw, Lit) else raw
     if value is _NO_ARGUMENT:
         return "dto"
     if value == "*":

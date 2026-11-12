@@ -274,6 +274,11 @@ def test_trial_refuses_chain_only_flags_for_a_story(tmp_path: Path) -> None:
     assert main(["lint", str(path), "--product", "n1"]) == EXIT_USAGE
 
 
+def test_trial_refuses_node_for_a_chain(tmp_path: Path) -> None:
+    path = write_chain(tmp_path, [["py", "strip"]], name="chain.json")
+    assert main(["trial", str(path), "--input", "text=x", "--node", "a"]) == EXIT_USAGE
+
+
 # ---------------------------------------------------------------- the trace (06 §5.1)
 
 

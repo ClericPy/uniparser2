@@ -79,6 +79,7 @@ def test_a_miss_is_reported_and_nothing_is_fetched(tmp_path: Path) -> None:
     """A request the cache does not hold is a miss: the runner never reaches the network."""
     result = run_graph(STORY, "https://example.com/page", cache=RequestCache(tmp_path))
     assert not result.ok
+    assert "UP2-E2020" in result.error
     assert "not in the request cache" in result.error
     assert "example.com/page" in result.error
 
@@ -95,6 +96,18 @@ def test_a_udf_other_than_fetch_still_needs_a_host(tmp_path: Path) -> None:
     result = run_graph(story, "x", cache=RequestCache(tmp_path))
     assert not result.ok
     assert "host function(s) store" in result.error
+
+
+def test_an_unused_host_node_does_not_block_the_run(tmp_path: Path) -> None:
+    """Only the first node's reachable subgraph is the runner's business."""
+    story = {
+        "nodes": {
+            "etl": [["py", "strip"]],
+            "store": [["udf", "store"]],
+        }
+    }
+    result = run_graph(story, " x ", cache=RequestCache(tmp_path))
+    assert result.ok and result.value == "x"
 
 
 # ---------------------------------------------------------------- the commands

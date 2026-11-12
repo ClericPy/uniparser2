@@ -8,9 +8,11 @@ and `run` is the synchronous facade.
 
 from __future__ import annotations
 
-import inspect
+import json
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -241,6 +243,13 @@ def test_an_indirect_cycle_is_a_cycle() -> None:
     diagnostic = _compile_error(_story({"a": [["node", "b"]], "b": [["node", "a"]]}))
     assert diagnostic.code == "UP2-E1017"
     assert "a -> b -> a" in diagnostic.message
+    assert diagnostic.pointer == "/nodes/b/0"
+
+
+def test_a_cycle_inside_a_field_map_points_at_the_stage() -> None:
+    diagnostic = _compile_error(_story({"a": [["node", "b"]], "b": {"x": [["node", "a"]]}}))
+    assert diagnostic.code == "UP2-E1017"
+    assert diagnostic.pointer == "/nodes/b/x/0"
 
 
 def test_a_cycle_through_an_each_subchain_is_a_cycle() -> None:
@@ -374,6 +383,13 @@ def test_a_missing_udf_is_reported_before_evaluation() -> None:
     assert "fetch" in diagnostic.message
 
 
+def test_only_the_reachable_nodes_udfs_are_required() -> None:
+    """A sibling node may fetch; running the ETL node must not require `fetch`."""
+    story = _story({"etl": [["py", "strip"]], "fetchy": [["udf", "fetch"]]})
+    assert run(story, "etl", " x ") == "x"
+    assert _run_error(story, "fetchy").code == "UP2-E1010"
+
+
 def test_a_udf_may_return_a_host_object_mid_chain() -> None:
     story = _story({"a": [["udf", "respond"], ["py", "getattr", "text"]]})
     assert run(story, "a", udfs={"respond": lambda value: _Response("body")}) == "body"
@@ -482,11 +498,6 @@ def test_a_udf_may_answer_none() -> None:
     assert run(story, "a", udfs={"f": lambda value: None}) is None
 
 
-def test_inspect_is_not_needed_by_the_run() -> None:
-    """A guard against accidentally treating the run as a generator."""
-    assert not inspect.isgenerator(run(_story({"a": []}), "a", "x"))
-
-
 # ---------------------------------------------------------------- the README example (offline)
 
 
@@ -561,3 +572,15 @@ def test_the_readme_example_runs_offline(monkeypatch: pytest.MonkeyPatch) -> Non
         "status": 200,
         "actions": "Actions",
     }
+
+
+def test_both_readmes_carry_the_tested_template() -> None:
+    """The README block is the template the case above runs; a drift fails here."""
+    root = Path(__file__).resolve().parents[2]
+    for name in ("README.md", "README.zh-CN.md"):
+        text = (root / name).read_text(encoding="utf-8")
+        blocks = re.findall(r"```jsonc\n(.*?)```", text, re.S)
+        story = next(
+            json.loads(block) for block in blocks if '"nodes"' in block and '"pinned"' in block
+        )
+        assert story == _README_STORY

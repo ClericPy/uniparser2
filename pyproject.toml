@@ -35,10 +35,6 @@ html = ["selectolax>=0.3.21"]
 xml = ["lxml>=5.0"]
 json = ["jmespath>=1.0.1"]
 md = ["html-to-markdown>=3.0"]
-# The in-place trial bench (`up2 studio`, design note 06) is not implemented yet, so this extra is
-# declared but unused, and -- like `code` -- deliberately kept out of `all`: installing everything
-# should not pull in a GUI toolkit that no code imports.
-ui = ["pywebview>=5.0"]
 # Sandboxed execution of in-chain code: **deliberately not part of all** -- installing everything
 # should not hand out code execution as a side effect.
 code = ["pydantic-monty>=1.0.0"]
@@ -71,6 +67,7 @@ packages = ["src/uniparser2"]
 include = [
   "/src",
   "/tests",
+  "/examples",
   "/.github",
   "/CHANGELOG.md",
   "/CONTRIBUTING.md",
@@ -102,6 +99,10 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 python_version = "3.12"
 strict = true
 files = ["src", "tests", "demo.py", "tools/demo_report.py"]
+# The sample hosts and the example hosts are standalone scripts with the same module name
+# (`host.py`) in several directories; they are exercised by the CLI/sample/example tests, not
+# type-checked as a package.
+exclude = ["^samples/", "^examples/"]
 warn_unreachable = true
 
 # Test files are not forced to annotate every fixture parameter (pytest's capsys/tmp_path do have

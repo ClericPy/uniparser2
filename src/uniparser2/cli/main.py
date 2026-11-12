@@ -365,6 +365,9 @@ def _cmd_trial(args: argparse.Namespace) -> int:
     trace = Trace() if args.trace else None
     if _is_story(source):
         return _trial_story(source, args, trace)
+    if args.node is not None:
+        print("--node belongs to a story file", file=sys.stderr)
+        return EXIT_USAGE
     names, products, error = _split_assignments(args.product, need_value=True)
     if error is not None:
         print(error, file=sys.stderr)

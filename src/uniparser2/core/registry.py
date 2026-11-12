@@ -260,7 +260,6 @@ INSTALL_HINTS: dict[str, str] = {
     "jmespath": 'uv add "uniparser2[json]"',
     "dateparser": 'uv add "uniparser2[time]"',
     "html_to_markdown": 'uv add "uniparser2[md]"',
-    "pywebview": 'uv add "uniparser2[ui]"',
     "pydantic_monty": 'uv add "uniparser2[code]"',
 }
 

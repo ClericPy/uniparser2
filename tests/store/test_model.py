@@ -34,12 +34,12 @@ def test_fingerprint_is_32_hex() -> None:
 def test_fingerprint_ignores_key_order_and_json_roundtrip() -> None:
     """The same graph fingerprints the same from a JSON file and from a dictionary (04 §3)."""
     bundle = {
-        "steps": [{"name": "a", "body": {"t": ["css1", "text", "h1"]}, "collect": True}],
-        "collect": "a",
+        "globals": {"b": 2, "a": 1},
+        "nodes": {"a": [["py", "strip"]]},
     }
     reordered = {
-        "collect": "a",
-        "steps": [{"body": {"t": ["css1", "text", "h1"]}, "name": "a", "collect": True}],
+        "nodes": {"a": [["py", "strip"]]},
+        "globals": {"a": 1, "b": 2},
     }
     loaded = json.loads(json.dumps(bundle, ensure_ascii=False))
     assert graph_hash(bundle) == graph_hash(reordered) == graph_hash(loaded)

@@ -211,6 +211,7 @@ def compile_stage(
         action=action,
         params=params,
         payload=payload,
+        json_pointer=pointer,
     )
 
 
@@ -254,6 +255,7 @@ def _compile_try_stage(stage: Stage, /, *, index: int, pointer: str) -> Compiled
         action=policy,
         params={},
         payload=policy,
+        json_pointer=pointer,
     )
 
 

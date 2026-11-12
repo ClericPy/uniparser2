@@ -67,7 +67,7 @@ def test_declared_pairs_cover_all_l1_ops() -> None:
     # The dict-key twin of `getitem` is gone: subscripting is one action (Python's `__getitem__`).
     assert ("py", "getitem") in pairs
     assert ("py", "get") not in pairs
-    # `py.id` is gone with the identity stages: a whole-chain reference spells identity (`03` §2).
+    # `py.id` is gone with the identity stages: `[]` spells identity (`03` §2.3).
     assert ("py", "id") not in pairs
     assert ("json", "get") in pairs
     # In-chain code has a single action ⇒ a 2-slot operator, so the action name never appears in a

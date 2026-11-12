@@ -203,7 +203,8 @@ def _run_story(graph: Any, value: Any, cache: RequestCache | None) -> GraphRun:
         story = compile_story(graph)
     except Up2Error as exc:
         return GraphRun(error=str(exc.diagnostic))
-    extra = sorted(story.udf_names - {"fetch"})
+    entry = next(iter(story.nodes))
+    extra = sorted(story.udf_names_for(entry) - {"fetch"})
     if extra:
         return GraphRun(
             error=(
@@ -240,7 +241,7 @@ class _CacheMissError(Up2Error):
     def __init__(self, message: str) -> None:
         super().__init__(
             diag(
-                "UP2-E2005",
+                "UP2-E2020",
                 message,
                 fix="run the sample's host once from the same directory to fill the cache",
             )

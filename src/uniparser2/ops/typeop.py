@@ -86,8 +86,8 @@ def _same_json(built: Any, product: Any) -> Any:
     A dataclass (or a model) answers an object, which cannot be a product; what it **approved** is
     the payload it was handed, and that is what the run carries on. The mapping is rebuilt from the
     dataclass's own fields, and the payload's nested structures are preserved, so the result is the
-    JSON the constructor validated. A dataclass that answers a field the payload does not carry is
-    not that payload: `pack` refuses the extra key at the same stage (`UP2-E2003`).
+    JSON the constructor validated. A dataclass field the payload does not carry is **not** added to
+    the product: the payload's own keys decide what continues.
     """
     if is_dataclass(built) and not isinstance(built, type):
         fields_of = {field.name: getattr(built, field.name) for field in fields(built)}

@@ -344,13 +344,24 @@ def _py_sleep(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
             reason=f"py.sleep needs a non-negative number of seconds, got {type_name(seconds)}",
             fix='write a number: ["py","sleep",2]',
         )
-    if seconds < 0:
+    try:
+        finite = math.isfinite(seconds)
+    except OverflowError:
+        finite = False
+    if not finite or seconds < 0:
         return Failed(
             code="UP2-E2002",
-            reason=f"py.sleep needs a non-negative number of seconds, got {seconds!r}",
+            reason=f"py.sleep needs a non-negative finite number of seconds, got {seconds!r}",
             fix='write a number: ["py","sleep",2]',
         )
-    time.sleep(seconds)
+    try:
+        time.sleep(seconds)
+    except (OverflowError, ValueError) as exc:
+        return Failed(
+            code="UP2-E2005",
+            reason=f"py.sleep could not wait {seconds!r}: {exc}",
+            fix="use a duration the platform's sleep accepts",
+        )
     return Ok(value)
 
 

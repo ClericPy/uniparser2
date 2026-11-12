@@ -254,6 +254,13 @@ def test_sleep_rejects_a_negative_or_non_numeric_value() -> None:
         assert info.value.diagnostic.code == "UP2-E1005"
 
 
+def test_sleep_rejects_non_finite_numbers() -> None:
+    """A reference can carry NaN/Infinity even though a literal cannot."""
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        outcome = run([["py", "sleep", "$obj"]], bad)
+        assert isinstance(outcome, Failed) and outcome.code == "UP2-E2002"
+
+
 def test_filter_rejects_a_non_boolean_keep() -> None:
     with pytest.raises(Up2Error) as info:
         compile_field([["py", "filter", "yes"]])

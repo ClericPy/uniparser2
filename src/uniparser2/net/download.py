@@ -83,7 +83,7 @@ def fetch(request: Mapping[str, Any]) -> Response:
         body = exc.read()
         return Response(
             text=_decode(body, exc.headers.get_content_charset() if exc.headers else None),
-            url=exc.geturl() if hasattr(exc, "geturl") else target,
+            url=getattr(exc, "url", None) or target,
             status_code=int(exc.code),
             headers=dict(exc.headers.items()) if exc.headers else {},
         )

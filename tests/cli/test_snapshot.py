@@ -181,7 +181,7 @@ def test_snapshot_refuses_a_case_name_that_is_a_path(tmp_path: Path, capsys) -> 
     assert not (tmp_path / "escape").exists()
 
 
-def test_snapshot_refuses_a_story_that_requests(tmp_path: Path, capsys) -> None:
+def test_snapshot_refuses_a_story_that_fetches(tmp_path: Path, capsys) -> None:
     """A request the cache does not hold is a miss: the runner never reaches the network."""
     samples = tmp_path / "samples"
     make_case(samples, expected=None)

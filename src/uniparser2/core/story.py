@@ -66,6 +66,10 @@ class CompiledStory:
     udf_names: frozenset[str]
     source: Any
 
+    def udf_names_for(self, node: str) -> frozenset[str]:
+        """The udf names reachable from ``node``; a run needs only these."""
+        return frozenset(_reachable_udfs(self, node))
+
 
 def compile_story(
     bundle: Any,
@@ -143,14 +147,15 @@ def run(
     """Compile the story, run one node synchronously, and return its product.
 
     ``node`` defaults to the first node in the document. ``globals`` merges over the story's
-    constants for this run; ``udfs`` merges over the process-wide udf table. A udf name the story
-    uses but the effective table lacks is ``UP2-E1010``, raised before evaluation. The product
-    passes through ``pack``; a non-JSON exit is ``UP2-E2003`` at the entry node.
+    constants for this run; ``udfs`` merges over the process-wide udf table. A udf name the chosen
+    node uses (directly or through a node call) but the effective table lacks is ``UP2-E1010``,
+    raised before evaluation. The product passes through ``pack``; a non-JSON exit is
+    ``UP2-E2003`` at the entry node.
     """
     merged_udfs = {**all_udfs(), **(udfs or {})}
     story = compile_story(bundle, udfs=merged_udfs)
     entry = _entry_name(story, node)
-    missing = sorted(story.udf_names - merged_udfs.keys())
+    missing = sorted(story.udf_names_for(entry) - merged_udfs.keys())
     if missing:
         raise Up2Error(
             diag(
@@ -321,6 +326,22 @@ def _used_udfs(nodes: Iterable[CompiledNode]) -> set[str]:
     return found
 
 
+def _reachable_udfs(story: CompiledStory, entry: str) -> set[str]:
+    """The udf names reachable from ``entry``; a run does not require a sibling node's udfs."""
+    seen: set[str] = set()
+    stack = [entry]
+    found: set[str] = set()
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        node = story.nodes[name]
+        found.update(_used_udfs([node]))
+        stack.extend(target for target, _stage in _node_edges(node.body))
+    return found
+
+
 def _stages_of(body: CompiledField | Mapping[str, CompiledField]) -> Iterable[CompiledStage]:
     if isinstance(body, Mapping):
         for chain in body.values():
@@ -396,13 +417,18 @@ def _walk(
 
 def _cycle(closed: list[str], story: CompiledStory) -> Up2Error:
     travel = " -> ".join(closed)
-    node = story.nodes[closed[0]]
+    source = story.nodes[closed[-2]] if len(closed) > 1 else story.nodes[closed[0]]
+    pointer = source.pointer
+    for target, stage in _node_edges(source.body):
+        if target == closed[0]:
+            pointer = stage.pointer
+            break
     return Up2Error(
         diag(
             "UP2-E1017",
             f"the node calls close a cycle: {travel}",
             fix="break the cycle by inlining one node, or by running two calls from the host",
-            pointer=node.pointer,
+            pointer=pointer,
         )
     )
 

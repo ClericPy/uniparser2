@@ -50,6 +50,7 @@ CODES: Final[dict[str, str]] = {
     "UP2-E2017": "sandbox code raised an exception (syntax or unsupported constructs)",
     "UP2-E2018": "py.getitem found no such key or index",
     "UP2-E2019": "a registered type constructor rejected the value",
+    "UP2-E2020": "the snapshot runner's request cache has no answer",
     "UP2-E2099": "operator raised an unexpected exception",
     # ---- storage (UP2-E3xxx) ----
     "UP2-E3001": "the stored graph does not match the expected fingerprint",

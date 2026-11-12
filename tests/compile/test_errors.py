@@ -145,11 +145,11 @@ def test_e1013_nested_quantifier() -> None:
     assert compile_error([["re", "search", "(a+)+"]]) == "UP2-E1013"
 
 
-def test_e1014_cross_node_local_reference() -> None:
+def test_e1014_cross_product_local_reference() -> None:
     assert compile_error([["py", "urljoin", "$n1._local"]], products=("n1",)) == "UP2-E1014"
 
 
-def test_e1014_same_node_local_reference_is_fine() -> None:
+def test_e1014_same_scope_local_reference_is_fine() -> None:
     compiled = compile_field([["ctx", "get", "locals._x"]])
     assert compiled.stages[0].action == "get"
 

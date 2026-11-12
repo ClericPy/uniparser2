@@ -1,5 +1,10 @@
 # uniparser2
 
+[![PyPI](https://img.shields.io/pypi/v/uniparser2.svg)](https://pypi.org/project/uniparser2/)
+[![Python](https://img.shields.io/pypi/pyversions/uniparser2.svg)](https://pypi.org/project/uniparser2/)
+[![CI](https://github.com/ClericPy/uniparser2/actions/workflows/ci.yml/badge.svg)](https://github.com/ClericPy/uniparser2/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Turn text into structured data with JSON rules.** A declarative, self-describing parsing DSL:
 deterministic, side-effect-free, and readable by humans and LLMs.
 

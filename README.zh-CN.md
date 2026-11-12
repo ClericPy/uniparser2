@@ -1,5 +1,10 @@
 # uniparser2
 
+[![PyPI](https://img.shields.io/pypi/v/uniparser2.svg)](https://pypi.org/project/uniparser2/)
+[![Python](https://img.shields.io/pypi/pyversions/uniparser2.svg)](https://pypi.org/project/uniparser2/)
+[![CI](https://github.com/ClericPy/uniparser2/actions/workflows/ci.yml/badge.svg)](https://github.com/ClericPy/uniparser2/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 **用 JSON 规则把文本变成结构化数据。** 一个声明式、**自描述**的解析 DSL：确定性、无副作用，

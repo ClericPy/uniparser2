@@ -506,6 +506,8 @@ _README_STORY: dict[str, Any] = {
     "nodes": {
         "pinned": [
             ["node", "list"],
+            ["each", [["udf", "claim"]]],
+            ["py", "filter"],
             ["py", "first"],
             ["node", "detail"],
         ],
@@ -538,9 +540,11 @@ _README_STORY: dict[str, Any] = {
 
 
 class _PinnedPage:
+    # The same pinned URL twice: the README's `claim` must drop the second one before `first`.
     text = (
         '<div class="js-pinned-items-reorder-container"><ol>'
         '<li><a href="/ClericPy/awesome">one</a></li>'
+        '<li><a href="/ClericPy/awesome">again</a></li>'
         "</ol></div>"
     )
     url = "https://github.com/ClericPy"
@@ -554,24 +558,54 @@ class _DetailPage:
 
 
 def test_the_readme_example_runs_offline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The README's GitHub template: list -> first -> detail -> fetch -> sleep -> parse."""
+    """The README's GitHub template: list → claim/filter → first → detail → fetch → parse."""
+    seen: set[str] = set()
 
     def fetch(request: Any) -> Any:
         key = request["url"]
         return _PinnedPage() if key == "https://github.com/ClericPy" else _DetailPage()
+
+    def claim(item: Any) -> Any:
+        """The toy external store: first sighting wins, a repeat answers ``None``."""
+        if item["url"] in seen:
+            return None
+        seen.add(item["url"])
+        return item
 
     monkeypatch.setattr("uniparser2.ops.pyops.time.sleep", lambda seconds: None)
     product = run(
         _README_STORY,
         "pinned",
         "https://github.com/ClericPy",
-        udfs={"fetch": fetch},
+        udfs={"fetch": fetch, "claim": claim},
     )
     assert product == {
         "url": "https://github.com/ClericPy/awesome",
         "status": 200,
         "actions": "Actions",
     }
+
+
+def test_a_claim_udf_and_filter_skip_seen_items() -> None:
+    """The dedupe pattern: ``each claim`` maps a repeat to ``None``, ``py.filter`` drops it."""
+    story = _story(
+        {
+            "items": [
+                ["py", "const", [{"url": "a"}, {"url": "b"}, {"url": "a"}]],
+                ["each", [["udf", "claim"]]],
+                ["py", "filter"],
+            ]
+        }
+    )
+    seen: set[str] = set()
+
+    def claim(item: Any) -> Any:
+        if item["url"] in seen:
+            return None
+        seen.add(item["url"])
+        return item
+
+    assert run(story, "items", udfs={"claim": claim}) == [{"url": "a"}, {"url": "b"}]
 
 
 def test_both_readmes_carry_the_tested_template() -> None:

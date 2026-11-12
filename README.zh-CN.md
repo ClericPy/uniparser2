@@ -132,6 +132,8 @@ product = up2.run(
   "nodes": {
     "pinned": [
       ["node", "list"],
+      ["each", [["udf", "claim"]]],
+      ["py", "filter"],
       ["py", "first"],
       ["node", "detail"]
     ],
@@ -169,6 +171,7 @@ import uniparser2 as up2
 from uniparser2.net import RequestCache, fetch
 
 cache = RequestCache()
+seen: set[str] = set()
 
 
 def cached_fetch(request):
@@ -180,19 +183,35 @@ def cached_fetch(request):
     return response
 
 
+def claim(item):
+    # 假装这是外部查重存储：真实实现去查 DB/Redis。
+    # 这个玩具第一次见到返回自身，重复时返回 None；py.filter 会把 None 丢掉。
+    if item["url"] in seen:
+        return None
+    seen.add(item["url"])
+    return item
+
+
 product = up2.run(
     story,
     "pinned",
     "https://github.com/ClericPy",
-    udfs={"fetch": cached_fetch},
+    udfs={"fetch": cached_fetch, "claim": claim},
 )
 # {"url": "https://github.com/ClericPy/awesome", "status": 200, "actions": "Actions"}
 ```
 
-要逐项抓取，把 `["py", "first"]` 换成对 detail 节点的 `each`，并把暂停放在它后面：
+这个例子的离线 fixture 里同一个 pinned URL 出现了两次：`claim` 第一次返回该项，第二次返回
+`None`，`py.filter` 在 `first` / `detail` 之前把 `None` 过滤掉。真实查重是一个 `udf` 去查外部存储——
+这是这个模式里唯一的 IO，链本身保持纯。玩具用 set 而不是随机，保证文档里的 product 可复现。
+
+要逐项抓取，保留 claim/filter 再换 `["py", "first"]`，把暂停放在 detail 的 `each` 后面：
 
 ```jsonc
-"pinned": [["node", "list"], ["each", [["node", "detail"], ["py", "sleep", 2]]]]
+"pinned": [
+  ["node", "list"], ["each", [["udf", "claim"]]], ["py", "filter"],
+  ["each", [["node", "detail"], ["py", "sleep", 2]]]
+]
 ```
 
 选择器是站点特定的；`fetch` 不是内置算子，它是宿主下载器的约定名字。
@@ -288,7 +307,7 @@ uv sync
 uv run ruff format --check
 uv run ruff check
 uv run mypy
-uv run pytest --cov=uniparser2.core --cov-fail-under=95
+uv run pytest --cov=uniparser2.core --cov-fail-under=95   # 本地并行加 `-n 4`
 uv run up2 conformance --check
 ```
 

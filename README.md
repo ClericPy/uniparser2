@@ -136,6 +136,8 @@ item, fetch its detail page, and read the status code plus an `[class*="Actions"
   "nodes": {
     "pinned": [
       ["node", "list"],
+      ["each", [["udf", "claim"]]],
+      ["py", "filter"],
       ["py", "first"],
       ["node", "detail"]
     ],
@@ -173,6 +175,7 @@ import uniparser2 as up2
 from uniparser2.net import RequestCache, fetch
 
 cache = RequestCache()
+seen: set[str] = set()
 
 
 def cached_fetch(request):
@@ -184,20 +187,37 @@ def cached_fetch(request):
     return response
 
 
+def claim(item):
+    # Pretend this is the external dedupe store: a real one asks the DB/Redis.
+    # The toy answers the item on first sight, None on a repeat; `py.filter` drops the None.
+    if item["url"] in seen:
+        return None
+    seen.add(item["url"])
+    return item
+
+
 product = up2.run(
     story,
     "pinned",
     "https://github.com/ClericPy",
-    udfs={"fetch": cached_fetch},
+    udfs={"fetch": cached_fetch, "claim": claim},
 )
 # {"url": "https://github.com/ClericPy/awesome", "status": 200, "actions": "Actions"}
 ```
 
-To fetch every pinned item, replace `["py", "first"]` with an `each` over the detail node and put the
-pause after it:
+The offline fixture for this example carries the same pinned URL twice: `claim` answers the first
+one and `None` for the second, and `py.filter` removes the `None` before `first`/`detail` run. A real
+dedupe is a `udf` over the external store — that is the only IO in this pattern; the chain stays
+pure. The toy uses a set rather than a coin flip so the documented product stays reproducible.
+
+To fetch every pinned item, keep the claim/filter before the fan-out and replace `["py", "first"]`
+with an `each` over the detail node, pausing after it:
 
 ```jsonc
-"pinned": [["node", "list"], ["each", [["node", "detail"], ["py", "sleep", 2]]]]
+"pinned": [
+  ["node", "list"], ["each", [["udf", "claim"]]], ["py", "filter"],
+  ["each", [["node", "detail"], ["py", "sleep", 2]]]
+]
 ```
 
 The selectors are site-specific; `fetch` is not built in — it is the conventional name for the host's
@@ -299,7 +319,7 @@ uv sync
 uv run ruff format --check
 uv run ruff check
 uv run mypy
-uv run pytest --cov=uniparser2.core --cov-fail-under=95
+uv run pytest --cov=uniparser2.core --cov-fail-under=95   # `-n 4` for a parallel local run
 uv run up2 conformance --check
 ```
 
@@ -314,7 +334,8 @@ summary — the registry (`up2 ops --json`) is the authority.
 
 - [`docs/README.md`](docs/README.md) — the design notes (`00`–`07`) and reference pages.
 - [`docs/operator-reference.md`](docs/operator-reference.md) — every action and its worked example.
-- [`docs/report/up2-report.md`](docs/report/up2-report.md) — one case per declared pair, generated.
+- [`docs/report/up2-report.md`](docs/report/up2-report.md) — one case per covered pair, generated
+  (the coverage check at the top names any pair still missing).
 
 ## License
 

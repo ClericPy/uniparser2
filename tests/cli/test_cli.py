@@ -413,6 +413,18 @@ def test_publish_refuses_a_bad_chain(tmp_path: Path, monkeypatch, capsys) -> Non
     assert main(["get", DOMAIN, KEY]) == EXIT_FAILED
 
 
+def test_a_corrupt_store_file_is_a_diagnostic_not_a_traceback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A bad row is data read at the boundary: it gets the coded error, not an exception."""
+    home = store_home(monkeypatch, tmp_path)
+    path = home / "chains" / DOMAIN / f"{KEY}.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json", encoding="utf-8")
+    assert main(["audit", DOMAIN, KEY, "--json"]) == EXIT_FAILED
+    assert json.loads(capsys.readouterr().out)["code"] == "UP2-E1004"
+
+
 def test_publish_skip_tests_without_a_note_is_refused(tmp_path: Path, monkeypatch, capsys) -> None:
     store_home(monkeypatch, tmp_path)
     assert publish(tmp_path, CHAIN, "--skip-tests", "--json") == EXIT_FAILED

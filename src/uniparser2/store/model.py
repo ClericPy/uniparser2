@@ -24,7 +24,8 @@ type Source = Literal["human", "agent", "import"]
 """Who wrote it: ``human`` / ``agent`` / ``import`` (`04` §2, `D-04-2`)."""
 
 type Graph = dict[str, JsonValue] | list[JsonValue]
-"""The chain data of `03` §2: a story bundle (a JSON object with ``steps``) or a field chain."""
+"""The chain data of `03` §2: a story bundle (a JSON object with ``globals`` / ``nodes``) or a
+field chain."""
 
 
 @dataclass(frozen=True, slots=True)

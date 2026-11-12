@@ -7,7 +7,7 @@ snapshot travels with the code through CI)::
     <samples-root>/<root_domain>/<tpl_key>/<case>/expected.json  # the recorded product
 
 The runner **walks every case of one key**, runs it through the executor the chain shape selects
-(the story executor for a bundle carrying ``steps``, the field evaluator for a field chain), and
+(the story executor for a bundle carrying ``nodes``, the field evaluator for a field chain), and
 compares the product with the recorded one **structurally**. A difference is a JSON Pointer
 difference (`core.export.compare_products`), never a text diff, so a failure says which value under
 which path changed.

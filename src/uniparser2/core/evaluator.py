@@ -15,11 +15,12 @@ import logging
 from collections.abc import Mapping
 from typing import Any, Final
 
-from . import registry
+from . import limits, registry
 from .ast import TRY_OPERATOR, CompiledField, CompiledStage, Lit, Param, Ref
 from .errors import Failed, Ok, Outcome, Up2Error
 from .refs import OBJ_ROOT, Scope
 from .trace import Trace, elapsed_ms, stamp
+from .values import text_too_large
 
 logger = logging.getLogger("uniparser2")
 
@@ -45,6 +46,8 @@ def eval_field(
 
     The empty chain (``[]``) is the identity: the outcome is the value it received, with no event.
     """
+    if text_too_large(value):
+        return _text_limit_failure()
     active_scope = scope if scope is not None else Scope()
     run_chain = _subchain_runner(trace, node_runner)
     current: Outcome = Ok(value)
@@ -97,6 +100,8 @@ def eval_field_map(
     declaration order. The first failure stops the map and is returned as it is. ``run_chain`` is
     the caller's chain runner, so a story field map keeps its trace and node runner.
     """
+    if text_too_large(value):
+        return _text_limit_failure()
     row: dict[str, Any] = {}
     for name, chain in fields.items():
         outcome = run_chain(chain, value, scope)
@@ -106,6 +111,15 @@ def eval_field_map(
         if not name.startswith(LOCAL_PREFIX):
             row[name] = outcome.value
     return Ok(row)
+
+
+def _text_limit_failure() -> Failed:
+    """``UP2-E2013``: the input text is over ``MAX_TEXT_BYTES`` (01 §9)."""
+    return Failed(
+        code="UP2-E2013",
+        reason=f"the input text is over MAX_TEXT_BYTES={limits.MAX_TEXT_BYTES} bytes",
+        fix="truncate it in the outer layer first, or switch to a streaming upstream",
+    )
 
 
 def _subchain_runner(

@@ -467,7 +467,7 @@ _CONVERSION_EXPECTS: Final[Mapping[str, str]] = {
 def _convert(value: Any, who: str, converter: Callable[[Any], Any]) -> Outcome:
     try:
         return Ok(converter(value))
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         return Failed(
             code="UP2-E2005",
             reason=f"py.{who} conversion failed: {exc}",
@@ -513,7 +513,11 @@ def _to_bool(value: Any) -> bool:
 
 def _to_json(value: Any) -> Any:
     if isinstance(value, str):
-        return json.loads(value)
+        try:
+            return loads_json(value)
+        except Up2Error as exc:
+            # The strict reader's diagnostic carries the reason; `_convert` turns it into E2005.
+            raise ValueError(exc.diagnostic.message) from exc
     if is_json_value(value):
         return value
     raise TypeError(f"{type_name(value)} is not a JSON value")
@@ -657,7 +661,14 @@ def _tz_hours(params: Mapping[str, Any]) -> float | Failed:
             reason=f"tz must be a number of hours, got {type_name(raw)}",
             fix="write the fixed offset in hours: 8, -5, 5.5",
         )
-    return float(raw)
+    hours = float(raw)
+    if not math.isfinite(hours):
+        return Failed(
+            code="UP2-E2002",
+            reason=f"tz must be a finite number of hours, got {raw!r}",
+            fix="write the fixed offset in hours: 8, -5, 5.5",
+        )
+    return hours
 
 
 _STRFTIME_ALLOWED: Final = frozenset("YymdHMISfjUWwuz")
@@ -1402,6 +1413,10 @@ def call_positional(name: str, args: Sequence[Any], scope: Scope) -> Outcome:
     processed and the rest are bound in the order of that function's parameter table. Too few or
     too many arguments, or a nonexistent function, all return ``Failed`` — the sandbox side turns
     it into an exception that the snippet can catch with ``try/except``.
+
+    ``const`` is the exception to "the first argument is the value": it ignores the upstream value
+    in a chain and answers its own parameter, so ``const(42)`` answers ``42`` and takes exactly one
+    argument.
     """
     entry = _ENTRIES.get(name)
     if entry is None:
@@ -1410,6 +1425,14 @@ def call_positional(name: str, args: Sequence[Any], scope: Scope) -> Outcome:
             reason=f"the py allowlist has no function {name!r}",
             fix="use a function from the allowlist (run up2 ops --json for the full table)",
         )
+    if name == "const":
+        if len(args) != 1:
+            return Failed(
+                code="UP2-E2002",
+                reason=f"py.const takes exactly 1 argument (the literal), got {len(args)}",
+                fix="call const(value) once",
+            )
+        return Ok(args[0])
     if not args:
         return Failed(
             code="UP2-E2002",

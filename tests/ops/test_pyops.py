@@ -6,17 +6,10 @@ Design points:
 - ``test_cover_declarations_match_cases`` pins the two together, so "declared as covered but never
   tested" cannot happen.
 
-Two families used to be operators of their own and are now folded into this table (D-02-14 of
-``02``):
-
-- ``parse_time`` (the former ``time`` operator): the cases were moved over from the deleted
-  ``tests/ops/test_timeparse.py``, including the three dateparser stand-in branches (missing
-  dependency ``E2008`` / returns ``None`` / raises);
-- ``str`` / ``int`` / ``float`` / ``bool`` / ``list`` / ``from_json`` (the former ``cast``
-  operator): the cases were moved over from the ``cast`` assertions in ``tests/ops/test_basic.py``.
-
-A stage always writes all 3 slots: ``["py", function, params]``, and a zero-parameter action writes
-``""`` in slot 3 (the arity is exact).
+A parameter-less action omits slot 3 entirely (``["py","strip"]``; design D2 of
+`simplify-dsl-syntax`); an action with parameters writes them in slot 3, as one positional array
+when there are two or more. The old ``time`` / ``cast`` operators were folded into this table
+(D-02-14 of ``02``).
 """
 
 from __future__ import annotations
@@ -628,12 +621,45 @@ def test_py_int_is_strict() -> None:
     assert outcome.reason.startswith("py.int conversion failed: ")
 
 
+def test_py_int_of_infinity_is_a_conversion_failure_not_an_operator_defect() -> None:
+    """A non-finite value can arrive through a reference; it is data, not a broken operator."""
+    outcome = run([["py", "int"]], float("inf"))
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2005"
+    assert "infinity" in outcome.reason
+
+
 def test_py_float_parses_text() -> None:
     assert run([["py", "float"]], "1.5") == Ok(1.5)
 
 
 def test_py_from_json_parses_any_json_text() -> None:
     assert run([["py", "from_json"]], '{"a":1}') == Ok({"a": 1})
+
+
+def test_py_from_json_is_strict_about_non_json_constants() -> None:
+    """`NaN` / `Infinity` are not JSON, so the boundary refuses them instead of leaking a float."""
+    for text in ("NaN", "Infinity", "-Infinity", '{"a": NaN}'):
+        outcome = run([["py", "from_json"]], text)
+        assert isinstance(outcome, Failed), text
+        assert outcome.code == "UP2-E2005", text
+
+
+def test_a_non_finite_timezone_is_a_type_failure() -> None:
+    chain = [["py", "strptime", "%Y-%m-%d"], ["py", "to_timestamp", "$locals.tz"]]
+    scope = Scope(locals={"tz": float("nan")})
+    outcome = eval_field(compile_field(chain), "2026-01-01", scope=scope)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2002"
+    assert "finite" in outcome.reason
+
+
+def test_call_positional_const_answers_its_one_argument() -> None:
+    """The sandbox mount uses the positional form; `const` is the one function without a value."""
+    assert pyops.call_positional("const", [42], Scope()) == Ok(42)
+    too_many = pyops.call_positional("const", [1, 2], Scope())
+    assert isinstance(too_many, Failed)
+    assert too_many.code == "UP2-E2002"
 
 
 def test_py_from_json_failure_is_failed_not_exception() -> None:

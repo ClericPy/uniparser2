@@ -55,7 +55,9 @@ def test_repair_writes_the_missing_audit_row(store: FileStore | SqliteStore) -> 
     assert row.new_hash == graph_hash(GRAPH) == published.new_hash
     assert row.source == "human"
     assert store.inconsistencies() == []
-    assert [item.new_hash for item in store.audit(published.chain_id)] == [row.new_hash]
+    written = store.audit(published.chain_id)
+    assert [item.new_hash for item in written] == [row.new_hash]
+    assert written[0].at == row.at
 
 
 def test_repair_is_a_no_op_for_an_unknown_chain(store: FileStore | SqliteStore) -> None:

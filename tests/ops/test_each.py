@@ -293,3 +293,9 @@ def test_a_failure_in_the_chain_mode_stops_the_iteration() -> None:
 
 def test_an_empty_chain_is_identity_per_element() -> None:
     assert run([["each", []]], ["a", "b"]) == Ok(["a", "b"])
+
+
+@pytest.mark.covers("each", "each")
+def test_a_dollar_prefixed_field_name_is_a_field_map_not_a_directive() -> None:
+    """``each``'s parameter is a structure, not a value: an object there is the map itself."""
+    assert run([["each", {"$lit": [["py", "strip"]]}]], [" a "]) == Ok([{"$lit": "a"}])

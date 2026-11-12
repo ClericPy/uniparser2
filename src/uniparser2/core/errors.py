@@ -44,6 +44,7 @@ CODES: Final[dict[str, str]] = {
     "UP2-E2005": "value conversion failed",
     "UP2-E2009": "an operator returned a value that cannot be a product",
     "UP2-E2012": "the iteration count of `each` exceeds MAX_EACH_ITER",
+    "UP2-E2013": "the input text exceeds MAX_TEXT_BYTES",
     # UP2-E2015 ("value is missing and the effective policy is raise") is retired with the
     # settlement policy: a missing value is not an error any more. The number is not reused.
     "UP2-E2016": "sandbox execution over limits (feed time / memory / host round-trip budget)",
@@ -54,7 +55,10 @@ CODES: Final[dict[str, str]] = {
     "UP2-E2099": "operator raised an unexpected exception",
     # ---- storage (UP2-E3xxx) ----
     "UP2-E3001": "the stored graph does not match the expected fingerprint",
-    "UP2-E3002": "the `tpl_key` character set is illegal, or `root_domain` is empty",
+    "UP2-E3002": (
+        "the `tpl_key` character set is illegal, or `root_domain` is empty or not one "
+        "path component"
+    ),
     "UP2-E3003": "chain and audit are inconsistent",
     "UP2-E3004": "the template store write failed",
     "UP2-E3005": "the publish gate did not pass",

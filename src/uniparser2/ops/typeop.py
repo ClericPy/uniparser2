@@ -9,7 +9,7 @@ JSON and the single exit (`pack`) stays comparable.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
+from dataclasses import is_dataclass
 from typing import Any, ClassVar, Final
 
 from ..core.ast import Lit, Param
@@ -81,16 +81,14 @@ class TypeCheck(Op):
 
 
 def _same_json(built: Any, product: Any) -> Any:
-    """The JSON a validating container approved, rebuilt from its own output (`03` §3.3).
+    """The JSON a validating dataclass approved: the payload it was handed (`03` §3.3).
 
     A dataclass (or a model) answers an object, which cannot be a product; what it **approved** is
-    the payload it was handed, and that is what the run carries on. The mapping is rebuilt from the
-    dataclass's own fields, and the payload's nested structures are preserved, so the result is the
-    JSON the constructor validated. A dataclass field the payload does not carry is **not** added to
-    the product: the payload's own keys decide what continues.
+    the payload, so that is what the run carries on -- whatever its shape (an object, a list, a
+    scalar). Returning the payload is also what keeps a field the payload does not carry out of the
+    product: the payload's own shape decides what continues. A non-dataclass answer that is not JSON
+    (a set, an arbitrary object) still fails ``pack`` with ``UP2-E2003``.
     """
     if is_dataclass(built) and not isinstance(built, type):
-        fields_of = {field.name: getattr(built, field.name) for field in fields(built)}
-        items = product.items() if isinstance(product, Mapping) else ()
-        return {key: _same_json(fields_of[key], source) for key, source in items}
+        return product
     return built

@@ -110,6 +110,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_USAGE
     try:
         return int(handler(args))
+    except Up2Error as exc:
+        # The store and the runner read data that can be corrupt; a bad row is a coded diagnostic
+        # like any other, never a traceback. Handlers report most errors themselves; this is the
+        # backstop for the paths that read first and validate later.
+        _print_diagnostic(exc.diagnostic, as_json=bool(getattr(args, "json", False)))
+        return EXIT_FAILED
     except ValueError as exc:
         print(f"usage error: {exc}", file=sys.stderr)
         return EXIT_USAGE

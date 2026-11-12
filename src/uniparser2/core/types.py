@@ -106,14 +106,16 @@ def build_type(name: str, product: Any) -> Any:
     A dictionary product becomes ``Cls(**payload)`` and a list ``Cls(*items)``; anything else is
     handed to the constructor as it is, which is how a scalar-shaped type is validated. The caller
     checks that the result is still JSON: a constructor is a validator, not a container for objects.
+
+    A built-in scalar name is a constructor too (``int("2026")``), so **every** refusal -- a host
+    constructor raising and a built-in conversion failing alike -- is ``TypeConstructionError``
+    (``UP2-E2019``); an unrepresentable value must not surface as an operator defect.
     """
     constructor = _TYPES.get(name)
-    if constructor is None:
-        if name not in BUILTIN_TYPES:
-            raise UnknownTypeError(name)
-        return _builtin(name, product)
+    if constructor is None and name not in BUILTIN_TYPES:
+        raise UnknownTypeError(name)
     try:
-        return _call(constructor, product)
+        return _builtin(name, product) if constructor is None else _call(constructor, product)
     except Exception as exc:  # any constructor failure is a coded failure of that step
         raise TypeConstructionError(name, f"{exc.__class__.__name__}: {exc}") from exc
 

@@ -25,6 +25,7 @@ from typing import Any, ClassVar, Final
 
 from ..core.ast import Lit, Param
 from ..core.errors import Ok, Outcome, Up2Error, diag
+from ..core.refs import parse_path_text
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
 
 _GET: Final = "get"
@@ -32,7 +33,7 @@ _SET: Final = "set"
 _DEL: Final = "del"
 _DICT: Final = "dict"
 _LIST: Final = "list"
-_WRITABLE_PREFIXES: Final = ("locals", "public")
+_WRITABLE_ROOTS: Final = ("locals", "public")
 _READABLE_ROOTS: Final = ("globals", "locals", "public", "obj")
 
 
@@ -65,21 +66,34 @@ class Ctx(Op):
 
     def precompile(self, action: str, params: Mapping[str, Param], *, pointer: str = "") -> Any:
         if action in (_SET, _DEL):
-            path = _literal_text(params, "path")
-            if not path.startswith(_WRITABLE_PREFIXES):
+            path = _literal_text(params, "path", pointer=f"{pointer}/path")
+            # Parse now, not at run time: an empty segment (``locals..x``) is a bad chain, and it
+            # must be reported at compile time like every other bad path (N3).
+            ref = parse_path_text(path, pointer=f"{pointer}/path")
+            if ref.root not in _WRITABLE_ROOTS:
                 raise Up2Error(
                     diag(
                         "UP2-E1015",
                         f"ctx.{action} cannot write {path!r}",
                         fix=_write_fix(path),
                         pointer=f"{pointer}/path",
-                        allowed=_WRITABLE_PREFIXES,
+                        allowed=_WRITABLE_ROOTS,
+                    )
+                )
+            if not ref.path:
+                raise Up2Error(
+                    diag(
+                        "UP2-E1005",
+                        f"ctx.{action} needs a key below {ref.root!r}",
+                        fix=f'write "locals._tmp" / "public.note", not "{path}"',
+                        pointer=f"{pointer}/path",
                     )
                 )
             return path
         if action == _GET:
-            path = _literal_text(params, "path")
+            path = _literal_text(params, "path", pointer=f"{pointer}/path")
             _check_readable(path, action=action, pointer=f"{pointer}/path")
+            parse_path_text(path, pointer=f"{pointer}/path")
             return path
         raw = _unwrap(params["refs"])
         paths = _collect_paths(raw, action=action, pointer=f"{pointer}/refs")
@@ -87,6 +101,7 @@ class Ctx(Op):
         # the two forms must be handled separately.
         for path in paths.values() if isinstance(paths, dict) else paths:
             _check_readable(path, action=action, pointer=f"{pointer}/refs")
+            parse_path_text(path, pointer=f"{pointer}/refs")
         return paths
 
     def evaluate(self, call: Call) -> Outcome:
@@ -215,7 +230,7 @@ def _unwrap(node: Param) -> Any:
     return node.value if isinstance(node, Lit) else node
 
 
-def _literal_text(params: Mapping[str, Param], name: str) -> str:
+def _literal_text(params: Mapping[str, Param], name: str, *, pointer: str = "") -> str:
     value = params[name]
     text = value.value if isinstance(value, Lit) else value
     if not isinstance(text, str) or not text:
@@ -224,7 +239,7 @@ def _literal_text(params: Mapping[str, Param], name: str) -> str:
                 "UP2-E1005",
                 f"parameter {name!r} must be a non-empty string path",
                 fix='write "locals._tmp"',
-                pointer=f"/2/{name}",
+                pointer=pointer or f"/2/{name}",
             )
         )
     return text

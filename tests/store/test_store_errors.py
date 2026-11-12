@@ -99,6 +99,25 @@ def test_a_legal_key_is_accepted(store: FileStore | SqliteStore) -> None:
     assert store.get(DOMAIN, "政府文件列表-v2.1_x") is not None
 
 
+@pytest.mark.parametrize("root_domain", [".", "..", "../escape", "a/b", "a\\b"])
+def test_a_domain_that_is_not_one_path_component_is_refused(
+    store: FileStore | SqliteStore, root_domain: str
+) -> None:
+    """``UP2-E3002``: the file store uses the domain as a directory name, so a separator escapes."""
+    with pytest.raises(Up2Error) as caught:
+        store.publish(GRAPH, root_domain=root_domain, tpl_key=KEY, actor="me", source="agent")
+    assert caught.value.diagnostic.code == "UP2-E3002"
+    assert store.list() == []
+
+
+def test_a_read_path_checks_the_identity_too(tmp_path: Path) -> None:
+    """A traversal domain must not read outside the store root on ``get`` / ``audit``."""
+    store = FileStore(tmp_path / "home")
+    with pytest.raises(Up2Error) as caught:
+        store.get("../escape", KEY)
+    assert caught.value.diagnostic.code == "UP2-E3002"
+
+
 def test_a_chain_without_an_audit_row_is_reported(tmp_path: Path) -> None:
     """``UP2-E3003``: the file store's crash window, and a hand-deleted audit table."""
     file_store = FileStore(tmp_path / "home")

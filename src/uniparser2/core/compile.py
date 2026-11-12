@@ -235,8 +235,18 @@ def _compile_try_stage(stage: Stage, /, *, index: int, pointer: str) -> Compiled
     """The guard directive: a stage that carries a policy instead of doing work.
 
     It is compiled like a stage so the evaluator can see it in order, but it never runs: the
-    evaluator reads the policy and applies it to the **next** stage's outcome.
+    evaluator reads the policy and applies it to the **next** stage's outcome. Its shape is exactly
+    ``["try", policy]``; a third slot would be silently ignored, so it is rejected here.
     """
+    if stage.length != 2:
+        raise Up2Error(
+            diag(
+                "UP2-E1004",
+                f"a `try` directive has 2 slots, got {stage.length}",
+                fix='write ["try","skip"], ["try","break"] or ["try","raise"]',
+                pointer=pointer,
+            )
+        )
     policy = stage.slot1
     if not isinstance(policy, str) or policy not in registry.TRY_POLICIES:
         raise Up2Error(
@@ -323,7 +333,16 @@ def _build_params(
                 pointer=pointer,
             )
         )
-    if isinstance(raw, dict) and _directive_name(raw) is not None:
+    if (
+        isinstance(raw, dict)
+        and _directive_name(raw) is not None
+        # A structural parameter (``each``'s field map) is not a value: an object there is the
+        # map itself, so ``{"$lit": …}`` is a field named ``$lit``, not the escape directive.
+        and all(
+            param.kind not in (registry.Kind.FIELDS, registry.Kind.FIELDS_OR_CHAIN)
+            for param in active
+        )
+    ):
         directive = _directive_name(raw) or ""
         return _directive_params(spec, active, raw, directive, preset=preset, pointer=pointer)
     if len(active) == 1:

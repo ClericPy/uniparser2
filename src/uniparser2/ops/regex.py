@@ -91,7 +91,7 @@ class Regex(Op):
     def precompile(
         self, action: str, params: Mapping[str, Param], *, pointer: str = ""
     ) -> re.Pattern[str]:
-        pattern = _literal_text(params, "pattern")
+        pattern = _literal_text(params, "pattern", pointer=f"{pointer}/pattern")
         reject_nested_quantifier(pattern, pointer=f"{pointer}/pattern")
         try:
             compiled = re.compile(pattern)
@@ -110,7 +110,9 @@ class Regex(Op):
                 _check_group(compiled, group, pointer=f"{pointer}/group")
         elif action == _SUB:
             _check_replacement(
-                compiled, _literal_text(params, "replacement"), pointer=f"{pointer}/replacement"
+                compiled,
+                _literal_text(params, "replacement", pointer=f"{pointer}/replacement"),
+                pointer=f"{pointer}/replacement",
             )
         return compiled
 
@@ -205,7 +207,7 @@ def _literal(params: Mapping[str, Param], name: str) -> Any:
     return value.value if isinstance(value, Lit) else value
 
 
-def _literal_text(params: Mapping[str, Param], name: str) -> str:
+def _literal_text(params: Mapping[str, Param], name: str, *, pointer: str = "") -> str:
     text = _literal(params, name)
     if not isinstance(text, str):
         raise Up2Error(
@@ -213,7 +215,7 @@ def _literal_text(params: Mapping[str, Param], name: str) -> str:
                 "UP2-E1005",
                 f"parameter {name!r} must be a string, got {type_name(text)}",
                 fix="write it as a string",
-                pointer=f"/2/{name}",
+                pointer=pointer or f"/2/{name}",
             )
         )
     return text

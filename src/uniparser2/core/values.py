@@ -16,6 +16,7 @@ import json
 import math
 from typing import Any, Final
 
+from . import limits
 from .errors import Up2Error, diag
 
 
@@ -84,6 +85,21 @@ def is_json_value(value: object) -> bool:
     if isinstance(value, dict):
         return all(isinstance(key, str) and is_json_value(item) for key, item in value.items())
     return False
+
+
+def text_too_large(value: object) -> bool:
+    """Whether a text input is over ``limits.MAX_TEXT_BYTES`` (``UP2-E2013``).
+
+    The cap is on UTF-8 **bytes**. ``len(value) * 4`` is an upper bound on the encoding of a Python
+    ``str`` (a code point takes at most four bytes), so the common small value never encodes; a
+    value that could be over is encoded once for the exact answer.
+    """
+    if not isinstance(value, str):
+        return False
+    cap = limits.MAX_TEXT_BYTES
+    if len(value) * 4 <= cap:
+        return False
+    return len(value.encode("utf-8")) > cap
 
 
 NON_JSON_FIX: Final = (
@@ -176,11 +192,17 @@ def text_of(value: object) -> str:
     A **host object** is rendered as its type name plus ``repr``: the kernel cannot render it as
     JSON, and the class name is what tells the reader which host library it came from. This is the
     one rendering ``preview`` truncates and the trace measures as a value's ``size`` (`06` §5.1).
+
+    A container with a non-string key is rendered with ``repr`` instead of JSON text: ``json.dumps``
+    would **coerce** the key (``{1: "x"}`` becomes ``{"1": "x"}``), and a diagnostic that shows a
+    value looking valid while export refuses it is worse than no preview.
     """
     if isinstance(value, Opaque):
         return f"<opaque {type(value).__name__}>"
     if value is not None and not isinstance(value, (str, bool, int, float, list, dict)):
         return f"{type_name(value)} {value!r}"
+    if not _dict_keys_are_strings(value):
+        return repr(value)
     try:
         return json.dumps(value, ensure_ascii=False, default=repr)
     except (TypeError, ValueError):  # pragma: no cover - default=repr already covers it

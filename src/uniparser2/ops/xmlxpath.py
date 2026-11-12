@@ -114,9 +114,10 @@ class XPath(Op):
             # Measured: errors such as an undefined prefix or a missing function name are raised
             # **only at evaluation time** (not at construction time), so compile time runs the
             # expression once against an empty document to bring document-independent errors
-            # forward to compile time.
+            # forward to compile time. A malformed namespace map (an empty prefix, for example) is
+            # a ValueError/TypeError raised by lxml itself; it is a bad chain like the rest.
             compiled(etree.fromstring(b"<empty/>"))
-        except etree.XPathError as exc:
+        except (etree.XPathError, TypeError, ValueError) as exc:
             raise Up2Error(
                 diag(
                     "UP2-E1005",
@@ -140,13 +141,17 @@ class XPath(Op):
         if isinstance(context, Failed):
             return context
         try:
-            results = list(call.payload(context))
-        except etree.XPathError as exc:
+            answer = call.payload(context)
+        except (etree.XPathError, TypeError, ValueError) as exc:
             return Failed(
                 code="UP2-E2005",
                 reason=f"XPath evaluation failed: {exc}",
                 fix=f"check expr against the document structure; {_NS_FIX}",
             )
+        # A node-set expression answers a list; a scalar expression (`string(...)`, `count(...)`)
+        # answers one value. The product of `text` is always a list, so the scalar is its one item
+        # (`03`: ask for a scalar explicitly with `py.first`).
+        results = answer if isinstance(answer, list) else [answer]
         if not results:
             # The empty value of the shape: an element set is a list, a single node is absent.
             return Ok(None) if call.action == _SELF else Ok([])

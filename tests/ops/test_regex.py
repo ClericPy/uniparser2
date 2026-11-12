@@ -81,11 +81,15 @@ def test_legit_quantified_group_is_not_rejected() -> None:
 
 
 def test_missing_pattern_is_schema_error() -> None:
-    """The arity must write all 3 slots; slot 3 ``None`` means "no parameter passed".
-
-    That leaves the required pattern missing.
-    """
+    """A ``null`` in slot 3 is a missing parameter for an action that requires one."""
     assert compile_error([["re", "search", None]]) == "UP2-E1005"
+
+
+def test_a_wrong_typed_pattern_reports_the_stage_pointer() -> None:
+    with pytest.raises(Up2Error) as info:
+        compile_field([["re", "search", 123]], pointer="/nodes/a")
+    assert info.value.diagnostic.code == "UP2-E1005"
+    assert info.value.diagnostic.pointer == "/nodes/a/0/2/pattern"
 
 
 @pytest.mark.covers("re", "findall")

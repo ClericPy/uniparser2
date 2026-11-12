@@ -232,8 +232,8 @@ class Scope:
                 reason=f"{ref.raw} names the value a stage received, and a scope cannot read it",
                 fix='read "$obj" in a stage parameter; a whole-chain reference names a scope',
             )
-        product = self.products.get(ref.root)
-        if product is None:
+        product = self.products.get(ref.root, _ABSENT)
+        if product is _ABSENT:
             return Failed(
                 code="UP2-E2001",
                 reason=f"there is no earlier node product named {ref.root!r}",
@@ -447,3 +447,5 @@ def _walk_attribute(current: Any, segment: str, ref: Ref, walked: list[str]) -> 
 
 
 _SENTINEL: Final = object()
+_ABSENT: Final = object()
+"""Marks "the root is not in the product table"; a product whose value is ``None`` is a value."""

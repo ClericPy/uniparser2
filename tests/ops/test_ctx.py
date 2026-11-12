@@ -178,3 +178,39 @@ def test_dollar_obj_is_the_stage_value_not_the_chain_input() -> None:
 
 def test_a_dollar_obj_path_is_a_compile_error() -> None:
     assert compile_error([["py", "or", ["$obj.x"]]]) == "UP2-E1006"
+
+
+def test_a_path_with_an_empty_segment_is_a_compile_error() -> None:
+    """A bad path is a bad chain: the compiler reports it instead of raising mid-run."""
+    for chain in (
+        [["ctx", "get", "locals..x"]],
+        [["ctx", "set", "locals."]],
+        [["ctx", "del", "locals."]],
+        [["ctx", "dict", {"a": "locals..x"}]],
+        [["ctx", "list", ["locals..x"]]],
+    ):
+        with pytest.raises(Up2Error) as info:
+            compile_field(chain)
+        assert info.value.diagnostic.code == "UP2-E1005"
+        assert info.value.diagnostic.pointer.startswith("/0/2")
+
+
+def test_set_and_del_need_a_key_below_the_writable_root() -> None:
+    for action in ("set", "del"):
+        with pytest.raises(Up2Error) as info:
+            compile_field([["ctx", action, "locals"]])
+        assert info.value.diagnostic.code == "UP2-E1005"
+        assert "needs a key" in info.value.diagnostic.message
+
+
+def test_a_root_prefix_is_not_a_writable_root() -> None:
+    """``publicity`` starts with ``public`` but is not the ``public`` scope."""
+    with pytest.raises(Up2Error) as info:
+        compile_field([["ctx", "set", "publicity.x"]])
+    assert info.value.diagnostic.code == "UP2-E1015"
+
+
+def test_the_pointer_names_the_stage_inside_a_story() -> None:
+    with pytest.raises(Up2Error) as info:
+        compile_field([["ctx", "set", "locals"]], pointer="/nodes/a")
+    assert info.value.diagnostic.pointer == "/nodes/a/0/2/path"

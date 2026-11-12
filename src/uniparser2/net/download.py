@@ -22,8 +22,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 from urllib.error import HTTPError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urlparse, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
+
+from ..core.values import loads_json
 
 DEFAULT_TIMEOUT: Final = 30.0
 """The seconds a request may take when the request does not say (``03`` §4.1's default)."""
@@ -47,8 +49,8 @@ class Response:
     headers: Mapping[str, str] = field(default_factory=dict)
 
     def json(self) -> Any:
-        """The body parsed as JSON."""
-        return _json.loads(self.text)
+        """The body parsed as **strict** JSON (a non-JSON constant is ``UP2-E1004``)."""
+        return loads_json(self.text, subject="the response body")
 
 
 def fetch(request: Mapping[str, Any]) -> Response:
@@ -69,8 +71,9 @@ def fetch(request: Mapping[str, Any]) -> Response:
     target = with_params(url, _mapping_of(request, "params"))
     request_object = Request(target, data=data, headers=headers, method=method)  # noqa: S310
     try:
-        # `_url_of` admits http(s) only, so `urlopen` never sees another scheme.
-        with urlopen(request_object, timeout=timeout) as response:  # noqa: S310
+        # `_url_of` admits http(s) only, so `urlopen` never sees another scheme. Bandit needs its
+        # own marker (`nosec`); ruff's is `noqa`.
+        with urlopen(request_object, timeout=timeout) as response:  # noqa: S310  # nosec B310
             body = response.read()
             return Response(
                 text=_decode(body, response.headers.get_content_charset()),
@@ -163,18 +166,28 @@ def with_params(url: str, params: Mapping[str, Any]) -> str:
 
     The parameters are sorted by name, so the same parameter set is the same query string whatever
     order it was written in -- and the cache, whose key is over the URL the request is **sent** to,
-    agrees with the downloader.
+    agrees with the downloader. The query is inserted **before** the fragment, which is where HTTP
+    puts it: ``http://x/a#top`` plus ``k=v`` is ``http://x/a?k=v#top``.
     """
     if not params:
         return url
     query = urlencode({str(key): str(value) for key, value in sorted(params.items())})
-    separator = "&" if "?" in url else "?"
-    return f"{url}{separator}{query}"
+    parts = urlsplit(url)
+    merged = f"{parts.query}&{query}" if parts.query else query
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, merged, parts.fragment))
 
 
 def _decode(body: bytes, charset: str | None) -> str:
-    """The body as text: the declared charset, or UTF-8 with the undecodable bytes replaced."""
-    return body.decode(charset or "utf-8", errors="replace")
+    """The body as text: the declared charset, or UTF-8 with the undecodable bytes replaced.
+
+    A server can name a charset this platform does not know (``charset=bogus``); that is a bad
+    header, not a failed fetch, so the UTF-8 fallback applies there too instead of raising
+    ``LookupError`` out of a download.
+    """
+    try:
+        return body.decode(charset or "utf-8", errors="replace")
+    except LookupError:
+        return body.decode("utf-8", errors="replace")
 
 
 __all__ = [

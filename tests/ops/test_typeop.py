@@ -86,3 +86,38 @@ def test_a_field_map_node_is_wrapped_by_a_node_call() -> None:
         }
     }
     assert run(story, "a") == {"url": "u", "title": "t"}
+
+
+def test_a_builtin_conversion_failure_is_e2019() -> None:
+    """A built-in scalar name is a constructor too: its refusal is a coded value rejection."""
+    diagnostic = _run_error([["py", "const", "abc"], ["type", "int"]])
+    assert diagnostic.code == "UP2-E2019"
+    assert "invalid literal for int()" in diagnostic.message
+
+
+@dataclass
+class _Pair:
+    first: int
+    second: int
+
+
+@dataclass
+class _Slug:
+    text: str
+
+
+def test_a_dataclass_built_from_a_list_continues_with_the_payload() -> None:
+    """A list payload is approved as a list; it must not collapse into an empty product."""
+    register_type("Pair", _Pair)
+    try:
+        assert run(_story([["py", "const", [1, 2]], ["type", "Pair"]]), "a") == [1, 2]
+    finally:
+        unregister_type("Pair")
+
+
+def test_a_dataclass_built_from_a_scalar_continues_with_the_payload() -> None:
+    register_type("Slug", _Slug)
+    try:
+        assert run(_story([["py", "const", "hello"], ["type", "Slug"]]), "a") == "hello"
+    finally:
+        unregister_type("Slug")

@@ -39,6 +39,7 @@ from uniparser2.core.values import dumps_json, loads_json
 
 from .base import (
     Transaction,
+    _check_identity,
     audit_without_chain,
     chain_without_audit,
     publish_into,
@@ -116,11 +117,17 @@ class FileStore:
         return None
 
     def chain_path(self, root_domain: str, tpl_key: str) -> Path:
-        """Where one chain's ``Template`` JSON lives (`04` §4.1)."""
+        """Where one chain's ``Template`` JSON lives (`04` §4.1).
+
+        The identity is checked here as well as in ``publish``: a read path takes the same names,
+        and a ``..`` in ``root_domain`` must not be able to look outside the store root.
+        """
+        _check_identity(root_domain=root_domain, tpl_key=tpl_key)
         return self.home / CHAINS_DIR / root_domain / f"{tpl_key}{CHAIN_SUFFIX}"
 
     def audit_path(self, root_domain: str, tpl_key: str) -> Path:
         """Where one chain's audit lines live (`04` §4.1)."""
+        _check_identity(root_domain=root_domain, tpl_key=tpl_key)
         return self.home / AUDIT_DIR / root_domain / f"{tpl_key}{AUDIT_SUFFIX}"
 
     # -- the StoreBackend seam (04 §5) ---------------------------------------------------------

@@ -80,6 +80,19 @@ def test_text_returns_list_of_element_text(xml_ready: None) -> None:
     assert run([["xpath", "text", "//title"]], RSS) == Ok(["Title"])
 
 
+def test_a_scalar_expression_is_one_list_item(xml_ready: None) -> None:
+    """``string(...)`` / ``count(...)`` answer one value; the ``text`` product is still a list."""
+    assert run([["xpath", "text", "string(//title)"]], RSS) == Ok(["Title"])
+    assert run([["xpath", "text", "count(//item)"]], RSS) == Ok([1.0])
+
+
+def test_an_empty_namespace_prefix_is_a_compile_error(xml_ready: None) -> None:
+    with pytest.raises(Up2Error) as info:
+        compile_field([["xpath", "text", ["//a", {"": "urn:x"}]]])
+    assert info.value.diagnostic.code == "UP2-E1005"
+    assert "ns" in info.value.diagnostic.fix
+
+
 def test_text_on_attributes_needs_no_attr_action(xml_ready: None) -> None:
     """XPath can fetch attributes by itself — this is where it beats CSS.
 

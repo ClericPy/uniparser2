@@ -15,7 +15,6 @@ an alias.
 from __future__ import annotations
 
 import importlib
-import json
 import sys
 from collections.abc import Mapping
 from typing import Any, ClassVar, Final
@@ -24,7 +23,7 @@ from ..core.ast import Lit, Param
 from ..core.errors import Failed, Ok, Outcome, Up2Error, diag
 from ..core.materialize import JSON
 from ..core.registry import ActionSpec, Call, Kind, Op, ParamSpec, op
-from ..core.values import is_json_value, preview, type_name
+from ..core.values import is_json_value, loads_json, preview, type_name
 
 _GET: Final = "get"
 """The only action, **not written in the chain** (``["json", "path"]``).
@@ -122,7 +121,12 @@ def _parsed(call: Call, text: str) -> Any:
     """
 
     def build(source: str) -> tuple[Any, int]:
-        tree = json.loads(source)
+        try:
+            tree = loads_json(source)
+        except Up2Error as exc:
+            # `evaluate` reports a ValueError as `UP2-E2005`; a strict read keeps `NaN` /
+            # `Infinity` out of the value domain instead of letting the tree carry one.
+            raise ValueError(exc.diagnostic.message) from exc
         return tree, tree_bytes(tree)
 
     return call.cache.get(JSON, text, build)

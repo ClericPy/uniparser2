@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterable
+from functools import cache
 from pathlib import Path
 
 _CODE_PREFIX = "UP2-E"
@@ -32,14 +33,24 @@ DEFAULT_TESTS_ROOT = Path("tests")
 
 
 def scan_tests(root: Path) -> tuple[set[tuple[str, str]], set[str]]:
-    """Scan the test directory and return the covered (operator, action) pairs and error codes."""
+    """Scan the test directory and return the covered (operator, action) pairs and error codes.
+
+    The scan is memoised per root (the tree is stable for the life of a process, and several tests
+    and the CLI audit read it), and each caller gets a fresh copy of the sets.
+    """
+    pairs, codes = _scan_tests(root)
+    return set(pairs), set(codes)
+
+
+@cache
+def _scan_tests(root: Path) -> tuple[frozenset[tuple[str, str]], frozenset[str]]:
     pairs: set[tuple[str, str]] = set()
     codes: set[str] = set()
     for path in sorted(root.rglob("*.py")):
         text = path.read_text(encoding="utf-8")
         codes.update(_scan_codes(text))
         pairs.update(_scan_covers(text, path=path))
-    return pairs, codes
+    return frozenset(pairs), frozenset(codes)
 
 
 def _scan_codes(text: str) -> Iterable[str]:

@@ -17,6 +17,7 @@ import builtins
 import re
 from collections.abc import Iterable, Mapping
 from contextlib import AbstractContextManager
+from dataclasses import replace
 from typing import Final, Protocol
 
 from uniparser2.core.compile import compile_field
@@ -232,12 +233,17 @@ def repair_chain(
     if template is None:
         return None
     new_hash = graph_hash(template.graph)
+    at = utc_now()
+    # Both stores stamp an audit row with the template's ``update_time``; a repair is stamped with
+    # the repair time, so the returned row and the row on disk carry the same ``at``. The stored
+    # template itself is not rewritten.
+    stamped = replace(template, update_time=at)
     with backend.transaction() as tx:
-        seq = tx.append_audit(template, actor=actor, old_hash=None, new_hash=new_hash, note=note)
+        seq = tx.append_audit(stamped, actor=actor, old_hash=None, new_hash=new_hash, note=note)
     return AuditRow(
         seq=seq,
         chain_id=chain_id,
-        at=utc_now(),
+        at=at,
         actor=actor,
         source=template.source,
         old_hash=None,
@@ -247,13 +253,27 @@ def repair_chain(
 
 
 def _check_identity(*, root_domain: str, tpl_key: str) -> None:
-    """Step 1 of `04` §5: nothing is written when the identity itself is unusable."""
+    """Step 1 of `04` §5: nothing is written when the identity itself is unusable.
+
+    ``root_domain`` is used as a **directory name** by ``FileStore``, so it must be one path
+    component: a ``.`` / ``..``, a separator or a NUL would otherwise reach outside the store root.
+    """
     if not root_domain:
         raise Up2Error(
             diag(
                 "UP2-E3002",
                 "`root_domain` is empty",
                 fix="name the site the chain is bound to, for example `ah.gov.cn` or `local`",
+            )
+        )
+    if root_domain in (".", "..") or any(char in root_domain for char in ("/", "\\", "\x00")):
+        raise Up2Error(
+            diag(
+                "UP2-E3002",
+                f"`root_domain` {root_domain!r} is not one path component",
+                fix=(
+                    "use the site identity, for example `ah.gov.cn` or `local` (no path separators)"
+                ),
             )
         )
     if _TPL_KEY_PATTERN.fullmatch(tpl_key) is None:

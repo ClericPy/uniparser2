@@ -14,7 +14,8 @@ from typing import Any, ClassVar
 
 import pytest
 
-from uniparser2.net import RequestCache, Response, encode_body, fetch, request_key
+from uniparser2.core.errors import Up2Error
+from uniparser2.net import RequestCache, Response, encode_body, fetch, request_key, with_params
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -254,6 +255,33 @@ def test_a_broken_entry_is_a_miss(tmp_path: Path) -> None:
     cache.put(request, Response(text="hello", url="u"))
     cache.path_for(request).write_text("{not json", encoding="utf-8")
     assert cache.get(request) is None
+
+
+def test_an_entry_with_wrong_typed_fields_is_a_miss(tmp_path: Path) -> None:
+    """A hand-edited entry is unreadable too, not an answer with a forged status."""
+    cache = RequestCache(tmp_path)
+    request = {"url": "http://x/page"}
+    path = cache.path_for(request)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"text": "x", "status_code": "abc"}), encoding="utf-8")
+    assert cache.get(request) is None
+
+
+def test_query_parameters_go_before_the_fragment() -> None:
+    assert with_params("http://x/a#top", {"k": "v"}) == "http://x/a?k=v#top"
+    assert with_params("http://x/a?x=1#top", {"k": "v"}) == "http://x/a?x=1&k=v#top"
+
+
+def test_an_unknown_charset_falls_back_to_utf8() -> None:
+    from uniparser2.net.download import _decode
+
+    assert _decode("café".encode(), "bogus") == "café"
+
+
+def test_response_json_is_strict() -> None:
+    with pytest.raises(Up2Error) as info:
+        Response(text="NaN", url="u").json()
+    assert info.value.diagnostic.code == "UP2-E1004"
 
 
 def test_clear_removes_every_entry(tmp_path: Path) -> None:

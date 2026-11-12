@@ -258,7 +258,6 @@ INSTALL_HINTS: dict[str, str] = {
     "selectolax": 'uv add "uniparser2[html]"',
     "lxml": 'uv add "uniparser2[xml]"',
     "jmespath": 'uv add "uniparser2[json]"',
-    "dateparser": 'uv add "uniparser2[time]"',
     "html_to_markdown": 'uv add "uniparser2[md]"',
     "pydantic_monty": 'uv add "uniparser2[code]"',
 }

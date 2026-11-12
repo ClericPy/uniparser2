@@ -106,21 +106,23 @@ class RequestCache:
         """The cached answer for one request, or ``None`` for a miss.
 
         A miss is a miss: an entry that cannot be read is treated as absent rather than as an empty
-        answer, because an empty answer would look like a successful fetch of nothing.
+        answer, because an empty answer would look like a successful fetch of nothing. That includes
+        an entry whose fields have the wrong type (a hand-edited file, a partial write), not only
+        one with broken JSON syntax.
         """
         path = self.path_for(request)
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            if not isinstance(raw, dict) or "text" not in raw:
+                return None
+            return Response(
+                text=str(raw["text"]),
+                url=str(raw.get("url", "")),
+                status_code=int(raw.get("status_code", 200)),
+                headers={str(key): str(value) for key, value in (raw.get("headers") or {}).items()},
+            )
+        except (OSError, ValueError, TypeError, AttributeError):
             return None
-        if not isinstance(raw, dict) or "text" not in raw:
-            return None
-        return Response(
-            text=str(raw["text"]),
-            url=str(raw.get("url", "")),
-            status_code=int(raw.get("status_code", 200)),
-            headers={str(key): str(value) for key, value in (raw.get("headers") or {}).items()},
-        )
 
     def put(self, request: Mapping[str, Any], response: Response) -> None:
         """Store one answer, so the next run replays it."""

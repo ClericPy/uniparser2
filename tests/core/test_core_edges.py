@@ -299,6 +299,22 @@ def test_the_scope_view_merges_the_chain() -> None:
     assert inner.json_view()["locals"] == {"a": 1, "b": 3}
 
 
+def test_a_product_root_whose_value_is_none_is_present() -> None:
+    """``None`` is a value: a product table entry of ``None`` must not read as "no such root"."""
+    scope = Scope(products={"n": None})
+    assert scope.read(parse_ref("$n")) == Ok(None)
+    missing = scope.read(parse_ref("$m"))
+    assert isinstance(missing, Failed)
+    assert missing.code == "UP2-E2001"
+
+
+def test_a_try_directive_has_exactly_two_slots() -> None:
+    with pytest.raises(Up2Error) as info:
+        compile_field([["try", "skip", "extra"], ["py", "strip"]])
+    assert info.value.diagnostic.code == "UP2-E1004"
+    assert info.value.diagnostic.pointer == "/0"
+
+
 # ---------------------------------------------------------------- evaluator outcomes
 
 
@@ -306,6 +322,34 @@ def test_a_query_that_matched_nothing_flows_on() -> None:
     """A no-match is a value, so the chain continues with it."""
     chain = [["re", "search", r"\d+"], ["py", "strip"]]
     assert eval_field(compile_field(chain), "abc") == Ok("")
+
+
+def test_an_input_text_over_the_cap_is_e2013(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The input size limit is checked before any operator sees the text (01 §9)."""
+    from uniparser2.core import limits
+
+    monkeypatch.setattr(limits, "MAX_TEXT_BYTES", 8)
+    compiled = compile_field([["py", "strip"]])
+    outcome = eval_field(compiled, "x" * 9)
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2013"
+    assert "MAX_TEXT_BYTES" in outcome.reason
+    assert eval_field(compiled, "x" * 8) == Ok("x" * 8)
+
+
+def test_a_field_map_entry_checks_the_same_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from uniparser2.core import limits
+    from uniparser2.core.evaluator import eval_field_map
+
+    monkeypatch.setattr(limits, "MAX_TEXT_BYTES", 4)
+    outcome = eval_field_map(
+        {"a": compile_field([["py", "strip"]])},
+        "xxxxx",
+        scope=Scope(),
+        run_chain=lambda chain, value, scope: eval_field(chain, value, scope=scope),
+    )
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2013"
 
 
 def test_failed_short_circuits_the_rest_of_the_chain() -> None:

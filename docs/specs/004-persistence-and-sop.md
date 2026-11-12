@@ -89,7 +89,7 @@ def graph_hash(graph: Mapping[str, Any]) -> str:
 | Idempotence | the same `graph` yields the same fingerprint whether it comes in from a JSON file or from a dict |
 | Use | audit trail, and the no-op decision of `publish` (the same hash writes no audit row) |
 
-> **`dsl_version` was deleted** (see `D-04-3`): the dialect of the stored JSON is checked by the **compiler**, not by a stored number — a v0.1 node chain has no `steps` and fails L1 lint with a definite code — so a hand-bumped generation number earned nothing and was one more thing to forget. "When did this row change, and to what" is answered by `update_time` plus the audit fingerprint.
+> **`dsl_version` was deleted** (see `D-04-3`): the dialect of the stored JSON is checked by the **compiler**, not by a stored number — a pre-0.7 chain carries `steps` instead of `nodes` and fails L1 lint with a definite code — so a hand-bumped generation number earned nothing and was one more thing to forget. "When did this row change, and to what" is answered by `update_time` plus the audit fingerprint.
 
 ---
 
@@ -303,7 +303,7 @@ reserved for something else.
 |---|---|
 | `root_domain` | site identity; use `local` for practice |
 | `tpl_key` | human-readable business name; matches `^[\w\u4e00-\u9fff][\w\u4e00-\u9fff.-]{0,63}$` |
-| Product target | confirm the `type` of each step, above all the one `collect` names (a host-registered type, or a built-in one; `03` §3), and the step `entry` names |
+| Product target | confirm each `["type", name]` stage (a host-registered type, or a built-in one; `03` §3) and the node the run names (the first node is the tool default) |
 | Sample input | **at least 1 real input**, placed at `samples/<root_domain>/<tpl_key>/<case>/input.txt` |
 
 **Acceptance**: `up2 ops` can list the available operators and actions (read it before drafting; do not write action names from memory).
@@ -321,9 +321,9 @@ up2 ops --json      # operators / actions / arity and slot roles / argument sche
 
 The LLM (or a person) produces the chain JSON, **using only operators and actions that appear in `ops.json`**. While drafting, these must be decided explicitly:
 
-1. what the run's input is (the **`entry` step's input**; there is no `seed` and no input field, `03` §2) and that materialization is on demand (`03` §6);
+1. what the run's input is (the **node's `$in`**; there is no `seed` and no input field, `03` §2) and that materialization is on demand (`03` §6);
 2. whether per-item parsing is needed (an `each` stage inside the chain that holds the list);
-3. each step's `type` (`03` §3), the `entry` the run starts at and the `collect` it declares;
+3. each `["type", name]` stage (`03` §3) and the node the run names (the first node is the tool default);
 4. how a value that may be absent is handled: a field whose chain ends in a miss is simply **absent** from the product (`01` §4.2), so a fallback is written at the action level (`py.or`), not configured for the whole run.
 
 **Acceptance**: a parsable JSON file is produced.

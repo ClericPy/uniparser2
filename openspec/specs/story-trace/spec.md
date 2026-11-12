@@ -1,21 +1,21 @@
 # story-trace Specification
 
 ## Purpose
-Makes one run **readable stage by stage**: which stage of which field of which step of which fan-out
+Makes one run **readable stage by stage**: which stage of which field of which node of which fan-out
 result produced which value, in what state, and how long it took — without shipping the values
 themselves, and without changing what a run does when nobody asks for a trace. The trace is a
-**debugging aid**; it is not the replay format (`03` §13 O6).
+**debugging aid**; it is not the replay format (`03` §13).
 
 ## Requirements
 
 ### Requirement: One event per evaluated stage
 
 The trace SHALL record one event for every stage the engine **evaluates**, and no event for a stage a
-failure stopped the chain before. A stage event SHALL carry `seq` (1-based, in evaluation order), `step`,
-`item`, `field`, `stage` (the stage's index inside its own chain), `op`, `action`, `params`, `input`,
-`output`, `state`, `detail` and `ms`. `state` SHALL be `Ok` or `Failed`, and `detail` SHALL carry the
-stage's `code` and `reason` when it is `Failed` and nothing otherwise. A chain that is evaluated without
-a trace SHALL collect nothing.
+failure stopped the chain before. A stage event SHALL carry `seq` (1-based, in evaluation order),
+`node`, `item`, `field`, `stage` (the stage's index inside its own chain), `op`, `action`, `params`,
+`input`, `output`, `state`, `detail` and `ms`. `state` SHALL be `Ok` or `Failed`, and `detail` SHALL
+carry the stage's `code` and `reason` when it is `Failed` and nothing otherwise. A chain that is
+evaluated without a trace SHALL collect nothing.
 
 #### Scenario: Every stage of a chain is one event
 
@@ -52,31 +52,11 @@ render as JSON (a host object, an `Opaque` handle, the missing sentinel) SHALL s
 - **WHEN** a stage's value is a host object (an answer carrying `text`)
 - **THEN** the event SHALL record its type name and a preview rather than failing
 
-### Requirement: The event locates the step, the field and the fan-out result
-
-A stage event SHALL name the story step whose chain it belongs to, the field-map key the chain was
-compiled as, and the index of the fan-out result it was evaluated for — `null` when there is no
-fan-out. Inside an `each` the index SHALL be the element's position in input order; for a
-`RequestBatch`'s receiving step it SHALL be the answer's position in task order; when a fan-out is
-nested inside another one, the innermost index SHALL win.
-
-#### Scenario: The third result's field is locatable
-
-- **WHEN** an `each` runs a field map whose `title` chain matches nothing for the third element of a list
-- **THEN** an event SHALL carry that field's name, `item` `2`, and `state` `Ok` with the empty value as its
-  output
-
-#### Scenario: A batch's receiving step is numbered by the answer
-
-- **WHEN** a `RequestBatch` hands over three tasks and its receiving step is evaluated once per answer
-- **THEN** the events of each evaluation SHALL carry that answer's position as `item`
-
 ### Requirement: The parameters are the compiled ones
 
 A stage event's `params` SHALL be the stage's **compiled** named parameters (the named AST of `02`
 §4), so that defaults the author did not write and the action slot's presets are visible, and so that
-a reference is reported as a reference rather than as its text. A `call` step's suspension event
-SHALL carry its compiled `with` tree the same way.
+a reference is reported as a reference rather than as its text.
 
 #### Scenario: A default and a reference are visible
 
@@ -84,47 +64,53 @@ SHALL carry its compiled `with` tree the same way.
 - **THEN** the event's `params` SHALL show the reference as a reference and the default as the value
   the engine used
 
-### Requirement: A suspension is an event carrying what was handed out
-
-The trace SHALL record one event per **effect suspension**, carrying `effect` as `request`, `batch`
-or `call`, the step it happened at, the value the step received as its input, and what the kernel
-handed to the host as its output. A `call` event SHALL carry the host function's name in `action`.
-The suspension's `state` SHALL be `Ok`, because a suspension is not an error (`03` §5).
-
-#### Scenario: A batch suspension shows the tasks
-
-- **WHEN** a `RequestBatch` step suspends with three tasks
-- **THEN** the trace SHALL hold an event with `effect` `batch` whose output previews the task list,
-  placed after the events of the stage that produced the batch
-
-#### Scenario: A call suspension names the function and its arguments
-
-- **WHEN** a `call` step suspends
-- **THEN** the trace SHALL hold an event with `effect` `call`, that function's name in `action`, its
-  compiled arguments in `params`, and the resolved arguments in `output`
-
 ### Requirement: `up2 trial --trace` reports the trace
 
 `up2 trial` SHALL accept `--trace`, reporting the run's events in evaluation order: with `--json` as
 one JSON document carrying the events, without it as one line per event. The trace SHALL be reported
-for a field chain and for a story, and SHALL also be reported when the run suspends or fails — with
-the run's own state, effect or diagnostic in the same document. Without `--trace` the command's
-output SHALL be exactly what it was before.
+for a field chain and for a story, and SHALL also be reported when the run fails — with the run's own
+diagnostic in the same document. A story trial SHALL accept `--node` and default to the first node.
+Without `--trace` the command's output SHALL be exactly what it was before.
 
 #### Scenario: A story suspends and the trace says why
 
-- **WHEN** `up2 trial story.json --input text=@sample.txt --trace --json` runs a story whose first
-  step suspends on a `RequestBatch`
-- **THEN** the document SHALL carry the suspension and a trace whose last event is that batch
-  suspension
+- **WHEN** `up2 trial story.json --node store --input text=@sample.txt --trace --json` runs a story
+  whose `store` node calls a udf the CLI has no host for
+- **THEN** the document SHALL report the missing udf with `UP2-E1010` and SHALL carry the trace's
+  events up to that failure
 
 #### Scenario: A failing stage is in the trace
 
-- **WHEN** a step's chain fails
+- **WHEN** a node's chain fails
 - **THEN** the command SHALL report the run as failed, and the trace SHALL hold the failing stage's
   event with its `code` and `reason`
+
+#### Scenario: The node is selectable
+
+- **WHEN** `up2 trial story.json --node parse --input text=… --trace --json` runs
+- **THEN** the document SHALL carry the events of node `parse`
 
 #### Scenario: The flag is off by default
 
 - **WHEN** `up2 trial` runs without `--trace`
 - **THEN** the output SHALL carry no trace key
+
+### Requirement: The event locates the node, the field and the fan-out result
+
+A stage event SHALL name the story **node** whose chain it belongs to, the field-map key the chain was
+compiled as, and the index of the fan-out result it was evaluated for — `null` when there is no
+fan-out. Inside an `each` the index SHALL be the element's position in input order; when a fan-out is
+nested inside another one, the innermost index SHALL win. A node call SHALL produce the events of the
+callee under the callee's name.
+
+#### Scenario: The third result's field is locatable
+
+- **WHEN** an `each` runs a field map whose `title` chain matches nothing for the third element of a
+  list
+- **THEN** an event SHALL carry that field's name, `item` `2`, and `state` `Ok` with the empty value
+  as its output
+
+#### Scenario: A node call is named by the callee
+
+- **WHEN** node `a` calls `["node","b"]` and `b` runs a chain
+- **THEN** the events of `b`'s stages SHALL carry `node` `b`

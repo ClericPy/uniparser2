@@ -224,7 +224,8 @@ This keeps one rule — a node is a chain **or** a field map — and makes the c
 | anything else | `f(argument)` — the literal or the reference's value |
 
 The name resolves from the **run's udf table**: `register_udf` installs process-wide defaults and
-`run(udfs={...})` overlays them for that run. A name the story uses but the table lacks is
+`run(udfs={...})` overlays them for that run. A name the chosen node uses (directly or through a call)
+but the table lacks is
 `UP2-E1010`, reported by `run` before evaluation with the names that are available.
 
 **A udf may return any value.** A response object flows to the next stage and is read with
@@ -578,14 +579,14 @@ product = run(story, "pinned", udfs={"fetch": cached_fetch})
 ```
 
 `py.sleep` returns the detail product, so the `each` chain's final value is still one detail record
-per item. Put `["py","first"]` between `["node","list"]` and the `each` to request only the first
-pinned item.
+per item. To request only the first pinned item, replace the `each` with `["py","first"],
+["node","detail"]` (add `["py","sleep",2]` after the call if you want the pause).
 
 ### 11.1 The fields it extracts
 
 | Field | Chain | Meaning |
 |---|---|---|
-| `url` | `$in.url` | the request's final URL |
+| `url` | `["py","getattr","url"]` | the response's final URL |
 | `status` | `["py","getattr","status_code"]` | the response's status code |
 | `actions` | `["py","getattr","text"]`, `css1` `[class*="Actions"]`, `normalize_space` | the link's text, whitespace-collapsed |
 
@@ -593,8 +594,8 @@ pinned item.
 
 - The list node fetches once, extracts the pinned links, and returns one `{"url": …}` per item.
 - `pinned` runs `detail` per item; `detail` builds the request, fetches, and parses in one call.
-- `$in` inside `detail_request` / `detail_parse` is the element `{"url": …}`; the response object is
-  the stage value after `fetch`, read with `py.getattr`.
+- `$in` inside `detail_request` is the element `{"url": …}`; `detail_parse` receives the **response
+  object** instead, so its fields read `py.getattr` (`text`, `url`, `status_code`).
 - `$locals` carries the field-map results across the node calls: `detail_request` writes `url`, and
   `detail_parse` can read it if it wants.
 - No effect, no `next`, no `Request` type; `fetch` is a udf the host registers.

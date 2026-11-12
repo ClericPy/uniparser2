@@ -12,8 +12,8 @@
 ```
 
 - **规则就是数据。** 一条规则是 JSON：可 diff、可存库、可由 LLM 生成，改规则不用发版。
-- **没有副作用。** 内核不做 IO、不认识宿主；同样的输入 + 同样的规则永远得到同样的输出。宿主代码只能
-  通过具名 `udf` 进入。
+- **内核没有副作用。** 内核不做 IO、不认识宿主；同样的输入 + 同样的规则得到同样的输出。唯一的非确定性
+  来自显式注册的宿主 `udf`。
 - **失败即诊断。** 坏规则在**编译期**失败，带 `UP2-E*` 错误码、JSON Pointer 和一句话修法。
 - **story 可以组合。** 一个 story 是具名节点的表：节点之间可以互相调用，`each` 逐项处理，`fetch`
   通过宿主 `udf` 发请求——引擎始终是同步、纯的。
@@ -189,8 +189,23 @@ product = up2.run(
 # {"url": "https://github.com/ClericPy/awesome", "status": 200, "actions": "Actions"}
 ```
 
-去掉 `["py", "first"]`，把 `["py", "sleep", 2]` 挪进 `each`，就是逐项抓取、请求间暂停 2 秒。选择器
-是站点特定的；`fetch` 不是内置算子，它是宿主下载器的约定名字。
+要逐项抓取，把 `["py", "first"]` 换成对 detail 节点的 `each`，并把暂停放在它后面：
+
+```jsonc
+"pinned": [["node", "list"], ["each", [["node", "detail"], ["py", "sleep", 2]]]]
+```
+
+选择器是站点特定的；`fetch` 不是内置算子，它是宿主下载器的约定名字。
+
+</details>
+
+<details>
+<summary><b>更多 ETL 示例</b></summary>
+
+[`examples/etl/`](examples/etl/) 里有 11 个可运行的 story：CSV 行、日志行、JSON 订单、HTML 表格、
+XML feed、单篇文章、去重排序、带类型的发票、宿主 `udf`、嵌套节点调用，以及可空 JSON 字段的回退。
+每个用例是 `story.json` + `input.txt` + `expected.json`；`uv run pytest tests/examples -q` 会逐条运行
+并和提交的产物对比。全部离线：不联网、不碰 store。
 
 </details>
 
@@ -231,6 +246,9 @@ uv run up2 trial site.json --node pinned --input text=@page.html --json
 uv run up2 trial site.json --node pinned --trace    # 每个求值阶段一行
 uv run up2 conformance --check          # 每个声明的对/错误码都有可见用例
 ```
+
+调用 `udf` 的 story 需要宿主；CLI 没有宿主，所以 `up2 trial` 会报 `UP2-E1010`——用宿主脚本运行，或者用
+`up2 snapshot` / `up2 test` 配合已填好的请求缓存。
 
 跑通的规则按业务身份存起来（`04` §1–§6）：`publish` 是唯一写入口，写前再 lint 一遍，一条规则一行
 `(root_domain, tpl_key)`，指纹追加进只增不改的审计表。

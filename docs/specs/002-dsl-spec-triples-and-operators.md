@@ -338,7 +338,7 @@ function written with an object (`["py","urljoin",{"base": …}]`) is a compile-
 | `strptime` | `format` | a non-empty, locale-free format |
 | `from_timestamp` / `to_timestamp` | `tz` | a number of hours (a bool is rejected) |
 | `between` | `bounds` | a two-element array of numbers |
-| `sleep` | `seconds` | a non-negative number |
+| `sleep` | `seconds` | a non-negative finite number |
 | `filter` | `keep` (optional) | a boolean (the default is `true`) |
 
 Deliberately not checked: `join.sep` (the runtime coerces it with `str()`), and a parameter that genuinely accepts any JSON value (`in`'s container,
@@ -510,7 +510,8 @@ products. Anything else is `UP2-E1005`.
 ```
 
 - The function resolves from the **run's udf table**: `register_udf(name, fn)` installs process-wide defaults, and
-  `run(story, …, udfs={"fetch": my_fetch})` overlays them for that run. A name the story uses but the table lacks is
+  `run(story, …, udfs={"fetch": my_fetch})` overlays them for that run. A name the chosen node uses
+  (directly or through a call) but the table lacks is
   `UP2-E1010`, reported by `run` **before** evaluation with the names that are available.
 - **Four argument forms** (the third slot selects the call):
   - omitted ⇒ `f(value)`, the upstream value as one DTO argument;
@@ -702,6 +703,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2017` | the sandboxed code raised an exception (including syntax errors and unsupported constructs) | fix `src`; the sandbox implements only a subset of CPython 3.14 (see Monty's limitations document) |
 | `UP2-E2018` | a subscript (`py.getitem`) has no such key or index | name the key or the index and the shape it was looked up in (`KeyError: 'text' — the dict has no key 'text'`) |
 | `UP2-E2019` | the constructor registered for a `["type", …]` stage refused its value | the `reason` carries the constructor's own exception (`TypeError: Article.__init__() missing 1 required positional argument: 'title'`); fix the value's shape at the stage, or the constructor |
+| `UP2-E2020` | the snapshot runner's request cache has no answer for a request | run the sample's host once from the same directory to fill the cache; a snapshot runner never reaches the network |
 | `UP2-E2099` | an operator raised an unexpected exception (backstop) | this is a defect in the operator implementation; keep the chain and the input for reproduction |
 
 **The codes retired while implementing L1 (the reasons are recorded so that they are not "added back" later)**:

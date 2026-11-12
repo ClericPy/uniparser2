@@ -1,6 +1,6 @@
 # Operator reference
 
-The registry declares **10 operators and 77 `(operator, action)` pairs**; all of them are listed below.
+The registry declares **12 operators and 81 `(operator, action)` pairs**; all of them are listed below.
 The READMEs carry a one-screen summary of what the engine ships; this page is the reference next to
 it: what each action means, which writing its parameter slot takes, and a set of chains whose outputs
 were produced by running them.
@@ -13,9 +13,9 @@ this page is a map, not a second source of truth.
 ## How a stage is written
 
 A stage is a JSON array. `css` / `css1` / `xpath` / `re` / `py` / `ctx` / `udf` declare more than one
-action, so they write `[operator, action]` or `[operator, action, parameter]`; `json` / `code` / `each`
-declare exactly one, so the action is never written and the stage is `[operator]` or
-`[operator, parameter]`:
+action, so they write `[operator, action]` or `[operator, action, parameter]`; `json` / `code` /
+`each` / `node` / `type` declare exactly one, so the action is never written and the stage is
+`[operator]` or `[operator, parameter]`:
 
 | Position | Holds |
 |---|---|
@@ -39,7 +39,7 @@ An object is **never a parameter list**: a single-parameter action takes the val
 with `UP2-E1005` instead of silently doing something else. `{"$lit": …}` is the escape for a literal
 that starts with `$`; a leading `$` in a `ref_or_literal` position is a reference
 (`"$globals.base_url"`), and `$obj` names the whole value the stage received (`$in` names the story
-step's input). The escape works at any depth, so `["py","or",[{"$lit":"$a"},"fallback"]]` quotes the
+node's input). The escape works at any depth, so `["py","or",[{"$lit":"$a"},"fallback"]]` quotes the
 text inside an array as well; a `$`-prefixed single-key object anywhere in such a parameter is a
 directive or an error, never data.
 
@@ -204,9 +204,11 @@ different types depending on its parameter's shape; the two actions now say whic
 
 | Scope | Lifetime | Writable | What it is |
 |---|---|---|---|
-| `globals` | the chain | no | the chain's static constants (fingerprinted) |
+| `globals` | the run | no | the story's static constants (fingerprinted); a run may merge overrides |
 | `public` | the run | yes (`ctx.set`) | the run's own notes — shared by every node, never fingerprinted |
-| `locals` | the current field | yes (`ctx.set`) | the field's scratch space |
+| `locals` | the run, with child scopes | yes (`ctx.set`) | the current scope; a node call shares it, an `each` element gets a child scope |
+| `$in` | one node invocation | no | the value the node was called with |
+| `$obj` | one stage | no | the whole value the stage received |
 
 `$public.x` reads the shared scope, so a value written in one node is readable in the next. It is
 **not** a writable `globals`: `globals` is covered by the fingerprint, so writing it would break
@@ -231,7 +233,7 @@ keep a value the chain already had.
 ### `each` — a field map or one chain per element of a list (standard library)
 
 The single argument's **shape selects the mode**. An **object** is a **field map** — `field name →
-chain`, the same shape a node's `fields` block has. The input must be a list, and the result is one
+chain`, the same shape a node's field map has. The input must be a list, and the result is one
 dictionary per element, in input order:
 
 ```jsonc
@@ -246,7 +248,8 @@ function per element is this array form with a `udf` stage (`["each",["udf","nor
 
 - Each field chain starts from the element, and the fields are evaluated in declaration order against
   one element at a time.
-- A field name starting with `_` is a **temporary of that element**, not a key of its dictionary:
+- Every field's result is written into the element's `$locals`. A field name starting with `_` is a
+  **temporary of that element**, not a key of its dictionary:
   `["each", {"_t": [["py","strip"]], "v": [["ctx","get","locals._t"]]}]` on `[" x "]` yields
   `[{"v": "x"}]`.
 - Every element is evaluated in **its own scope**: a read falls back outward **by name** (the innermost
@@ -256,7 +259,7 @@ function per element is this array form with a `udf` stage (`["each",["udf","nor
   `MAX_EACH_ITER` (10 000) fails with `UP2-E2012` before anything runs; nesting a field map deeper
   than `MAX_EACH_DEPTH` (3) is `UP2-E1012` at compile time, and so is a map holding more than
   `MAX_FIELDS_PER_MAP` (256) fields, while an empty map — or a field name that is empty or contains `.`
-  — is `UP2-E1005`. An empty array is `UP2-E1004` (an empty chain), and a parameter that is neither an
+  — is `UP2-E1005`. An empty array is **identity** (`[]`), and a parameter that is neither an
   object nor an array is `UP2-E1005`, naming both accepted shapes.
 
 ### `udf` — host-registered functions (no extra)

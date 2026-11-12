@@ -12,7 +12,7 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 
 | The pain point with the CLI alone | What the trial UI solves |
 |---|---|
-| Change one selector → run once → stare at a big blob of JSON → guess which step went wrong | **Single-step trace**: the input, output, state and duration of each step laid out row by row |
+| Change one selector → run once → stare at a big blob of JSON → guess which stage went wrong | **Single-stage trace**: the input, output, state and duration of each stage laid out row by row |
 | Wanting to compare "what changed after the edit" | **Snapshot diff view**: compare path by path against `expected.json` |
 | Having to copy the correct content out by hand to turn it into a sample | **One-click save as snapshot**, going straight into `samples/` and `tests/snapshots/` |
 | Having to fetch pages online when handling an HTML fragment | **Driven by sample files**, fully offline |
@@ -25,7 +25,7 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 
 | Form | Command | Positioning |
 |---|---|---|
-| **pywebview trial UI** | `up2 studio` | **primary**: three-column editing + single-step trace + a closed snapshot loop |
+| **pywebview trial UI** | `up2 studio` | **primary**: three-column editing + single-stage trace + a closed snapshot loop |
 | **CLI** | `up2 lint` / `up2 trial --trace` / `up2 snapshot` | **baseline**: GUI-less environments, CI, scripted calls; every capability of the trial UI is implemented in the CLI first — `--trace` landed with the trace itself (`03` §4.4), the rest of the bench has not |
 | **TUI** | `up2 repl` | **fallback**: usable when there is no webview engine; details pending (§9) |
 
@@ -49,9 +49,9 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 │ ① Input                │ ② Chain editor                 │ ③ Output                         │
 │                        │                                │                                  │
 │ ○ Sample file          │ {                              │ ── exit product ──               │
-│ ○ Paste text           │   "entry": "…",                │ {                                │
-│ ○ Load file...         │   "globals": { … },            │   "url": "https://...",          │
-│                        │   "steps": [ ... ]             │   "title": "..."                 │
+│ ○ Paste text           │   "globals": { … },            │ {                                │
+│ ○ Load file...         │   "nodes": { … }               │   "url": "https://...",          │
+│                        │                                │   "title": "..."                 │
 │ ┌───────────────────┐  │                                │ }                                │
 │ │ text/HTML preview │  │ (inline error highlight +      │                                  │
 │ │                   │  │ explanation on the right)      │ ── this run ──                   │
@@ -60,19 +60,19 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 │                        │                                │                                  │
 │ format: html ▾         │                                │ [Save as snapshot] [Copy]        │
 ├────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ④ Single-step trace                                                                        │
+│ ④ Single-stage trace                                                                       │
 │ ┌────────────────────────────────────────────────────────────────────────────────────────┐ │
-│ │ #  Step        Field      Do                            Input        Output       State  │ │
+│ │ #  Node        Field      Do                            Input        Output       State  │ │
 │ │ 1  (input)     —          —                             text 186 KB  —            ·      │ │
 │ │ 2  reqs        —          parse: nodes → 20 items       text         20 items     Ok     │ │
 │ │ 3  reqs        url        [css @href ""]                <a>          "/p/1"       Ok     │ │
 │ │ 4  reqs        url        [py urljoin base]             "/p/1"       https...     Ok     │ │
-│ │ 5  reqs        —          effect: request × 20          RequestBatch —            ⇢      │ │
-│ │ 6  rows        pub_time   [css @content meta]           <meta>       Missing      ·      │ │
+│ │ 5  reqs        —          [udf fetch]                  the request   response     Ok     │ │
+│ │ 6  rows        pub_time   [css @content meta]           <meta>       ""           Ok     │ │
 │ │ 7  rows        —          parse: 20 dicts               20 answers   NoticeList   Ok     │ │
 │ │ 8  store       —          call: host.store_notices      NoticeList   receipt      Ok     │ │
 │ └────────────────────────────────────────────────────────────────────────────────────────┘ │
-│  [Missing only] [Failed only] [Expand the full value of the selected step]                 │
+│  [Failed only] [Expand the full value of the selected stage]                           │
 └────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,10 +80,10 @@ What the trial UI solves is the only step of the SOP (`04` §7) that needs **sem
 
 | Column | Responsibility | Key interaction |
 |---|---|---|
-| ① Input | Provides the **run's input** (the first step's input; `03` §2) | Pick from the sample directory, paste, load a file; show the auto-sniffed format (html/xml/json/text) |
+| ① Input | Provides the **node's input** (`$in`; `03` §2.2) | Pick from the sample directory, paste, load a file; show the auto-sniffed format (html/xml/json/text) |
 | ② Chain editor | Edit the chain JSON, lint in real time | Inline highlighting of errors; the right-hand side lists the **error code + `fix` + the enumeration of allowed values** (the same source as `04` §8) |
-| ③ Output | Shows the run's **exit product** (`03` §9) and a summary of this run | Collapsible tree of the product JSON; highlight the built-in `Request` fields; "Save as snapshot" |
-| ④ Single-step trace | Shows the evaluation step by step | Filter `Ok`/`Failed`; click any step to expand its full input and output values |
+| ③ Output | Shows the node's **product** (`03` §9) and a summary of this run | Collapsible tree of the product JSON; highlight the type stage's fields; "Save as snapshot" |
+| ④ Single-stage trace | Shows the evaluation stage by stage | Filter `Ok`/`Failed`; click any stage to expand its full input and output values |
 
 **Layout principle**: the trace fills the lower half of the screen instead of being squeezed into a popup — it is the reason this tool exists.
 
@@ -128,7 +128,7 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 | `list_samples(domain, tpl_key)` | — | the list of case names |
 | `load_sample(domain, tpl_key, case)` | — | sample text + sniffed format |
 | `lint(text)` | chain text | `{errors: Diagnostic[], warnings: Diagnostic[]}` |
-| `start(text, value, trace: bool)` | chain text, the run's input | a **resumable run** (`03` §5): the UI answers the effects itself (the trial bench plays the host) and collects `TraceEvent[]` (§5.1; `get_value(seq)` then reads one value in full) |
+| `run(text, node, value, trace: bool)` | chain text, node name, the node's input | `{product, trace: TraceEvent[]}` (§5.1; `get_value(seq)` then reads one value in full). Synchronous: there are no effects to answer |
 | `snapshot(text, domain, tpl_key, case)` | — | `{ok, path}` |
 
 `Diagnostic` (exactly the same as `04` §8; the UI and the CLI share this one data structure):
@@ -137,7 +137,7 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 {
   "code": "UP2-E1002",              // a deterministic error code
   "severity": "error",
-  "pointer": "/steps/1/parse/title/0/1",   // JSON Pointer (unknown action = slot 2)
+  "pointer": "/nodes/reqs/title/0/1",   // JSON Pointer (unknown action = slot 2)
   "message": "unknown action `innerHTML`",
   "fix": "use `html` (inner HTML) or `outer` (including its own tag)",
   "allowed": ["text", "html", "outer", "self", "@<attribute name>", "nodes", "remove"]
@@ -146,13 +146,13 @@ The `js_api` object of pywebview exposes the following **synchronous** functions
 
 ### 5.1 `TraceEvent`
 
-One event per **evaluated stage** (a stage a failure stopped the chain before records nothing), plus one
-per **suspension**. A stage event:
+One event per **evaluated stage** (a stage a failure stopped the chain before records nothing). The
+story is synchronous, so there are no suspension events:
 
 ```jsonc
 {
   "seq": 4,
-  "step": "reqs",            // the step key (`03` §2.1); null outside a story
+  "node": "reqs",            // the node whose chain it belongs to (`03` §2.1); null outside a story
   "item": 0,                 // which result when fanning out (null when there is no fan-out)
   "field": "url",            // the field-map key the chain was compiled as
   "stage": 1,                // the index of the stage inside its chain
@@ -161,42 +161,19 @@ per **suspension**. A stage event:
   "params": {"arg": {"kind": "ref", "target": "globals.base_url"}},
   "input":  {"type": "str", "preview": "\"/public/1681/1.html\"", "size": 21},
   "output": {"type": "str", "preview": "\"https://www.ah.gov.cn/public/1681/1.html\"", "size": 44},
-  "state": "Ok",             // Ok | Missing | Failed
+  "state": "Ok",             // Ok | Failed
   "detail": null,            // carries code/reason when Failed
   "ms": 0.31
-}
-```
-
-A suspension event carries the same sequence and the same `input` / `output` shape, with `stage` / `op` /
-`field` null and `effect` naming what was handed over; it is `Ok`, because a suspension is not an error
-(`03` §5):
-
-```jsonc
-{
-  "seq": 5,
-  "step": "reqs",
-  "item": 0,
-  "field": null,
-  "stage": null,
-  "op": null,
-  "action": null,                          // a `call` puts the host function here
-  "params": null,                          // a `call` puts its compiled `args` tree here
-  "input":  {"type": "str", "preview": "\"<html>…\"", "size": 190464},
-  "output": {"type": "list", "preview": "[{\"url\": \"https://…\"}, …]", "size": 2410},
-  "state": "Ok",
-  "detail": null,
-  "ms": 0.05,
-  "effect": "batch"         // request | batch | call: it suspended here, and this is what it handed out
 }
 ```
 
 | Design point | Content |
 |---|---|
 | **Values are not sent back in full** | A large value (an HTML document, a long body) returns only `type` / `preview` (the value's display text cut to 200 characters, with the `...(+N)` marker saying how much was dropped) / `size` (the length of the whole text); expanding it calls `get_value(seq)` for the whole thing on demand — `get_value(seq, side="input")` for the other side of the row (the default is the event's output). A failed stage shows `null` as its output, and the failure is named by `state` + `detail` |
-| **Parameters are already compiled** | `params` are the **compiled** named parameters (the named AST of `02`), so the UI shows "what the engine actually understands" rather than the chain author's original wording — **this is the only effective way to investigate "what I wrote is not what it understood"**. A leaf says what it is (`{"kind": "ref", "target": "globals.base_url"}` / `{"kind": "lit", "value": …}`), an `each` carries its compiled field map (`{"kind": "fields", …}`) and a `call` its `args` tree |
-| **Fan-out is visible** | The `item` field makes a problem such as "the title of the 3rd result is missing" locatable. It has two sources, because a story fans out in two places: `each` numbers the element (its position in input order) and a `RequestBatch` numbers the answer its receiving step is running (its position in task order). When one fan-out sits inside the other the **innermost** index wins, because the event is about the field chain that is running |
+| **Parameters are already compiled** | `params` are the **compiled** named parameters (the named AST of `02`), so the UI shows "what the engine actually understands" rather than the chain author's original wording — **this is the only effective way to investigate "what I wrote is not what it understood"**. A leaf says what it is (`{"kind": "ref", "target": "globals.base_url"}` / `{"kind": "lit", "value": …}`), and an `each` carries its compiled field map (`{"kind": "fields", …}`) |
+| **Fan-out is visible** | The `item` field makes a problem such as "the title of the 3rd result is missing" locatable: `each` numbers the element by its position in input order; a nested fan-out numbers itself again, and the innermost index wins because the event is about the chain that is running |
 | **An empty value is a stage row like any other** | A query that matched nothing records a normal `Ok` event carrying the shape's empty value (`""` / `[]` / `None`), so the row says which stage produced it. `field` is what keeps two fields of one map apart, so the row names the chain it belonged to |
-| **It is a debugging aid, not the replay format** | A trace is collected only when the caller asks for one, it lives in memory for as long as the run does, and it holds no answer. What replays a run is the host's log of the suspensions it answered (`03` §13 O6) |
+| **It is a debugging aid, not the replay format** | A trace is collected only when the caller asks for one, it lives in memory for as long as the run does, and it holds no answer. What replays a run is the host's own log of what its udfs answered (`03` §13) |
 
 ---
 
@@ -218,7 +195,8 @@ A suspension event carries the same sequence and the same `input` / `output` sha
 
 ```
 up2 studio
-  ├─ pywebview not installed → suggest `uv add "uniparser2[ui]"`, and fall back to `up2 repl` (TUI)
+  ├─ pywebview not installed → the `ui` extra is not published while the bench is unimplemented;
+  │                            fall back to the CLI (the TUI is not implemented either)
   ├─ pywebview installed but no webview engine (no GTK/Qt on Linux; no WebView2 on Windows)
   │                          → the same fallback, and print the reason the engine is missing
   ├─ port already in use     → bind a **random free port** on 127.0.0.1 (the default), never a fixed port
@@ -230,7 +208,7 @@ up2 studio
 | Bind address | bind `127.0.0.1` only, never `0.0.0.0` |
 | No authentication | because it is a local loopback with no external reachability; the page has no user system |
 | No network | the page makes no external request (§1) |
-| Blocking does not freeze the UI | a synchronous call on the Python side blocks the JS call, so **a long run is split into two steps**: `run()` returns a `run_id` immediately and finishes synchronously (simplicity first), while the UI shows a busy state during the wait. If a single run ever exceeds 2 seconds, introduce "background thread + polling" then (**note**: the thread would then live only in the outer layer; the kernel still has no coroutines) |
+| Blocking does not freeze the UI | a synchronous call on the Python side blocks the JS call, so the bridge starts a **worker thread** and returns a `run_id` immediately; the worker calls the synchronous `run()` and the UI shows a busy state. The kernel still has no coroutines and no threads of its own |
 
 > **Deferred (`07` §4-c: no TUI for now — decided, not pending)**: whether to provide a TUI as well. The minimal usable form of a TUI is "render columns ③④ of the three as text tables + hand the editor back to `$EDITOR`"; the effort is small, but the real usage frequency has to be confirmed first.
 
@@ -275,5 +253,5 @@ up2 studio
 | 3 | Mistype one action name | `UP2-E1002` and `fix` appear in column ② within 10 seconds |
 | 4 | Click run | column ④ shows a trace **exactly the same** as `up2 trial --trace` (the same data structure; the flag is implemented, the column is not) |
 | 5 | Click save as snapshot | the file lands on disk and `up2 test` can immediately run it |
-| 6 | When pywebview is not installed | it suggests the install command and falls back to the TUI without raising a stack trace |
+| 6 | When pywebview is not installed | it falls back to the CLI without raising a stack trace (the `ui` extra is not published until the bench exists) |
 | 7 | `tests/ui` smoke | it skips automatically in a GUI-less environment and does not block CI |

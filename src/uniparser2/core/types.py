@@ -49,7 +49,10 @@ UNREGISTERED_FIX: Final = (
 
 
 class UnknownTypeError(Exception):
-    """A step declares a ``type`` neither the host nor the built-ins register (``UP2-E1011``)."""
+    """A chain tail declares a ``type`` neither the host nor the built-ins register.
+
+    The failure is ``UP2-E1011``, naming the declared type and the names that are registered.
+    """
 
     def __init__(self, name: str) -> None:
         super().__init__(f"the type {name!r} is not registered")
@@ -66,10 +69,10 @@ class TypeConstructionError(Exception):
 
 
 def register_type(name: str, constructor: TypeConstructor) -> None:
-    """Register (or replace) one type name. ``name`` is what a step writes as its ``type``.
+    """Register (or replace) one type name. ``name`` is what a chain tail writes as its ``type``.
 
     A registration **wins over the built-in names**, so a host may give ``dict`` or ``int`` a
-    construction of its own (``03`` §3.1's closed set is what a step may declare with no
+    construction of its own (``03`` §3.1's closed set is what a chain tail may declare with no
     registration, not a list the host cannot touch).
     """
     if not name.strip() or not callable(constructor):
@@ -90,12 +93,15 @@ def get_type(name: str) -> TypeConstructor | None:
 
 
 def type_names() -> tuple[str, ...]:
-    """Every name a step may declare today: the built-ins and the host's, sorted (`UP2-E1011`)."""
+    """Every name a chain tail may declare today: the built-ins and the host's, sorted.
+
+    The list is what ``UP2-E1011`` reports.
+    """
     return tuple(sorted(BUILTIN_TYPES | set(_TYPES)))
 
 
 def build_type(name: str, product: Any) -> Any:
-    """Build the declared type from the product at the step boundary (``03`` §3.2/§3.3).
+    """Build the declared type from the product at the chain tail (``03`` §3.2/§3.3).
 
     A dictionary product becomes ``Cls(**payload)`` and a list ``Cls(*items)``; anything else is
     handed to the constructor as it is, which is how a scalar-shaped type is validated. The caller

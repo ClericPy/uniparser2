@@ -378,8 +378,8 @@ the multi-stage compositions and the compile-time invalid forms.
 
 ## Fetching a page
 
-The kernel never fetches anything: a story that produces a `Request` suspends the run, and the **host**
-answers. The package offers a default for that side:
+The kernel never fetches anything: a story calls a host `fetch` function (`["udf","fetch"]`), and the
+**host** answers. The package offers a default for that side:
 
 ```python
 from uniparser2.net import RequestCache, fetch
@@ -387,7 +387,7 @@ from uniparser2.net import RequestCache, fetch
 answer = fetch({"url": "https://example.com/page", "method": "GET"})   # → Response(text=…, url=…)
 ```
 
-The request is the kernel's own `Request` product: `url` (required), `method`, `headers`, `timeout`,
+The request is one JSON object: `url` (required), `method`, `headers`, `timeout`,
 `params`, and a body that is **base64 text** (`body`) or a JSON value (`json`) — a body is binary and
 the request dictionary is JSON throughout.
 

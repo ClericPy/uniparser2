@@ -110,7 +110,7 @@ an array of stages and the empty array is the only identity. A string in chain p
 
 - **Only dotted paths are supported, not array indices** (settled by Q24 in `01`). To take an index, use the explicit operator `["py","getitem",0]`.
 - **Multi-level dotted paths** are supported (`$article.meta.url`).
-- **There is no `<node name>` reference root**: a node's product is the value its call returns, and a field map writes every field into `$locals`.
+- **There is no `<node name>` reference root**: a node's product is the value its call returns, and a field map writes every field into `$locals`. A standalone field chain may declare external product roots when it is compiled (`--product`); a story has no such roots.
 - **A dotted path dispatches on the value it walks** (`03` §13 O12): a mapping is read by key, a sequence by a digit index and a host object by `getattr`.
   An attribute that is **callable** is refused with `UP2-E2002`, the same way `py.getattr` refuses one — a method is not a value, and it could not leave the
   run anyway (`UP2-E2003`); the fix hint names `["css","text",""]` or a `udf`.
@@ -401,7 +401,7 @@ would assume a zone, so each is `UP2-E1005` at compile time. `%z` is allowed.
 
 ### 6.5 `py.const` — literal
 
-`["py","const", <arbitrary JSON value>]`. Used for fixed source identifiers (`channel` / `source` / `region`, see `03` §8.1) and for any constant a step needs.
+`["py","const", <arbitrary JSON value>]`. Used for fixed source identifiers (`channel` / `source` / `region`, see `03` §8.1) and for any constant a chain needs.
 The former `const` operator is gone (D0): a literal is an action of the `py` table, so there is one fewer operator and the stage shape stays uniform. **The
 structure is not copied** (it is treated as immutable and must not be modified in place at runtime).
 
@@ -692,7 +692,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2003` | the run's exit or a `["type", …]` product is not JSON (`Opaque` or a non-JSON type) | convert it to text first via `text` / `html` / `outer` / `@<attribute name>` |
 | `UP2-E2004` | the lazy import of an operator's optional dependency failed | give the install command |
 | `UP2-E2005` | value conversion failed | give the source type, the target type and a preview of the source value |
-| `UP2-E2009` | a `udf` answered an awaitable | the kernel is synchronous: call the async function in the host's own event loop and return its value |
+| `UP2-E2009` | an operator returned a value that cannot be a product (an awaitable, a non-JSON sandbox value) | a sandboxed value must be JSON; call an async function in the host's own event loop and return its value |
 | ~~`UP2-E2010`~~ | **retired with `Request`** (`03` §12.1): a request is an ordinary object, and `fetch` is a udf | the number is retired, not reused |
 | `UP2-E2011` | `output="single"` but several products or several terminals exist | change `output` to `auto` / `list` |
 | `UP2-E2012` | the list given to `each` is longer than `MAX_EACH_ITER` | truncate it first with `["py","slice",":100"]` |
@@ -719,7 +719,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 it with a test patched to "temporarily turn `urljoin.base` into `Kind.REF`".
 
 > A runtime failure is returned as `Failed` with the code of the stage that failed; it always fails the run (there is no
-> policy that degrades it into a value), and the step/field location of that stage goes to the trace (`01` §10).
+> policy that degrades it into a value), and the node/field location of that stage goes to the trace (`01` §10).
 
 
 ---

@@ -655,7 +655,7 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 48 actions (
 | `[["py", "strip", "", ""]]` | `UP2-E1004` | `/0` | stage length is 4, only 1 to 3 is allowed | follow the declared arity: 3 slots is ["operator", action, parameter]; 2 slots is ["operator", parameter] or ["operator", action]; 1 slot is a single-action operator whose parameter is omitted |
 | `[["py", "no_such_function", ""]]` | `UP2-E1003` | `/0/1` | the py allowlist has no function 'no_such_function' | use one of the functions below (run up2 ops --json for the full table) |
 | `[["py", "strptime", "%Q"]]` | `UP2-E1005` | `/0/2/format` | unknown directive %Q in strptime's format | use numeric directives such as "%Y-%m-%d" / "%H:%M:%S", or reshape the pieces with py.slice |
-| `[["py", "urljoin", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare the earlier step product with --product; for text that starts with `$`, write {"$lit": "…"} |
+| `[["py", "urljoin", "$nope.x"]]` | `UP2-E1006` | `/0/2` | unknown reference root 'nope' | use a reserved root, or declare an external product root with --product; for text that starts with `$`, write {"$lit": "…"} |
 | `[["py", "urljoin", {"base": "https://example.com/news/"}]]` | `UP2-E1005` | `/0/2/base` | parameter 'base' of py.urljoin must be a string, got dict | write the value directly: ["py", "urljoin", "…"] |
 | `[["py", "slice", {"spec": "0:4"}]]` | `UP2-E1005` | `/0/2/spec` | parameter 'spec' of py.slice must be a string, got dict | write the value directly: ["py", "slice", "…"] |
 | `[["py", "getitem", {"at": {}}]]` | `UP2-E1005` | `/0/2/at` | parameter 'at' of py.getitem must be a scalar, got dict | write the value directly: ["py", "getitem", "…"] |
@@ -865,7 +865,7 @@ arity 3 · slot 2=action / slot 3=parameter · dependencies: none · 5 actions (
 
 | invalid chain | code | pointer | message | fix |
 |---|---|---|---|---|
-| `[["ctx", "set", "globals.x"]]` | `UP2-E1015` | `/0/2/path` | ctx.set cannot write 'globals.x' | the write surface is limited to locals.* and public.* (globals and a step's product are read-only) |
+| `[["ctx", "set", "globals.x"]]` | `UP2-E1015` | `/0/2/path` | ctx.set cannot write 'globals.x' | the write surface is limited to locals.* and public.* (globals and product values are read-only) |
 
 
 ## `each` — One dictionary per element of a list
@@ -1229,7 +1229,7 @@ The three scopes read as **constants / shared / private**: `globals` is the chai
 
 ## The host side: fetching a page
 
-The kernel never fetches anything: a story that produces a `Request` suspends the run, and the **host** answers. The package offers a default for that side — a synchronous, standard-library downloader and a request cache under `.cache/requests/` (never committed), keyed by the whole request. A body is binary, so the request carries it as **base64 text**.
+The kernel never fetches anything: a story calls a host `fetch` function, and the **host** answers. The package offers a default for that side — a synchronous, standard-library downloader and a request cache under `.cache/requests/` (never committed), keyed by the whole request. A body is binary, so the request carries it as **base64 text**.
 
 ```python
 from uniparser2.net import RequestCache, fetch

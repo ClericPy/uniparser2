@@ -7,7 +7,7 @@ Two things that are easy to confuse:
 
 A third thing flows the same way: **a host object** (a response, a ``udf`` result). It is not
 ``Opaque`` (the kernel does not own it), but it is no more exportable — it may be an input, an
-argument or an answer, and a **step product must still be JSON** (design doc 03 §3.3).
+argument or an answer, while a **run's exported product must still be JSON** (design doc 03 §3.3).
 """
 
 from __future__ import annotations

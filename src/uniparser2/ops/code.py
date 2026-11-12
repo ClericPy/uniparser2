@@ -1,6 +1,6 @@
 """``code`` operator: sandboxed execution of in-chain code (design doc 02 §6.12).
 
-**Slots** (see ``02`` §1): ``["code", {"src": …, "inputs": {…}}]`` — **only 2 slots**: it has
+**Slots** (see ``02`` §1): ``["code", <source>]`` — **only 2 slots**: it has
 exactly one action (run this source once), so the chain omits the action slot (the same shape as
 ``json`` / ``const``).
 

@@ -42,7 +42,7 @@ CODES: Final[dict[str, str]] = {
     "UP2-E2003": "export contains a value that cannot be serialized",
     "UP2-E2004": "deferred import of an operator optional dependency failed",
     "UP2-E2005": "value conversion failed",
-    "UP2-E2009": "a udf returned an awaitable",
+    "UP2-E2009": "an operator returned a value that cannot be a product",
     "UP2-E2012": "the iteration count of `each` exceeds MAX_EACH_ITER",
     # UP2-E2015 ("value is missing and the effective policy is raise") is retired with the
     # settlement policy: a missing value is not an error any more. The number is not reused.

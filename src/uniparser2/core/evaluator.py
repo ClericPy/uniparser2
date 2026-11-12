@@ -196,7 +196,7 @@ def _resolve_value(node: Any, scope: Scope, value: Any = _NO_STAGE_VALUE) -> Any
                     Failed(
                         code="UP2-E2001",
                         reason="$obj names the value a stage received, and this is not a stage",
-                        fix='a call step argument reads a scope; use "$in" / "$locals" there',
+                        fix='a node input reads a scope; use "$in" / "$locals" there',
                     )
                 )
             return value

@@ -600,7 +600,7 @@ def compile_field_map(
             diag(
                 "UP2-E1005",
                 f"{name} must be an object of field name to chain, got {type_name(raw)}",
-                fix='write {"title": [["py","strip",""]]}',
+                fix='write {"title": [["py","strip"]]}',
                 pointer=pointer,
             )
         )
@@ -625,7 +625,7 @@ def _check_field_map(fields: Mapping[Any, Any], *, pointer: str) -> None:
             diag(
                 "UP2-E1005",
                 "the field map is empty, so every element would be an empty dictionary",
-                fix='declare at least one field, e.g. {"title": [["py","strip",""]]}',
+                fix='declare at least one field, e.g. {"title": [["py","strip"]]}',
                 pointer=pointer,
             )
         )
@@ -756,7 +756,7 @@ def _check_refs(params: Mapping[str, Param], *, products: tuple[str, ...], point
                 "UP2-E1006",
                 f"unknown reference root {ref.root!r}",
                 fix=(
-                    "use a reserved root, or declare the earlier step product with --product; "
+                    "use a reserved root, or declare an external product root with --product; "
                     'for text that starts with `$`, write {"$lit": "…"}'
                 ),
                 pointer=pointer,

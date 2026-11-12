@@ -1437,8 +1437,8 @@ def _host_section() -> str:
     """
     return (
         '<section id="host"><h2>The host side: fetching a page</h2>'
-        '<p class="sub">The kernel never fetches anything: a story that produces a '
-        "<code>Request</code> suspends the run, and the <strong>host</strong> answers. The "
+        '<p class="sub">The kernel never fetches anything: a story calls a host '
+        "<code>fetch</code> function, and the <strong>host</strong> answers. The "
         "package offers a default for that side — a synchronous, standard-library downloader and a "
         "request cache under <code>.cache/requests/</code> (never committed), keyed by the whole "
         "request. A body is binary, so the request carries it as <strong>base64 text</strong>.</p>"
@@ -1446,7 +1446,7 @@ def _host_section() -> str:
         "cache = RequestCache()\n"
         "answer = cache.get(request) or fetch(request)   # a miss is a miss\n"
         "cache.put(request, answer)                      # → Response(text=…, url=…)</pre>"
-        '<p class="sub">The request is the kernel\'s own <code>Request</code> product: '
+        '<p class="sub">The request is one JSON object: '
         "<code>url</code> (required), <code>method</code>, <code>headers</code>, "
         "<code>timeout</code>, <code>params</code>, and a body that is <code>body</code> (base64) "
         "or <code>json</code>. The <code>up2 snapshot</code> / <code>up2 test</code> runner "
@@ -1689,8 +1689,8 @@ def build_md() -> str:
         "",
         "## The host side: fetching a page",
         "",
-        "The kernel never fetches anything: a story that produces a `Request` suspends the run, "
-        "and the **host** answers. The package offers a default for that side — a synchronous, "
+        "The kernel never fetches anything: a story calls a host `fetch` function, and the "
+        "**host** answers. The package offers a default for that side — a synchronous, "
         "standard-library downloader and a request cache under `.cache/requests/` (never "
         "committed), keyed by the whole request. A body is binary, so the request carries it as "
         "**base64 text**.",

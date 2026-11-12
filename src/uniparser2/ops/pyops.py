@@ -827,7 +827,7 @@ def _py_in(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
 
     ``["py","in",[200,301,302]]`` asks whether the value is one of those. To ask whether the value
     *contains* something, put the element in front —
-    ``[["const","/public/"],["py","in","$locals.url"]]`` — the operands keep Python's order.
+    ``[["py","const","/public/"],["py","in","$locals.url"]]`` — the operands keep Python's order.
     """
     container = params.get("container")
     if isinstance(container, str):
@@ -835,7 +835,9 @@ def _py_in(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
             return Failed(
                 code="UP2-E2002",
                 reason=f"py.in needs a str on the left, got {type_name(value)}",
-                fix='look a substring up with [["const","/public/"],["py","in","$locals.url"]]',
+                fix=(
+                    'look a substring up with [["py","const","/public/"],["py","in","$locals.url"]]'
+                ),
             )
         return Ok(value in container)
     if isinstance(container, list):

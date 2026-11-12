@@ -1,11 +1,11 @@
 """``ctx`` operator: scope reads and writes (design docs 02 §6.8, 03 §8).
 
-**The write surface is limited to ``locals`` and ``public``**: writing ``globals`` or a step's
-product raises ``UP2-E1015``. Rationale: if ``globals`` could be modified, the same value would
-evaluate differently in different fields and purity (``N1``) would break; if a step's product could
-be modified, downstream references would read intermediate states. ``public`` is writable because it
-is the run's own notes, not chain data (``chain-iteration``): a value written there is runtime
-state, never part of the chain's identity.
+**The write surface is limited to ``locals`` and ``public``**: writing ``globals`` or a product root
+raises ``UP2-E1015``. Rationale: if ``globals`` could be modified, the same value would evaluate
+differently in different fields and purity (``N1``) would break; if a product value could be
+modified, downstream references would read intermediate states. ``public`` is writable because it is
+the run's own notes, not chain data (``chain-iteration``): a value written there is runtime state,
+never part of the chain's identity.
 
 Paths are written as **bare path literals** (``locals._tmp`` / ``globals.base_url``), with no ``$``
 and no ``ctx.`` prefix — because the target that ``set``/``del`` operates on does not exist yet and
@@ -179,7 +179,7 @@ def _write_fix(path: str) -> str:
         return f'ctx takes a bare path, without `$`: write "{path[1:]}"'
     return (
         "the write surface is limited to locals.* and public.* "
-        "(globals and a step's product are read-only)"
+        "(globals and product values are read-only)"
     )
 
 

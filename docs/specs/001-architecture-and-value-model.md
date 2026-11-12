@@ -164,8 +164,8 @@ The three answers are **different on purpose**, and nothing settles one into ano
 | the product is not the declared shape | the **host-registered type constructor** refuses it (`UP2-E2019`) | the `["type", name]` stage (`03` §3) |
 
 A value that may be absent is the author's decision, taken where it applies: `py.or` replaces
-`None` or `""` in one field. A field that must exist is enforced by the type constructor at the step
-boundary, which reports it at the type stage that validated the value.
+`None` or `""` in one field. A field that must exist is enforced by the type constructor at the chain
+tail, which reports it at the type stage that validated the value.
 
 > **The settlement policy is retired** (change `retire-settlement-policy`): the `Policy` type, the four
 > `on_missing` / `on_error` strategies, the `policy=` parameter of `eval_field`, the `policy` block of a

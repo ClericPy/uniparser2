@@ -314,7 +314,7 @@ up2 ops --json      # operators / actions / arity and slot roles / argument sche
 
 > **Corrected**: the earlier draft wrote `up2 lint --ops` and a `up2 schemas --json` command. There is
 > no `--ops` flag on `lint` (`up2 ops` is its own command, and `lint` takes a chain file), and there
-> is no `schemas` command: the registered *type* names are the `type` a step declares (`03` §3), and
+> is no `schemas` command: the registered *type* names are the `type` a chain tail declares (`03` §3), and
 > `up2 ops` is the single capability self-description of `08` §1.
 
 ### S1 · Drafting
@@ -351,10 +351,10 @@ up2 trial chain.json --input text=@… --trace --json    # the per-stage trace (
 > and that was true when it was written. It exists now: `up2 trial --trace` prints the run's
 > `TraceEvent`s in evaluation order, as one JSON document with `--json` and one line per event
 > without it, and the events are the trial bench's own data structure (`06` §5.1), so the CLI and
-> the UI cannot disagree. A story file is accepted too, and is run to its first effect: a suspension
-> is reported as `suspended` with the effect, because a CLI has no host to answer a request — the
-> trace then ends at the effect event that suspended it. A query that matched nothing is an ordinary
-> `{"state": "ok"}` result carrying the shape's empty value.
+> the UI cannot disagree. A story file is accepted too: it is run with the story layer, and a host
+> function the story calls must be supplied by the CLI, so a missing one is reported with
+> `UP2-E1010` before evaluation — the trace then carries the events up to that failure. A query that
+> matched nothing is an ordinary `{"state": "ok"}` result carrying the shape's empty value.
 
 ### S4 · Freezing the snapshot
 
@@ -380,7 +380,7 @@ up2 test <domain> <tpl_key> --case <case>   # or just one
 uv run pytest tests/snapshots -q     # the in-project snapshot cases (05 §4)
 ```
 
-**Acceptance**: all green. On failure, a **structured difference** is printed (JSON Pointer + expected value + actual value), not a string diff — and `publish` refuses the same way (G2 of §6). A story that suspends is answered from the request cache; a `call` still needs a host, and the runner says so instead of guessing (`03` §4.2).
+**Acceptance**: all green. On failure, a **structured difference** is printed (JSON Pointer + expected value + actual value), not a string diff — and `publish` refuses the same way (G2 of §6). A story that fetches gets `fetch` from the request cache; any other host function needs a host, and the runner says so instead of guessing (`03` §4.2).
 
 ### S6 · Publish
 
@@ -503,13 +503,13 @@ two consequences that must be remembered:
 |---|---|
 | **Absent by default** | it exists only in the optional extra `uniparser2[code]` (`pydantic-monty`); if that is not installed, a compile-time `UP2-E1107` plus an install command, and `up2 ops` marks it unavailable; **`uniparser2[all]` does not contain it** — installing everything must not incidentally grant code-execution capability |
 | **Language-level sandbox** | measured surface by surface instead of by slogan: `import socket` / `import subprocess`, `compile` and `__import__` **do not exist** (`ModuleNotFoundError` / `NameError`); `open(…)` and `os.getenv(…)` **exist and are blocked** by the Monty runtime defaults (`PermissionError` / "not supported in this environment"); `eval` / `exec` exist as language features and carry no capability; the classic escape chain (`''.__class__.__mro__[1].__subclasses__()`) fails at the language level (`AttributeError`) |
-| **JSON only** | only upstream values and `inputs` enter the sandbox (the JSON value domain); handles can neither leave the chain (`UP2-E2003`) nor enter the sandbox, and inside the sandbox `ctx` contains JSON values only, with handles excluded without an error |
+| **JSON only** | only the upstream value and the JSON projection of `ctx` enter the sandbox; handles can neither leave the chain (`UP2-E2003`) nor enter the sandbox, and inside the sandbox `ctx` contains JSON values only, with handles excluded without an error |
 | **Limits configured explicitly** | memory, single-execution duration, request timeout and host round-trip budget are each pinned by the host (`uniparser2.ops.code.configure`); passing a limit name inside the chain is merely an unknown argument (compile-time `UP2-E1005`) |
 | **Deterministic by default** | frozen clock + fixed time zone + no `sleep` + seeded random, which guarantees that the same chain and the same input replay character for character; when the host explicitly switches back to following the host, that guarantee is given up |
 | **The chain is self-visible** | the fact that a chain contains code can be grepped in the frozen artifact (the operator name `code`), so an audit need not go back to the host's code |
 
 > **What this repository pins, and what it leaves to the runtime**: `_os_policy()` of `ops/code.py` sets only the determinism knobs (frozen clock, fixed time zone,
-> `sleep: zero`, seeded random) and `_limits()` pins memory / feed duration / suspensions; the **file and environment-variable rejections measured above are Monty's own
+> `sleep: zero`, seeded random) and `_limits()` pins memory / feed duration / host round trips; the **file and environment-variable rejections measured above are Monty's own
 > defaults**, not a boundary this repository configures. Treat them as defense-in-depth: if an upstream default changes, re-measure (`02` §6.12 states the measured table)
 > before restating the claim. The capability claim that does not depend on those defaults is the structural one — nothing host-side is mounted into the sandbox.
 

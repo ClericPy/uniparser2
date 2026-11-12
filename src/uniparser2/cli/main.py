@@ -8,14 +8,14 @@ error, `01` §4); ``1`` compile or
 run failed; ``2`` usage error.
 
 Two file shapes are accepted by ``lint`` / ``trial`` / ``publish`` / ``snapshot``: a **field chain**
-(a JSON array of stages) and a **story** (a JSON object carrying ``steps``). A story is compiled and
-run with the story layer; a suspension is reported as such, because a CLI has no host to answer a
-request (§12 of ``03``).
+(a JSON array of stages) and a **story** (a JSON object carrying ``globals`` and ``nodes``). A
+story is compiled and run with the story layer; a host function it calls must be supplied by the
+command, and a missing one is reported with ``UP2-E1010``.
 
 ``up2 trial --trace`` reports the run's per-stage trace (``06`` §5.1): the events in evaluation
 order, as one JSON document with ``--json`` and as one line per event without it. A trace changes
-nothing about the run, and a story still stops at its first suspension -- the trace then ends at the
-effect event that suspended it, which is what the trial bench displays as "it handed this out here".
+nothing about the run: a story that calls a missing host function still fails with ``UP2-E1010``,
+and the trace carries the events up to that failure.
 
 Value conventions:
 - ``--global K=V`` / ``--product K=V``: ``V`` is parsed as JSON and falls back to a string.

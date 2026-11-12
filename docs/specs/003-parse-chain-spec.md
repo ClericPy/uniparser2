@@ -60,7 +60,7 @@ Two consequences are the point of the design:
 }
 ```
 
-**One site, one JSON.** The nodes are the site's parsing and fetching steps in one file: a list
+**One site, one JSON.** The nodes are the site's parsing and fetching work in one file: a list
 node, a detail node, and a node that composes them. The file is plain data, so `dumps(loads(x))` is
 a fixed point and a bad bundle fails at compile time.
 
@@ -637,7 +637,7 @@ the current value in a payload.
 
 ## 13. Open questions
 
-- **Pagination**: a bounded story-level step, or a host loop over `run(node=…)`. Deferred.
+- **Pagination**: a bounded story-level pass, or a host loop over `run(node=…)`. Deferred.
 - **`first_ok`**: a fallback group over several parser nodes. Deferred, separate change.
 - **Cross-story calls**: the host composes; the kernel does not read the store.
 - **A field-map node with a type**: the wrapper node (`["node","fields"], ["type", …]`) is the

@@ -1,12 +1,12 @@
 """The default synchronous downloader (change `default-host-downloader`).
 
-The kernel never fetches anything: a story that produces a ``Request`` product suspends the run, and
-the **host** answers (`03` §4.1, §5). This module is the host side of that answer, so it may do IO
--- it lives outside ``core/``, which stays pure (`01`` I1, N1).
+The kernel never fetches anything: a story calls a host function (``["udf","fetch"]``) and the
+**host** answers (`03` §5). This module is the host side of that call, so it may do IO -- it lives
+outside ``core/``, which stays pure (`01`` I1, N1).
 
-The request is the kernel's own shape: the ``Request`` product's mapping (``url`` / ``method`` /
-``headers`` / ``timeout`` / ``body`` / ``params`` / ``json``, ``03`` §4.1). The response is the
-shape the sample hosts read with ``py.getattr``: ``text`` and ``url``.
+The request is one JSON object (``url`` / ``method`` / ``headers`` / ``timeout`` / ``body`` /
+``params`` / ``json``, ``03`` §4.1). The response is the shape a chain reads with ``py.getattr``:
+``text`` and ``url``.
 
 **Standard library only.** The runtime dependencies of this package are empty by contract, so the
 downloader is written against ``urllib``; a host that wants sessions, retries, cookies or rate
@@ -34,7 +34,7 @@ _USER_AGENT: Final = "uniparser2 (+https://github.com/ClericPy/uniparser2)"
 
 @dataclass(frozen=True, slots=True)
 class Response:
-    """What a host answers a suspension with: the body and where it came from.
+    """What ``fetch`` answers: the body and where it came from.
 
     ``text`` is the decoded body and ``url`` the final URL after redirects -- the two the sample
     hosts read with ``["py","getattr","text"]`` and ``["py","getattr","url"]``. ``status_code`` and

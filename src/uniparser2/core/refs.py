@@ -37,10 +37,11 @@ LIT_DIRECTIVE: Final = "$lit"
 RESERVED_ROOTS: Final = ("globals", "locals", "public", "in", "obj")
 WRITABLE_ROOTS: Final = ("locals", "public")
 INPUT_ROOT: Final = "in"
-"""The root naming **this step's own input** (``$in.url``, design doc 03 §2.1).
+"""The root naming **this node invocation's input** (``$in.url``, design doc 03 §2.1).
 
-A story step's input is the value the step was handed (the previous step's product, a host answer,
-or the run's own input for the first step), and it has no ``locals`` round-trip: ``$in`` names it.
+A node invocation's input is the value the caller handed over (the stage value before a
+``["node", name]`` call, or the run's own input at the top), and it has no ``locals`` round-trip:
+``$in`` names it.
 """
 OBJ_ROOT: Final = "obj"
 """The root naming **the value the current stage received** (design D11/D14).
@@ -135,9 +136,10 @@ class Scope:
     innermost scope holding the first segment of a path resolves the whole path, so a name this
     scope wrote is never resolved in a parent, however deep the path goes.
 
-    ``step_input`` is the value ``$in`` names: the input of the **story step** being evaluated (a
-    field chain inside one step still sees the step's input, never the element ``each`` handed it).
-    It stays unset when nothing was handed in, and a read of ``$in`` then fails (`UP2-E2001`).
+    ``step_input`` is the value ``$in`` names: the input of the **node invocation** being evaluated
+    (a field chain inside one node still sees the node's input, never the element ``each`` handed
+    it). It stays unset when nothing was handed in, and a read of ``$in`` then fails
+    (`UP2-E2001`).
 
     ``iteration`` is which fan-out result this scope evaluates: the ordinal its fan-out operator
     gave it for that element, or ``None`` at the top of a run. The trace reports it as ``item``
@@ -217,7 +219,10 @@ class Scope:
             if self.step_input is _NO_STEP_INPUT:
                 return Failed(
                     code="UP2-E2001",
-                    reason=f"{ref.raw} names this step's input, and no input was handed to it",
+                    reason=(
+                        f"{ref.raw} names this node invocation's input, "
+                        "and no input was handed to it"
+                    ),
                     fix="hand the run a value, or write the step that produces this input",
                 )
             return _walk_path(self.step_input, ref)

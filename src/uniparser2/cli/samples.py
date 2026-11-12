@@ -170,10 +170,10 @@ def record_expected(case: SampleCase, product: Any) -> str | None:
 def run_graph(graph: Any, value: Any, *, cache: RequestCache | None = None) -> GraphRun:
     """Run a chain over one input through the executor its shape selects (`03` §2, §5).
 
-    A story runs to its collected product through the story executor; a field chain through the
-    field evaluator. Both are synchronous and IO-free: a story that suspends on a ``Request`` is
-    answered from the **request cache**, and a request with no cached answer is a miss -- the
-    runner never reaches the network (`03` §4.1).
+    A story runs to its exit product through the story executor; a field chain through the field
+    evaluator. Both are synchronous and IO-free: a story's ``fetch`` host function is answered from
+    the **request cache**, and a request with no cached answer is a miss -- the runner never reaches
+    the network (`03` §4.1).
     """
     if isinstance(graph, Mapping) and "nodes" in graph:
         return _run_story(graph, value, cache)

@@ -24,9 +24,10 @@ jobs:
         # publish cp315/abi3 wheels, so the cell is usable. Drop the pre-release note once stable.
         python-version: ["3.12", "3.13", "3.14", "3.15"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      # setup-uv stopped publishing floating major tags after v7, so this one is an exact tag.
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true

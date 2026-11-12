@@ -1,0 +1,11 @@
+<html>
+  <body>
+    <table id="books">
+      <thead><tr><th>#</th><th>Title</th><th>Price</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>  Book A  </td><td>$10.00</td></tr>
+        <tr><td>2</td><td>Book B</td><td>$12.50</td></tr>
+      </tbody>
+    </table>
+  </body>
+</html>

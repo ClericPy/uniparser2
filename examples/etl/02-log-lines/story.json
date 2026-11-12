@@ -1,0 +1,17 @@
+{
+  "nodes": {
+    "events": [
+      ["py", "split", "\n"],
+      ["py", "filter"],
+      [
+        "each",
+        {
+          "time": [["re", "search", ["(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})", 1]]],
+          "level": [["re", "search", ["\\b(INFO|WARN|ERROR)\\b", 1]]],
+          "user": [["re", "search", ["user=(\\w+)", 1]]],
+          "action": [["re", "search", ["action=(\\w+)", 1]]]
+        }
+      ]
+    ]
+  }
+}

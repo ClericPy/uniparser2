@@ -1,0 +1,11 @@
+{
+  "nodes": {
+    "tags": [
+      ["py", "split", "\n"],
+      ["py", "filter"],
+      ["py", "uniq"],
+      ["py", "sort"],
+      ["py", "slice", ":2"]
+    ]
+  }
+}

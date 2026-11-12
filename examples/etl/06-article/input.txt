@@ -1,0 +1,8 @@
+<html>
+  <head><meta name="PubDate" content="2026-11-01 10:30:00"></head>
+  <body>
+    <h1 class="article-title">  Notice   on    Service Items </h1>
+    <div class="content"><p>Body text.</p><script>console.log('ignored')</script></div>
+    <a class="download" href="/files/list.pdf">Download</a>
+  </body>
+</html>

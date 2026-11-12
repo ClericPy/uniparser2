@@ -1,0 +1,15 @@
+{
+  "globals": {"base_url": "https://example.com/news/"},
+  "nodes": {
+    "article": {
+      "title": [["css1", "text", "h1.article-title"], ["py", "normalize_space"]],
+      "published": [
+        ["css1", "@content", "meta[name=PubDate]"],
+        ["py", "strptime", "%Y-%m-%d %H:%M:%S"],
+        ["py", "strftime", "%Y-%m-%d"]
+      ],
+      "pdf": [["css1", "@href", "a.download"], ["py", "urljoin", "$globals.base_url"]],
+      "body": [["css1", "text", "div.content"], ["py", "normalize_space"]]
+    }
+  }
+}

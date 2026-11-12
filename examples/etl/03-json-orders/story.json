@@ -1,0 +1,16 @@
+{
+  "nodes": {
+    "orders": [
+      ["py", "from_json"],
+      ["py", "getitem", "orders"],
+      [
+        "each",
+        {
+          "id": [["py", "getitem", "id"]],
+          "total": [["py", "getitem", "total"], ["py", "float"]],
+          "item_count": [["py", "getitem", "items"], ["py", "len"]]
+        }
+      ]
+    ]
+  }
+}

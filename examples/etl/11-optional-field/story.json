@@ -1,0 +1,8 @@
+{
+  "nodes": {
+    "record": {
+      "title": [["json", "title"]],
+      "subtitle": [["json", "subtitle"], ["py", "or", ["N/A"]]]
+    }
+  }
+}

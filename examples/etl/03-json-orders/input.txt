@@ -1,0 +1,6 @@
+{
+  "orders": [
+    {"id": "A1", "total": 12.5, "items": [{"sku": "x", "qty": 2}, {"sku": "y", "qty": 1}]},
+    {"id": "A2", "total": 7, "items": []}
+  ]
+}

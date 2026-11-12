@@ -1,0 +1,17 @@
+{
+  "nodes": {
+    "records": [
+      ["py", "split", "\n"],
+      ["py", "filter"],
+      ["py", "slice", "1:"],
+      [
+        "each",
+        {
+          "id": [["py", "split", ","], ["py", "getitem", 0], ["py", "int"]],
+          "name": [["py", "split", ","], ["py", "getitem", 1], ["py", "strip"]],
+          "amount": [["py", "split", ","], ["py", "getitem", 2], ["py", "float"]]
+        }
+      ]
+    ]
+  }
+}

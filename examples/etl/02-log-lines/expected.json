@@ -1,0 +1,20 @@
+[
+  {
+    "time": "2026-11-01 10:00:00",
+    "level": "INFO",
+    "user": "alice",
+    "action": "login"
+  },
+  {
+    "time": "2026-11-01 10:05:00",
+    "level": "WARN",
+    "user": "bob",
+    "action": "logout"
+  },
+  {
+    "time": "2026-11-01 10:06:00",
+    "level": "ERROR",
+    "user": "carol",
+    "action": "upload"
+  }
+]

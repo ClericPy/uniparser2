@@ -1,0 +1,15 @@
+{
+  "nodes": {
+    "people": [
+      ["py", "from_json"],
+      ["py", "getitem", "people"],
+      [
+        "each",
+        {
+          "name": [["py", "getitem", "name"]],
+          "slug": [["py", "getitem", "name"], ["udf", "slugify"]]
+        }
+      ]
+    ]
+  }
+}

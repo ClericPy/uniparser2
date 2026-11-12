@@ -1,0 +1,15 @@
+{
+  "nodes": {
+    "items": [
+      ["xpath", "nodes", "//item"],
+      [
+        "each",
+        {
+          "title": [["xpath", "text", "./title"], ["py", "first"]],
+          "link": [["xpath", "text", "./link"], ["py", "first"]],
+          "date": [["xpath", "text", "./date"], ["py", "first"]]
+        }
+      ]
+    ]
+  }
+}

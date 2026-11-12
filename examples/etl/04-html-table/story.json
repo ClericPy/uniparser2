@@ -1,0 +1,15 @@
+{
+  "nodes": {
+    "rows": [
+      ["css", "nodes", "table#books tbody tr"],
+      [
+        "each",
+        {
+          "rank": [["css1", "text", "td:nth-child(1)"], ["py", "int"]],
+          "title": [["css1", "text", "td:nth-child(2)"], ["py", "normalize_space"]],
+          "price": [["css1", "text", "td:nth-child(3)"], ["py", "strip"]]
+        }
+      ]
+    ]
+  }
+}

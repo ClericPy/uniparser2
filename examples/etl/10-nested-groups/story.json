@@ -1,0 +1,22 @@
+{
+  "nodes": {
+    "groups": [
+      ["py", "from_json"],
+      ["py", "getitem", "groups"],
+      ["each", [["node", "group"]]]
+    ],
+    "group": {
+      "category": [["py", "getitem", "category"]],
+      "items": [
+        ["py", "getitem", "items"],
+        [
+          "each",
+          {
+            "id": [["py", "getitem", "id"]],
+            "name": [["py", "getitem", "name"], ["py", "normalize_space"]]
+          }
+        ]
+      ]
+    }
+  }
+}

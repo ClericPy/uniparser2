@@ -1,0 +1,5 @@
+[
+  {"id": 1, "name": "Alice", "amount": 10.5},
+  {"id": 2, "name": "Bob", "amount": 20.0},
+  {"id": 3, "name": "Carol", "amount": 7.25}
+]

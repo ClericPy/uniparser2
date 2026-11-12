@@ -1,0 +1,9 @@
+{
+  "nodes": {
+    "invoice": [
+      ["py", "from_json"],
+      ["py", "getitem", "invoice"],
+      ["type", "Invoice"]
+    ]
+  }
+}

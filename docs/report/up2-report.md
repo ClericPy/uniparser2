@@ -2,7 +2,7 @@
 
 What each case ran on, what its selector matched, and what came out: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `tests/report/test_catalogue.py` fails when it is stale (`UP2_UPDATE_REPORT=1 uv run pytest tests/report` rewrites it). The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
 
-Generated from `uniparser2` 0.7.0 · one case per `(operator, action)` pair the catalogue covers (the coverage check above names any pair it does not), plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
+Generated from `uniparser2` 0.8.0 · one case per `(operator, action)` pair the catalogue covers (the coverage check above names any pair it does not), plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
 
 ## Coverage check
 
@@ -96,7 +96,7 @@ Input sample for this section — the same input for every card below:
 - matched: `1 node · script`
 - chain: `[["css", "remove", "script,style"]]`
 - input: the section sample above (shown in full)
-- output: `Ok(value=<DomNode HTMLParser>)` (Ok)
+- output: `Ok(value=<DomNode LexborHTMLParser>)` (Ok)
 
 #### `nodes` — the set of matching nodes
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
@@ -104,7 +104,7 @@ Input sample for this section — the same input for every card below:
 - matched: `2 nodes · a (×2)`
 - chain: `[["css", "nodes", "ul.rel a"]]`
 - input: the section sample above (shown in full)
-- output: `Ok(value=[<DomNode Node>, <DomNode Node>])` (Ok)
+- output: `Ok(value=[<DomNode LexborNode>, <DomNode LexborNode>])` (Ok)
 
 #### `exists` — whether the selector matches at least one node
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
@@ -128,7 +128,7 @@ Input sample for this section — the same input for every card below:
 - matched: `1 node · div.content`
 - chain: `[["css", "self", "div.content"]]`
 - input: the section sample above (shown in full)
-- output: `Ok(value=<DomNode Node>)` (Ok)
+- output: `Ok(value=<DomNode LexborNode>)` (Ok)
 
 ### Compositions (multi-stage chains)
 
@@ -154,7 +154,7 @@ Input sample for this section — the same input for every card below:
 - tier ★★★ Core
 - note: node set → count
 - chain:
-  - `["css", "nodes", "ul.rel a"]` → `Ok(value=['<DomNode Node>', '<DomNode Node>'])`
+  - `["css", "nodes", "ul.rel a"]` → `Ok(value=['<DomNode LexborNode>', '<DomNode LexborNode>'])`
   - `["py", "len"]` → `Ok(value=2)`
 - input: the section sample above (shown in full)
 - output: `Ok(value=2)` (Ok)
@@ -174,7 +174,7 @@ Input sample for this section — the same input for every card below:
 |---|---|---|---|---|
 | `[["css", "txt", "h1"]]` | `UP2-E1002` | `/0/1` | operator 'css' does not know action 'txt' | use one of the following legal actions |
 | `[["css", "@", "h1"]]` | `UP2-E1002` | `/0/1` | an attribute name must follow `@` | write "@href" / "@content" |
-| `[["css", "text", "!!!"]]` | `UP2-E1005` | `/0/2/selector` | invalid CSS selector: Bad CSS Selectors: !!! | fix the selector; an empty string means "the current node itself" |
+| `[["css", "text", "!!!"]]` | `UP2-E1005` | `/0/2/selector` | invalid CSS selector: Can't parse CSS selector. | fix the selector; an empty string means "the current node itself" |
 | `[["css", "$text", "h1"]]` | `UP2-E1002` | `/0/1` | operator 'css' does not know action '$text' | use one of the following legal actions |
 
 
@@ -238,7 +238,7 @@ Input sample for this section — the same input for every card below:
 - matched: `1 node · script`
 - chain: `[["css1", "remove", "script,style"]]`
 - input: the section sample above (shown in full)
-- output: `Ok(value=<DomNode HTMLParser>)` (Ok)
+- output: `Ok(value=<DomNode LexborHTMLParser>)` (Ok)
 
 #### `nodes` — the set of matching nodes
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
@@ -246,7 +246,7 @@ Input sample for this section — the same input for every card below:
 - matched: `2 nodes · a (×2) — only the first match is used`
 - chain: `[["css1", "nodes", "ul.rel a"]]`
 - input: the section sample above (shown in full)
-- output: `Ok(value=[<DomNode Node>])` (Ok)
+- output: `Ok(value=[<DomNode LexborNode>])` (Ok)
 
 #### `exists` — whether the selector matches at least one node
 - tier ★★ Common · parameter slot: the value itself · `selector: literal`
@@ -270,7 +270,7 @@ Input sample for this section — the same input for every card below:
 - matched: `1 node · div.content`
 - chain: `[["css1", "self", "div.content"]]`
 - input: the section sample above (shown in full)
-- output: `Ok(value=<DomNode Node>)` (Ok)
+- output: `Ok(value=<DomNode LexborNode>)` (Ok)
 
 ### Compositions (multi-stage chains)
 

@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
 
+import uniparser2
 from uniparser2.cli.main import EXIT_FAILED, EXIT_OK, EXIT_USAGE, main
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +29,10 @@ def test_version_flag(capsys) -> None:
     except SystemExit as exc:
         assert exc.code == 0
     assert "uniparser2" in capsys.readouterr().out
+
+
+def test_version_comes_from_the_installed_metadata() -> None:
+    assert uniparser2.__version__ == version("uniparser2")
 
 
 def test_no_command_prints_help() -> None:

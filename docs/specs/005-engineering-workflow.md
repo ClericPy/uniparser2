@@ -208,7 +208,7 @@ up2 conformance --check          # a non-zero exit code means acceptance failed
 2. **A test must not contain the literal of a "deliberately nonexistent" code** (such as `UP2-E9999`): it too counts as a coverage declaration and pollutes the repository-level audit. Such a test has to build it as `"UP2-E" + "9999"`.
 3. **`tests/` must be a real package** (an `__init__.py` in every subdirectory): otherwise same-name test files in different directories shadow each other as far as mypy is concerned (`Duplicate module named "test_errors"`), and mypy's `module = ["tests.*"]` override rule fails to match (it requires fully qualified names).
 
-> This mechanism is the direct implementation of "the test cases that nail down all syntax at the DSL operator layer guarantee this part is complete and consistent": **completeness** is guaranteed by set coverage (declaration ⊆ coverage and coverage ⊆ declaration), and **consistency** by "parameterize the same group of assertions over every action" plus the engine contract assertions. The latest measurement round (the 0.7.0 node model): 81 declared `(operator, action)` pairs = 81 covered pairs, all 35 implemented error codes have cases, and `up2 conformance --check` exits 0.
+> This mechanism is the direct implementation of "the test cases that nail down all syntax at the DSL operator layer guarantee this part is complete and consistent": **completeness** is guaranteed by set coverage (declaration ⊆ coverage and coverage ⊆ declaration), and **consistency** by "parameterize the same group of assertions over every action" plus the engine contract assertions. The latest measurement round (0.8.0): 81 declared `(operator, action)` pairs = 81 covered pairs, all 36 implemented error codes have cases, and `up2 conformance --check` exits 0.
 
 ### 4.2 TDD rhythm (red-green-refactor)
 
@@ -343,13 +343,26 @@ rules.
 
 | Item | Practice |
 |---|---|
-| Version source | the `__version__` literal in `src/uniparser2/__init__.py` (`[tool.hatch.version]` reads it); `up2 --version` reads the same place |
+| Version source | `[project] version` in `pyproject.toml`, managed by `uv version --bump patch\|minor` (it re-locks and syncs); `up2 --version` reads the installed distribution metadata |
 | Version policy | during `0.x`: a new capability bumps minor, a bug fix bumps patch, and **an incompatible DSL syntax change bumps minor and is flagged in the CHANGELOG** |
 | Build | `uv build` (sdist + wheel) |
 | Release | `uv build` then `uv publish`, run **locally** by a person; the token comes from `UV_PUBLISH_TOKEN` in the environment and is **never stored**. There is no GitHub release workflow and no repository credential. |
 | Package name | `uniparser2` (settled in `07` §4-a: the name is available; the CLI stays `up2`) |
 | CHANGELOG | accumulated by archiving OpenSpec changes; each change corresponds to one section |
 | Pre-release gate | every check of §6 green + every `docs/specs` document agrees with the code |
+
+**One command**: `tools/release.py` runs the routine gates (lock, format, lint, types, tests with
+coverage, conformance), builds, verifies the wheel metadata and smoke-installs it; security and
+dependency audits stay conditional (§6). `--publish` uploads only when `UV_PUBLISH_TOKEN` is set.
+
+```bash
+uv version --bump patch          # optional; write the CHANGELOG section for the new version
+uv run python tools/release.py   # gates + build; prints the next command
+UV_PUBLISH_TOKEN=... uv run python tools/release.py --publish
+```
+
+It refuses to publish from a dirty tree unless `--allow-dirty`, requires a `## [<version>]` CHANGELOG
+section, and never reads or stores a credential. Publishing remains a separately authorized action.
 
 **Not done on the user's behalf**: commit / push / installing dependencies / release are all executed only after the user initiates them or explicitly authorizes them (`~/.dsh/AGENTS.md` §1).
 

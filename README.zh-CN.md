@@ -291,7 +291,7 @@ uv run up2 test example.com 政府文件列表     # 不一致时打印 JSON Poi
 <details>
 <summary><b>状态与路线图</b></summary>
 
-**0.7.0。** L1（算子层）已完成并有机械审计。L2 是 **story** 模型：`globals` + `nodes`、节点调用、
+**0.8.0。** L1（算子层）已完成并有机械审计。L2 是 **story** 模型：`globals` + `nodes`、节点调用、
 字段表与 `$locals`、`["type", …]`、同步的 `run` 门面，以及作为宿主 `udf` 的 `fetch`。L3 的**模板仓库**
 已落地：文件与 SQLite 两种实现、指纹、只增审计，以及 `publish` / `get` / `audit` / `snapshot` /
 `test` / `doctor` 命令。仓库里的 `samples/*/site.json` 和宿主脚本可端到端运行。

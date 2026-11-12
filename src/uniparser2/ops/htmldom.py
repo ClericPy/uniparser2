@@ -115,17 +115,13 @@ class DomNode(Opaque):
 
 
 def _html_parser() -> Any:
-    """The parser class the adapter builds with.
+    """The lexbor parser class (selectolax >= 1.0).
 
-    selectolax 1.0 removed ``selectolax.parser`` (the modest backend) and raises ``ImportError`` on
-    import, pointing at ``selectolax.lexbor.LexborHTMLParser``. Both classes expose the methods
-    used here (``css`` / ``css_first`` / ``text`` / ``html`` / ``attributes`` / ``decompose`` /
-    ``strip_tags`` / ``iter(include_text=)``), so the adapter only has to pick one.
+    selectolax 1.0 removed the modest ``selectolax.parser`` backend. The lexbor class exposes every
+    method this adapter uses (``css`` / ``css_first`` / ``text`` / ``html`` / ``attributes`` /
+    ``decompose`` / ``strip_tags`` / ``iter(include_text=)``).
     """
-    try:
-        return importlib.import_module("selectolax.parser").HTMLParser
-    except ImportError:
-        return importlib.import_module("selectolax.lexbor").LexborHTMLParser
+    return importlib.import_module("selectolax.lexbor").LexborHTMLParser
 
 
 class SelectolaxEngine:
@@ -134,7 +130,7 @@ class SelectolaxEngine:
     **Three API facts hit by measurement** (writing from old memory gets them wrong): ``Node`` has
     no ``clone()`` and no ``outer_html``; ``node.html`` returns the **outer** HTML. So "take a
     copy" can only re-parse ``node.html``, and "inner HTML" can only concatenate the ``html`` of
-    the direct children. The facts hold for both the modest backend (0.x) and lexbor (1.x).
+    the direct children.
     """
 
     name = _SELECTOLAX

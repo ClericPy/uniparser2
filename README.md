@@ -301,7 +301,7 @@ uv run up2 test example.com 政府文件列表     # a mismatch prints a JSON Po
 <details>
 <summary><b>Status and roadmap</b></summary>
 
-**0.7.0.** L1 (the operator layer) is complete and mechanically audited. L2 is the **story** model:
+**0.8.0.** L1 (the operator layer) is complete and mechanically audited. L2 is the **story** model:
 `globals` + `nodes`, node calls, field maps and `$locals`, `["type", …]`, the synchronous `run`
 facade, and `fetch` as a host `udf`. L3's **template store** is in: file and SQLite implementations,
 fingerprints, append-only audit, and the `publish` / `get` / `audit` / `snapshot` / `test` / `doctor`

@@ -10,6 +10,8 @@ design doc 01 §1.1).
 from __future__ import annotations
 
 import logging
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _distribution_version
 
 from . import ops as _ops  # noqa: F401  register built-in operators (explicit registry)
 from .core import (
@@ -55,8 +57,11 @@ from .core import (
 from .core.udfs import get_udf, register_udf, udf_names, unregister_udf
 from .host import load_entry_point_udfs
 
-__version__ = "0.7.1"
-"""The single source of the version: ``[tool.hatch.version]`` in ``pyproject.toml`` reads it."""
+try:
+    __version__ = _distribution_version("uniparser2")
+except PackageNotFoundError:  # a source tree that was never installed
+    __version__ = "0.0.0+unknown"
+# The installed distribution's version: `uv version` manages `[project] version` in pyproject.toml.
 
 logger = logging.getLogger("uniparser2")
 # Do not take over the host's logging configuration (essence §C library logging rules).

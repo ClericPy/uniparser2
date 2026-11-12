@@ -1,6 +1,6 @@
 [project]
 name = "uniparser2"
-dynamic = ["version"]
+version = "0.8.0"
 description = "A declarative, deterministic, serializable text parsing engine"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -31,7 +31,7 @@ Changelog = "https://github.com/ClericPy/uniparser2/blob/master/CHANGELOG.md"
 Documentation = "https://github.com/ClericPy/uniparser2/blob/master/README.md"
 
 [project.optional-dependencies]
-html = ["selectolax>=0.3.21"]
+html = ["selectolax>=1.0"]
 xml = ["lxml>=5.0"]
 json = ["jmespath>=1.0.1"]
 md = ["html-to-markdown>=3.0"]
@@ -55,10 +55,6 @@ dev = [
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
-
-[tool.hatch.version]
-# Single source of truth for the version: the __version__ literal in src/uniparser2/__init__.py.
-path = "src/uniparser2/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 # The PEP 561 marker py.typed lives inside the package directory and ships with the wheel.
@@ -99,7 +95,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests", "demo.py", "tools/demo_report.py"]
+files = ["src", "tests", "demo.py", "tools"]
 # The sample hosts and the example hosts are standalone scripts with the same module name
 # (`host.py`) in several directories; they are exercised by the CLI/sample/example tests, not
 # type-checked as a package.

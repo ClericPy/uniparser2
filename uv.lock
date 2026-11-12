@@ -760,6 +760,7 @@ wheels = [
 
 [[package]]
 name = "uniparser2"
+version = "0.8.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -796,17 +797,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "html-to-markdown", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "html-to-markdown", marker = "extra == 'md'", specifier = ">=3.0" },
-    { name = "jmespath", marker = "extra == 'all'", specifier = ">=1.0.1" },
     { name = "jmespath", marker = "extra == 'json'", specifier = ">=1.0.1" },
-    { name = "lxml", marker = "extra == 'all'", specifier = ">=5.0" },
     { name = "lxml", marker = "extra == 'xml'", specifier = ">=5.0" },
     { name = "pydantic-monty", marker = "extra == 'code'", specifier = ">=1.0.0" },
-    { name = "selectolax", marker = "extra == 'all'", specifier = ">=0.3.21" },
-    { name = "selectolax", marker = "extra == 'html'", specifier = ">=0.3.21" },
+    { name = "selectolax", marker = "extra == 'html'", specifier = ">=1.0" },
+    { name = "uniparser2", extras = ["html", "xml", "json", "md"], marker = "extra == 'all'" },
 ]
-provides-extras = ["all", "code", "html", "json", "md", "xml"]
+provides-extras = ["html", "xml", "json", "md", "code", "all"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -10,6 +10,17 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-12
+
+### Changed
+
+- **The version lives in `pyproject.toml` and `uv version` manages it**: `uv version --bump
+  patch|minor` rewrites `[project] version`, re-locks and syncs in one step, and the runtime
+  `__version__` reads the installed distribution metadata instead of a literal.
+- **The `html` extra requires selectolax 1.x**: the modest backend is gone, so the adapter imports
+  `selectolax.lexbor.LexborHTMLParser` directly and `[html]` declares `>=1.0`; the 0.7.1 fallback is
+  removed.
+
 ## [0.7.1] - 2026-11-12
 
 ### Fixed

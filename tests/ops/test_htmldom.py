@@ -15,7 +15,6 @@ Coverage has two layers:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -272,35 +271,6 @@ def test_chain_hands_node_to_next_step(fake: FakeEngine) -> None:
     """The node produced by the previous stage can be fed straight to the next one (``DomNode``)."""
     assert run([["css", "self", "h1"], ["css1", "text", ""]], "<p>x</p>") == Ok("Title")
     assert run([["css", "self", "h1"], ["css", "text", ""]], "<p>x</p>") == Ok(["Title"])
-
-
-def test_the_parser_prefers_selectolax_parser_and_falls_back_to_lexbor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """0.x keeps the modest backend; 1.0 removed it, so the adapter takes lexbor."""
-
-    class Modest:
-        pass
-
-    class Lexbor:
-        pass
-
-    def both(name: str) -> Any:
-        if name == "selectolax.parser":
-            return SimpleNamespace(HTMLParser=Modest)
-        return SimpleNamespace(LexborHTMLParser=Lexbor)
-
-    target = "uniparser2.ops.htmldom.importlib"
-    monkeypatch.setattr(target, SimpleNamespace(import_module=both))
-    assert htmldom._html_parser() is Modest
-
-    def lexbor_only(name: str) -> Any:
-        if name == "selectolax.parser":
-            raise ImportError("the modest backend is gone")
-        return SimpleNamespace(LexborHTMLParser=Lexbor)
-
-    monkeypatch.setattr(target, SimpleNamespace(import_module=lexbor_only))
-    assert htmldom._html_parser() is Lexbor
 
 
 def test_real_engine_contract() -> None:

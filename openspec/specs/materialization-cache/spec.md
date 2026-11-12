@@ -55,20 +55,12 @@ SHALL be two entries.
 - **WHEN** a run materializes a document and then a different document in the same format
 - **THEN** the second materialization SHALL be a miss and SHALL build its own artifact
 
-### Requirement: The cache is bounded by bytes and by artifact count, with LRU eviction
+### Requirement: The cache is bounded by bytes and by artifact count
 
 The cache SHALL be bounded by `MAX_MATERIALIZE_BYTES`, accounted in the **materialized** bytes of the
 artifacts it holds rather than in the bytes of their sources, and by `MAX_MATERIALIZE_ITEMS`, the
-number of artifacts one run retains. When an insertion would exceed either bound, the cache SHALL evict
-least-recently-used entries until the bound holds. The accounting SHALL be observable, so a host or a
-test can read the materialized bytes and the number of artifacts the run currently holds. Eviction
-SHALL NOT change any result: an evicted source is materialized again on its next use.
-
-#### Scenario: The item bound evicts the least recently used artifact
-
-- **WHEN** a run materializes more artifacts than `MAX_MATERIALIZE_ITEMS` allows
-- **THEN** the run SHALL hold at most that many, the artifact it used least recently SHALL be the one
-  evicted, and a later use of that source SHALL be a miss that rebuilds it
+number of artifacts one run retains. The accounting MUST be observable, so a host or a test can read
+the materialized bytes and the number of artifacts the run currently holds.
 
 #### Scenario: The byte bound evicts by materialized size
 
@@ -76,6 +68,18 @@ SHALL NOT change any result: an evicted source is materialized again on its next
   `MAX_MATERIALIZE_BYTES`
 - **THEN** the cache SHALL evict least-recently-used artifacts until the accounting is within the
   bound, and the reported materialized bytes SHALL agree with the artifacts retained
+
+### Requirement: An insertion evicts the least-recently-used entries
+
+When an insertion would exceed either bound, the cache SHALL evict least-recently-used entries until
+the bound holds. A hit SHALL refresh the entry's recency. Eviction MUST NOT change any result: an
+evicted source is materialized again on its next use.
+
+#### Scenario: The item bound evicts the least recently used artifact
+
+- **WHEN** a run materializes more artifacts than `MAX_MATERIALIZE_ITEMS` allows
+- **THEN** the run SHALL hold at most that many, the artifact it used least recently SHALL be the one
+  evicted, and a later use of that source SHALL be a miss that rebuilds it
 
 #### Scenario: A hit refreshes the entry's recency
 

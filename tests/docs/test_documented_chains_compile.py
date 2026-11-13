@@ -21,7 +21,7 @@ from typing import Any, Final
 
 import pytest
 
-from uniparser2 import compile_field
+from uniparser2 import Up2Error, compile_field
 from uniparser2.core import registry
 
 _ROOT: Final = Path(__file__).resolve().parents[2]
@@ -68,7 +68,33 @@ def _candidate_spans() -> dict[str, str]:
 
 @pytest.mark.parametrize(("chain", "source"), sorted(_candidate_spans().items()))
 def test_the_documented_chain_compiles(chain: str, source: str) -> None:
-    compile_field(json.loads(chain))  # must not raise: the doc writes a chain the engine takes
+    _compile_documented(json.loads(chain))
+
+
+def _compile_documented(chain: list[Any]) -> None:
+    """Compile one documented chain; a missing optional dependency skips, anything else fails.
+
+    CI installs no extras (`05` §4): a documented `code` chain cannot compile there, and that is
+    the environment, not a doc defect — the same convention `tests/report` follows. The chain is
+    really compiled where the extra is installed, so the skip names the dependency.
+    """
+    try:
+        compile_field(chain)  # must not raise: the doc writes a chain the engine takes
+    except Up2Error as exc:
+        if exc.diagnostic.code == "UP2-E1107":
+            pytest.skip(f"optional dependency not installed here ({exc.diagnostic.message})")
+        raise  # any other code is a doc bug: the doc writes a chain the engine does not take
+
+
+def test_a_missing_optional_dependency_skips_not_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CI-parity guard: an uninstalled optional dependency must skip, never fail.
+
+    This exact shape broke CI once: `["code", …]` compiles where the `[code]` extra is installed
+    and raises `UP2-E1107` where it is not, and the difference is the environment, not the doc.
+    """
+    monkeypatch.setattr(registry, "action_missing_deps", lambda *args, **kwargs: ["pydantic_monty"])
+    with pytest.raises(pytest.skip.Exception):
+        _compile_documented(json.loads('["code", "len(obj) * 2"]'))
 
 
 def test_the_extractor_still_sees_the_documented_chains() -> None:

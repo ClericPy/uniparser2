@@ -117,37 +117,17 @@ cycle with `UP2-E1017`, naming the travel path and pointing at the stage that cl
 - **WHEN** `a` calls `b` and `b` calls `a`
 - **THEN** compilation fails with `UP2-E1017` and the message contains `a -> b -> a`
 
-### Requirement: `type` is a chain-tail validator
-
-A chain MAY end with `["type", "Name"]`. The stage SHALL build the host-registered type from the
-current value, carry the validated JSON on, and reject an unregistered name with `UP2-E1011` or a
-raising constructor with `UP2-E2019`. A `type` stage that is not the last stage of its chain MUST
-be rejected with `UP2-E1005`. A value the constructor approves but which is not JSON MUST fail with
-`UP2-E2003`.
-
-#### Scenario: A valid shape passes
-
-- **WHEN** the host registers `Article` and a chain ending with `["type","Article"]` produces a
-  mapping with the required keys
-- **THEN** the stage answers the mapping and the run continues
-
-#### Scenario: A missing key fails at the stage
-
-- **WHEN** the registered dataclass requires `title` and the value has no `title`
-- **THEN** the run fails with `UP2-E2019` and the constructor's message
-
-#### Scenario: A type stage in the middle is rejected
-
-- **WHEN** a chain is `[["type","Article"], ["py","strip"]]`
-- **THEN** compilation fails with `UP2-E1005` at the `type` stage
-
 ### Requirement: `run` is the synchronous facade
 
-The package SHALL expose `run(story, node=None, input=None, *, globals=None, udfs=None, trace=None)`.
-It MUST compile the story, merge `globals` over the story's constants and `udfs` over the process-wide
-table, execute the named node (the first when omitted) and return its product. A udf the chosen node
-reaches MUST be in the effective table, else `UP2-E1010` before evaluation. The run MUST be
-synchronous.
+The package SHALL expose `run(story, node=None, input=None, *, globals=None, udfs=None, types=None,
+trace=None)`. It MUST compile the story, merge `globals` over the story's constants, `udfs` over the
+process-wide udf table and `types` over the process-wide type registry, execute the named node (the
+first when omitted) and return its product. A udf the chosen node reaches MUST be in the effective
+table, else `UP2-E1010` before evaluation. The run MUST be synchronous.
+
+`types` MAY be a mapping of name → constructor, or a sequence of callables whose `__name__` is the
+name. The merge SHALL NOT mutate the process-wide registry, and two runs with different overlays SHALL
+resolve one name to their own constructors.
 
 #### Scenario: The first node is the default
 
@@ -173,6 +153,22 @@ synchronous.
 
 - **WHEN** a udf returns an awaitable
 - **THEN** the run fails with `UP2-E2009`
+
+#### Scenario: A run injects its own type
+
+- **WHEN** no host called `register_type` and the run passes `types={"Article": Article}`
+- **THEN** a `["type","Article"]` stage SHALL construct `Article` for that run
+
+#### Scenario: A class is named by its own name
+
+- **WHEN** the run passes `types=[Article]`
+- **THEN** the chain's `["type","Article"]` SHALL resolve, because the name comes from `__name__`
+
+#### Scenario: The overlay does not leak into the process
+
+- **WHEN** one run passes `types=[A]` and a later run passes nothing
+- **THEN** the later run SHALL fail `UP2-E1011` on `["type","A"]`, because the first run's table was
+  local to it
 
 ### Requirement: The exit product is JSON
 
@@ -210,3 +206,31 @@ udf SHALL report `UP2-E1010` listing the missing function names instead of reach
 
 - **WHEN** a story calls `["udf","fetch"]` and the CLI has no host
 - **THEN** the trial fails with `UP2-E1010` naming `fetch`
+
+### Requirement: `type` constructs the declared type
+
+A chain MAY carry `["type", "Name"]` at any position. The stage SHALL build the host-registered type
+from the current value and carry the **constructed value** onward, and it SHALL reject an unregistered
+name with `UP2-E1011` or a raising constructor with `UP2-E2019`. A `type` stage that is not the last
+stage of its chain MUST NOT be rejected: a later stage receives the constructed value. A constructed
+value that reaches the run's exit MUST fail with `UP2-E2003`, because the exit is JSON.
+
+#### Scenario: A constructed value flows on
+
+- **WHEN** the host registers `Article` and a chain is `[["type","Article"], ["py","getattr","title"]]`
+- **THEN** the stage SHALL answer the instance and the later stage SHALL read its `title`
+
+#### Scenario: A missing key fails at the stage
+
+- **WHEN** the registered dataclass requires `title` and the value has no `title`
+- **THEN** the run fails with `UP2-E2019` and the constructor's message
+
+#### Scenario: A type stage in the middle is accepted
+
+- **WHEN** a chain is `[["type","Article"], ["py","strip",""]]`
+- **THEN** compilation SHALL succeed and the stage SHALL run at its position
+
+#### Scenario: A constructed value cannot be the exit
+
+- **WHEN** the entry node's product is a constructed instance
+- **THEN** `run` SHALL fail with `UP2-E2003` at the entry node

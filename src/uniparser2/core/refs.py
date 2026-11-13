@@ -163,6 +163,12 @@ class Scope:
     """
     udfs: Mapping[str, Any] = field(default_factory=dict)
     """The run's udf table (process-wide defaults plus the run's overlay), shared by every scope."""
+    types: Mapping[str, Any] = field(default_factory=dict)
+    """The run's type table (process-wide registry plus the run's overlay), shared by every scope.
+
+    A `type` stage reads it, so ``run(..., types={...})`` reaches the stage without a second
+    parameter through the evaluator (``03`` §3.2).
+    """
     parent: Scope | None = None
     step_input: Any = _NO_STEP_INPUT
     iteration: int | None = None
@@ -197,6 +203,7 @@ class Scope:
             products=self.products,
             public=self.public,
             udfs=self.udfs,
+            types=self.types,
             parent=self,
             step_input=self.step_input,
             iteration=iteration,

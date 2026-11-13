@@ -17,7 +17,7 @@ is the conventional downloader), and a udf that answers an awaitable is rejected
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Final
@@ -30,6 +30,7 @@ from .export import pack
 from .limits import MAX_STORY_NODES
 from .refs import RESERVED_ROOTS, Scope
 from .trace import Trace
+from .types import TypeConstructor, all_types
 from .udfs import UdfFn, all_udfs, use_udfs
 from .values import type_name
 
@@ -142,17 +143,23 @@ def run(
     *,
     globals: Mapping[str, Any] | None = None,  # noqa: A002 - the story's own key
     udfs: Mapping[str, UdfFn] | None = None,
+    types: Mapping[str, TypeConstructor] | Sequence[TypeConstructor] | None = None,
     trace: Trace | None = None,
 ) -> Any:
     """Compile the story, run one node synchronously, and return its product.
 
     ``node`` defaults to the first node in the document. ``globals`` merges over the story's
-    constants for this run; ``udfs`` merges over the process-wide udf table. A udf name the chosen
-    node uses (directly or through a node call) but the effective table lacks is ``UP2-E1010``,
-    raised before evaluation. The product passes through ``pack``; a non-JSON exit is
-    ``UP2-E2003`` at the entry node.
+    constants for this run; ``udfs`` merges over the process-wide udf table and ``types`` over the
+    process-wide type registry, both for this run only. A udf name the chosen node uses (directly or
+    through a node call) but the effective table lacks is ``UP2-E1010``, raised before evaluation.
+    The product passes through ``pack``; a non-JSON exit is ``UP2-E2003`` at the entry node.
+
+    ``types`` is a name → constructor mapping, or a sequence of callables whose ``__name__`` is the
+    name. The merged table reaches a `type` stage through the scope, so two runs in one process may
+    resolve one name differently without touching the process-wide registry.
     """
     merged_udfs = {**all_udfs(), **(udfs or {})}
+    merged_types = {**all_types(), **_type_overlay(types)}
     story = compile_story(bundle, udfs=merged_udfs)
     entry = _entry_name(story, node)
     missing = sorted(story.udf_names_for(entry) - merged_udfs.keys())
@@ -167,7 +174,12 @@ def run(
             )
         )
     effective_globals = {**story.globals, **(globals or {})}
-    scope = Scope(globals=effective_globals, step_input=input, udfs=merged_udfs)
+    scope = Scope(
+        globals=effective_globals,
+        step_input=input,
+        udfs=merged_udfs,
+        types=merged_types,
+    )
     runner = _NodeRunner(story, scope, trace)
     product = runner.call(entry, input)
     packed = pack(product)
@@ -181,6 +193,17 @@ def run(
             )
         )
     return product
+
+
+def _type_overlay(
+    types: Mapping[str, TypeConstructor] | Sequence[TypeConstructor] | None,
+) -> dict[str, TypeConstructor]:
+    """A run's own type table: a name → constructor mapping, or callables named by ``__name__``."""
+    if types is None:
+        return {}
+    if isinstance(types, Mapping):
+        return dict(types)
+    return {item.__name__: item for item in types}
 
 
 def _entry_name(story: CompiledStory, node: str | None) -> str:

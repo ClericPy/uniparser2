@@ -32,8 +32,7 @@ logger = logging.getLogger("uniparser2")
 
 _DIRECTIVE_PREFIX = "$"
 NODE_OPERATOR: Final = "node"
-TYPE_OPERATOR: Final = "type"
-"""The two story-aware stages: a node call and a chain-tail type check."""
+"""The story-aware stage: a node call."""
 
 
 def compile_field(
@@ -97,25 +96,8 @@ def compile_field(
         for index, stage in enumerate(source_stages)
     )
     _check_try_directives(source_stages, pointer=pointer)
-    _check_type_tail(stages, pointer=pointer)
     logger.debug("compiled field: steps=%d ops=%s", len(stages), [item.op_name for item in stages])
     return CompiledField(stages=stages, source=source_stages, name=name)
-
-
-def _check_type_tail(stages: tuple[CompiledStage, ...], *, pointer: str) -> None:
-    """A `type` stage must be the last stage of its chain."""
-    for position, stage in enumerate(stages):
-        if stage.op_name != TYPE_OPERATOR:
-            continue
-        if position != len(stages) - 1:
-            raise Up2Error(
-                diag(
-                    "UP2-E1005",
-                    "a `type` stage must be the last stage of its chain",
-                    fix="move it to the end, or validate the value with a separate node",
-                    pointer=f"{pointer}/{position}",
-                )
-            )
 
 
 def _check_try_directives(source_stages: tuple[Stage, ...], *, pointer: str) -> None:

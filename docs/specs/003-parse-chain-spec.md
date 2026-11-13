@@ -172,36 +172,43 @@ story = {
 product = up2.run(story, "record", response)   # a missing title fails at the type stage
 ```
 
-### 3.3 Where validation happens
+### 3.3 Where a type is built
 
-`["type", name]` is a **chain-tail stage**. It builds the declared type from the current value,
-reports a mismatch at that stage, and continues with the JSON. The check cannot move to compile
-time: a story is compiled without a host, so the registry is only known for sure when the stage
-runs.
+`["type", name]` is an ordinary **constructor stage** and may appear anywhere in a chain. It builds
+the declared type from the current value and the chain carries on with **what the constructor
+answered** — a host object for a container type, JSON for a scalar one. The registry cannot be read
+at compile time: a story is compiled without a host, so it is only known for sure when the stage runs.
 
 | Situation | Code |
 |---|---|
-| no host registered the name | `UP2-E1011`, listing the names that are (the built-ins included) |
+| no host registered the name | `UP2-E1011`, listing the names that are (the built-ins and the run's overlay included) |
 | the constructor raised | `UP2-E2019`, with the constructor's own exception text in `reason` |
-| the approved value is not JSON | `UP2-E2003` |
-| the `type` stage is not the last stage of its chain | `UP2-E1005` at compile time |
+| a constructed value reaches the run's exit | `UP2-E2003` at the entry node |
 
 **A value that flows may be a host object; a run's exit must be JSON.** A response, a `selectolax`
-node handle and anything a `udf` returns may flow mid-chain and be read by `py.getattr` or a
-reference. The run boundary (`pack`, `UP2-E2003`) and a `type` stage are where that stops. A `type`
-constructor is a **validator, not a container**: building `Article(**fields)` proves the record's
-shape, and what the stage hands on is JSON, never the `Article` instance. Pydantic instances live on
-the host side: `model_validate` on the way in, `model_dump` on the way out.
+node handle and anything a `udf` or a `type` stage built may flow mid-chain and be read by
+`py.getattr`, a reference path, or a `udf` parameter. The **run boundary** (`pack`, `UP2-E2003`) is
+the one place that stops. A pydantic model is the same category as a dataclass: `Model(**payload)` is
+the constructor the stage already calls, and a `ValidationError` is `UP2-E2019`.
 
-A field-map node has no trailing stage, so a node that needs a named shape is written as a chain
-that calls the field-map node and then validates:
+A field-map node has no trailing stage of its own, so a record that must be typed is a chain that
+calls the field-map node and then builds:
 
 ```jsonc
-"record":  [["node", "fields"], ["type", "Article"]],
+"record":  [["node", "fields"], ["type", "Article"], ["py","getattr","title"]],
 "fields":  { "url": […], "title": […] }
 ```
 
 This keeps one rule — a node is a chain **or** a field map — and makes the call the only composer.
+
+**A run may carry its own type table.** `run(story, types={...})` merges an overlay over the
+process-wide registry for that run only, exactly like `udfs={...}`: a mapping of name → constructor,
+or a sequence of callables whose `__name__` is the name. Two runs in one process may therefore
+resolve one name differently, and the process-wide table is never mutated by a run.
+
+**Not supported as a type: `TypedDict`.** At runtime it erases to `dict` and validates nothing without
+a third-party checker, so registering one would advertise a check that does not happen. `NamedTuple`
+works with no special case — it is a callable with a `__name__`, and its instance is a host object.
 
 ---
 

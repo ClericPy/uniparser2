@@ -2,7 +2,7 @@
 
 What each case ran on, what its selector matched, and what came out: every entry below is the result of a **real run** (`uv run python tools/demo_report.py --md`). This file is generated — regenerate it after changing an operator; `tests/report/test_catalogue.py` fails when it is stale (`UP2_UPDATE_REPORT=1 uv run pytest tests/report` rewrites it). The local HTML build (`.cache/report/up2-report.html`) shows installed/missing dependency state and is not committed.
 
-Generated from `uniparser2` 0.8.0 · one case per `(operator, action)` pair the catalogue covers (the coverage check above names any pair it does not), plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
+Generated from `uniparser2` 0.9.0 · one case per `(operator, action)` pair the catalogue covers (the coverage check above names any pair it does not), plus multi-stage compositions, the shared mechanisms and the compile-time invalid forms.
 
 ## Coverage check
 

@@ -3,7 +3,9 @@
     "invoice": [
       ["py", "from_json"],
       ["py", "getitem", "invoice"],
-      ["type", "Invoice"]
+      ["type", "Invoice"],
+      ["ctx", "set", "locals._i"],
+      ["ctx", "dict", {"number": "locals._i.number", "total": "locals._i.total"}]
     ]
   }
 }

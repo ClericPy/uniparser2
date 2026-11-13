@@ -522,7 +522,7 @@ products. Anything else is `UP2-E1005`.
   deferred to `run`'s pre-flight, because the table is run state. A function that cannot accept the selected form
   is `UP2-E1005` at compile time when known.
 - **A udf may answer any value.** A host object (a response, a node handle) is carried by reference and read with
-  `py.getattr`; only the run's exit (`UP2-E2003`) and a `["type", …]` stage require JSON. An awaitable answer is
+  `py.getattr`; only the run's exit (`UP2-E2003`) requires JSON. An awaitable answer is
   `UP2-E2009`: the kernel is synchronous, so the host calls an async function in its own event loop before returning.
 - **`ctx` is not injected**: a function that needs the scope takes the payload the chain hands it; writing the scope
   stays `ctx.set`'s job.
@@ -643,19 +643,24 @@ stage value. The call shares the caller's `$locals` and `$public`, and the calle
 ### 6.14 `type` — validate a chain's product
 
 ```jsonc
-["type", "Article"]         // build the registered `Article` from the value, carry the JSON on
+["type", "Article"]         // build the registered `Article` from the value, carry it on
 ```
 
-`type` is a **chain-tail** operator: two slots, the type name in slot 2, one action (`check`). It applies the
-host's type registry at this stage:
+`type` is an ordinary **constructor** operator: two slots, the type name in slot 2, one action (`check`). It applies
+the host's type registry at this stage:
 
 - a mapping ⇒ `Cls(**payload)`, a list ⇒ `Cls(*items)`, anything else ⇒ `Cls(value)`;
-- the constructor is a **validator**: the stage answers the JSON the constructor approved, never the constructor's
-  object; an answer that is not JSON is `UP2-E2003`;
+- the constructor **is** the constructor: whatever it answers is what the chain carries on, so a container type
+  carries a host object that a later stage reads with `py.getattr` or hands to a `udf`;
+- the stage may appear **anywhere** in a chain (`chain-tail` was the rule until the value really flowed);
 - an unregistered name is `UP2-E1011`, listing the registered names; a constructor that raises is `UP2-E2019`,
   with its own exception text;
-- the stage MUST be the last stage of its chain; a later stage is `UP2-E1005`;
-- a field-map node has no trailing stage, so wrap it: `[["node","fields"], ["type","Article"]]`.
+- a constructed value at the run's **exit** is `UP2-E2003`, because the exit is JSON;
+- a run may inject its own table: `run(story, types={...})` (a name → constructor map, or a sequence of classes
+  named by `__name__`), the same overlay pattern `udfs={...}` uses.
+
+A pydantic model needs no special case — `Model(**payload)` is the same contract. A `TypedDict` is **not** a type:
+at runtime it erases to `dict` and validates nothing. `NamedTuple` works with no special case.
 
 ## 7. Compile-time error codes (`UP2-E1xxx`)
 

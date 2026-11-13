@@ -303,9 +303,17 @@ def test_an_element_local_does_not_leak_to_the_next_element() -> None:
 # ---------------------------------------------------------------- types
 
 
-def test_a_type_stage_validates_a_mapping() -> None:
-    story = _story({"a": [["py", "const", {"url": "u", "title": "t"}], ["type", "Article"]]})
-    assert run(story, "a") == {"url": "u", "title": "t"}
+def test_a_type_stage_constructs_the_declared_type() -> None:
+    story = _story(
+        {
+            "a": [
+                ["py", "const", {"url": "u", "title": "t"}],
+                ["type", "Article"],
+                ["py", "getattr", "title"],
+            ]
+        }
+    )
+    assert run(story, "a") == "t"
 
 
 def test_a_type_stage_reports_a_missing_key() -> None:
@@ -325,19 +333,28 @@ def test_a_non_json_type_answer_is_e2003() -> None:
     assert _run_error(story, "a").code == "UP2-E2003"
 
 
-def test_a_type_stage_must_be_last() -> None:
-    story = _story({"a": [["type", "Article"], ["py", "strip"]]})
-    assert _compile_error(story).code == "UP2-E1005"
+def test_a_type_stage_may_be_followed_by_another_stage() -> None:
+    """`type` is a constructor stage, not a chain tail: a stage after it reads the instance."""
+    story = _story(
+        {
+            "a": [
+                ["py", "const", {"url": "u", "title": "t"}],
+                ["type", "Article"],
+                ["py", "getattr", "url"],
+            ]
+        }
+    )
+    assert run(story, "a") == "u"
 
 
 def test_a_field_map_node_can_be_wrapped_by_a_type_node() -> None:
     story = _story(
         {
-            "a": [["node", "fields"], ["type", "Article"]],
+            "a": [["node", "fields"], ["type", "Article"], ["py", "getattr", "title"]],
             "fields": {"url": [["py", "const", "u"]], "title": [["py", "const", "t"]]},
         }
     )
-    assert run(story, "a") == {"url": "u", "title": "t"}
+    assert run(story, "a") == "t"
 
 
 # ---------------------------------------------------------------- udf

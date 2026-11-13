@@ -1,15 +1,16 @@
-"""The ``type`` stage: a chain-tail validation against the host type registry (design doc 03 §3)."""
+"""The ``type`` stage: it constructs the declared type from the value (design doc 03 §3)."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, is_dataclass
+from typing import Any, cast
 
 import pytest
 
 from uniparser2 import Up2Error, register_type, run, unregister_type
 from uniparser2.core import registry
+from uniparser2.core.types import type_names
 
 COVERS_PAIRS = (("type", "check"),)
 
@@ -39,9 +40,9 @@ def _story(chain: Any) -> dict[str, Any]:
     return {"nodes": {"a": chain}}
 
 
-def _run_error(chain: Any) -> Any:
+def _run_error(chain: Any, **kwargs: Any) -> Any:
     with pytest.raises(Up2Error) as info:
-        run(_story(chain), "a")
+        run(_story(chain), "a", **kwargs)
     return info.value.diagnostic
 
 
@@ -51,11 +52,51 @@ def test_the_operator_is_registered() -> None:
     assert instance.arity == 2
 
 
-def test_a_valid_shape_passes_and_stays_json() -> None:
-    assert run(_story([["py", "const", {"url": "u", "title": "t"}], ["type", "Article"]]), "a") == {
-        "url": "u",
-        "title": "t",
-    }
+def test_the_stage_answers_the_constructed_value() -> None:
+    """A later stage reads the instance, not the mapping it was built from."""
+    assert (
+        run(
+            _story(
+                [
+                    ["py", "const", {"url": "u", "title": "t"}],
+                    ["type", "Article"],
+                    ["py", "getattr", "title"],
+                ]
+            ),
+            "a",
+        )
+        == "t"
+    )
+
+
+def test_a_constructed_value_flows_mid_chain() -> None:
+    """`type` is not a chain tail: the stage may be followed by another stage."""
+    seen: list[Any] = []
+
+    def peek(value: Any) -> Any:
+        seen.append(value)
+        return "ok"
+
+    register_type("Peek", peek)
+    try:
+        assert (
+            run(
+                _story(
+                    [
+                        ["py", "const", {"url": "u", "title": "t"}],
+                        ["type", "Article"],
+                        ["type", "Peek"],
+                    ]
+                ),
+                "a",
+            )
+            == "ok"
+        )
+        assert is_dataclass(seen[0])
+        built = cast(_Article, seen[0])
+        assert built.title == "t"
+    finally:
+        unregister_type("Peek")
 
 
 def test_a_missing_key_is_e2019() -> None:
@@ -64,28 +105,22 @@ def test_a_missing_key_is_e2019() -> None:
     assert "title" in diagnostic.message
 
 
-def test_an_unregistered_name_is_e1011() -> None:
-    assert _run_error([["py", "const", {}], ["type", "Gone"]]).code == "UP2-E1011"
+def test_an_unregistered_name_is_e1011_and_names_the_registered_ones() -> None:
+    diagnostic = _run_error([["py", "const", {}], ["type", "Gone"]])
+    assert diagnostic.code == "UP2-E1011"
+    assert "Gone" in diagnostic.message
+    assert "Article" in diagnostic.message
 
 
-def test_a_non_json_answer_is_e2003() -> None:
-    assert _run_error([["py", "const", {"url": "u"}], ["type", "BadShape"]]).code == "UP2-E2003"
+def test_a_non_json_answer_flows_and_fails_only_at_the_exit() -> None:
+    """The stage carries what the constructor answered; the exit is what requires JSON."""
+    diagnostic = _run_error([["py", "const", {"url": "u"}], ["type", "BadShape"]])
+    assert diagnostic.code == "UP2-E2003"
 
 
-def test_the_stage_must_be_last() -> None:
-    with pytest.raises(Up2Error) as info:
-        run(_story([["type", "Article"], ["py", "strip"]]), "a")
-    assert info.value.diagnostic.code == "UP2-E1005"
-
-
-def test_a_field_map_node_is_wrapped_by_a_node_call() -> None:
-    story = {
-        "nodes": {
-            "a": [["node", "fields"], ["type", "Article"]],
-            "fields": {"url": [["py", "const", "u"]], "title": [["py", "const", "t"]]},
-        }
-    }
-    assert run(story, "a") == {"url": "u", "title": "t"}
+def test_a_container_answer_cannot_be_the_exit() -> None:
+    diagnostic = _run_error([["py", "const", {"url": "u", "title": "t"}], ["type", "Article"]])
+    assert diagnostic.code == "UP2-E2003"
 
 
 def test_a_builtin_conversion_failure_is_e2019() -> None:
@@ -106,18 +141,84 @@ class _Slug:
     text: str
 
 
-def test_a_dataclass_built_from_a_list_continues_with_the_payload() -> None:
-    """A list payload is approved as a list; it must not collapse into an empty product."""
+def test_a_dataclass_is_built_from_a_list() -> None:
     register_type("Pair", _Pair)
     try:
-        assert run(_story([["py", "const", [1, 2]], ["type", "Pair"]]), "a") == [1, 2]
+        assert (
+            run(
+                _story([["py", "const", [1, 2]], ["type", "Pair"], ["py", "getattr", "second"]]),
+                "a",
+            )
+            == 2
+        )
     finally:
         unregister_type("Pair")
 
 
-def test_a_dataclass_built_from_a_scalar_continues_with_the_payload() -> None:
+def test_a_dataclass_is_built_from_a_scalar() -> None:
     register_type("Slug", _Slug)
     try:
-        assert run(_story([["py", "const", "hello"], ["type", "Slug"]]), "a") == "hello"
+        assert (
+            run(
+                _story([["py", "const", "hello"], ["type", "Slug"], ["py", "getattr", "text"]]),
+                "a",
+            )
+            == "hello"
+        )
     finally:
         unregister_type("Slug")
+
+
+# ---------------------------------------------------------------- a run's own table
+
+
+def test_a_run_injects_types_by_name() -> None:
+    """The registry is host state; a run may carry its own table instead of registering."""
+    chain = [["py", "const", {"url": "u", "title": "t"}], ["type", "Article"]]
+    unregister_type("Article")
+    try:
+        diagnostic = _run_error(chain)
+        assert diagnostic.code == "UP2-E1011"
+        assert (
+            run(
+                _story([*chain, ["py", "getattr", "title"]]),
+                "a",
+                types={"Article": _Article},
+            )
+            == "t"
+        )
+    finally:
+        register_type("Article", _Article)
+
+
+def test_a_sequence_of_classes_is_named_by_its_own_name() -> None:
+    @dataclass
+    class Invoice:
+        number: str
+
+    chain = [["py", "const", {"number": "INV-1"}], ["type", "Invoice"], ["py", "getattr", "number"]]
+    assert run(_story(chain), "a", types=[Invoice]) == "INV-1"
+
+
+def test_a_run_overlay_does_not_leak_into_the_process() -> None:
+    @dataclass
+    class Overlay:
+        number: str
+
+    chain = [
+        ["py", "const", {"number": "INV-1"}],
+        ["type", "Overlay"],
+        ["py", "getattr", "number"],
+    ]
+    assert "Overlay" not in type_names()
+    assert run(_story(chain), "a", types=[Overlay]) == "INV-1"
+    assert _run_error(chain).code == "UP2-E1011"
+
+
+def test_the_effective_names_include_the_run_overlay() -> None:
+    @dataclass
+    class OnlyHere:
+        pass
+
+    assert "OnlyHere" not in type_names()
+    assert "OnlyHere" in type_names({"OnlyHere": OnlyHere})

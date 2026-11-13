@@ -9,7 +9,7 @@ placement is in ``tests/ops/test_typeop.py``.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import pytest
@@ -107,12 +107,23 @@ def test_the_names_include_the_builtins_and_the_hosts() -> None:
     assert names == tuple(sorted(names))
 
 
-def test_a_dataclass_validates_a_product_and_the_product_stays_json() -> None:
-    bundle = _story([["py", "const", {"title": "T", "price": "12.00"}]], "Book")
-    product = _run(bundle)
-    assert not is_dataclass(product)
-    assert product == {"title": "T", "price": "12.00"}
-    assert list(product) == ["title", "price"]
+def test_a_dataclass_constructs_a_product_and_the_instance_flows() -> None:
+    """The stage answers the instance, so a later stage may read it (no payload substitution)."""
+    bundle = _story(
+        [
+            ["py", "const", {"title": "T", "price": "12.00"}],
+            ["type", "Book"],
+            ["py", "getattr", "price"],
+        ]
+    )
+    assert _run(bundle) == "12.00"
+
+
+def test_a_constructed_instance_cannot_be_the_exit() -> None:
+    """What flows may be an object; what leaves is JSON."""
+    bundle = _story([["py", "const", {"title": "T", "price": "12.00"}], ["type", "Book"]])
+    diagnostic = _run_error(bundle)
+    assert diagnostic.code == "UP2-E2003"
 
 
 def test_a_nested_registered_type_rejects_a_misshapen_record() -> None:

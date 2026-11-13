@@ -557,28 +557,6 @@ story, otherwise `UP2-E1016` names the available nodes. The stage MUST take exac
 - **WHEN** the stage is `["node","gone"]` and no node has that name
 - **THEN** compilation fails with `UP2-E1016`
 
-### Requirement: The `type` stage validates a chain's product
-
-A chain MAY end with `["type","name"]`. The operator SHALL build the host-registered type from the
-current value, answer the validated JSON, and reject an unregistered name with `UP2-E1011` or a raising
-constructor with `UP2-E2019`. The stage MUST take exactly two slots and MUST be the last stage of its
-chain; a later stage is `UP2-E1005`. A non-JSON value is `UP2-E2003`.
-
-#### Scenario: A valid product
-
-- **WHEN** `Article` is registered and the chain ends with `["type","Article"]`
-- **THEN** the answer is the JSON the constructor approved
-
-#### Scenario: A missing required field
-
-- **WHEN** the registered constructor raises on the value
-- **THEN** the outcome is `UP2-E2019` with the constructor's message
-
-#### Scenario: A type stage is not last
-
-- **WHEN** the chain is `[["type","Article"], ["py","strip"]]`
-- **THEN** compilation fails with `UP2-E1005`
-
 ### Requirement: `udf` binds its argument in four forms
 
 The third slot of a `udf` stage SHALL select the call: omitted = `f(value)`; the literal `"*"` =
@@ -611,3 +589,31 @@ answer any value; an awaitable answer is `UP2-E2009`.
 
 - **WHEN** the udf answers a coroutine
 - **THEN** the outcome is `UP2-E2009`
+
+### Requirement: The `type` stage constructs the declared type
+
+A chain MAY carry `["type","name"]` at any position. The operator SHALL build the host-registered type
+from the current value and answer the **constructed value**, so a later stage receives it. It MUST
+take exactly two slots, one action and the name in slot 2. An unregistered name is `UP2-E1011`; a
+raising constructor is `UP2-E2019`. The built-in names need no registration, and a host registration
+wins over a built-in of the same name.
+
+#### Scenario: A constructed value reaches the next stage
+
+- **WHEN** `Article` is registered and the chain is `[["type","Article"], ["py","getattr","title"]]`
+- **THEN** the answer SHALL be the `title` of the constructed `Article`
+
+#### Scenario: A missing required field
+
+- **WHEN** the registered constructor raises on the value
+- **THEN** the outcome is `UP2-E2019` with the constructor's message
+
+#### Scenario: A type stage is not last
+
+- **WHEN** the chain is `[["type","Article"], ["py","strip",""]]`
+- **THEN** compilation SHALL succeed, and `py.strip` SHALL receive the constructed instance
+
+#### Scenario: A built-in name converts
+
+- **WHEN** the value is `"42"` and the stage is `["type","int"]`
+- **THEN** the answer SHALL be the number `42`

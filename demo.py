@@ -578,7 +578,7 @@ def section_iteration() -> None:
 
 
 def section_story() -> None:
-    heading("13. `node` / `type` — a story: nodes calling nodes, and a validated product")
+    heading("13. `node` / `type` — a story: nodes calling nodes, and a constructed type")
 
     @dataclass(slots=True)
     class DemoBook:
@@ -587,7 +587,11 @@ def section_story() -> None:
 
     story = {
         "nodes": {
-            "record": [["node", "fields"], ["type", "DemoBook"]],
+            "record": [
+                ["node", "fields"],
+                ["type", "DemoBook"],
+                ["py", "getattr", "title"],
+            ],
             "fields": {
                 "title": [["py", "getitem", "title"], ["py", "strip"]],
                 "price": [["py", "getitem", "price"], ["py", "strip"]],
@@ -601,7 +605,7 @@ def section_story() -> None:
         up2.unregister_type("DemoBook")
     print("   story.nodes =", ", ".join(story["nodes"]))
     print('   run(story, "record", {...}) ->', render(product))
-    print("   the `type` stage validated the record and handed on JSON, not the DemoBook instance.")
+    print("   the `type` stage built a DemoBook and the next stage read its title.")
     SHOWN.update({"node", "type"})
 
 

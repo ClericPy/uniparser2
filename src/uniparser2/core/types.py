@@ -1,21 +1,25 @@
 """The type registry: the host's type name → constructor table (design doc 03 §3).
 
-A ``["type", name]`` stage validates a value against a **shape**, not a Python object: the host
-registers a name → constructor pair, and the stage builds that constructor from the value at the
-chain tail (``03`` §3.2). The constructor is a **validator**: it receives the JSON and the run
-continues with the JSON (``03`` §3.3).
+A ``["type", name]`` stage builds a **shape**, not a Python object graph: the host registers a
+name → constructor pair, and the stage constructs that type from the value at its position in the
+chain (``03`` §3.2). The constructor is a **constructor**: whatever it answers is what the chain
+carries on, so a container answer flows as a host object and the run's exit (``pack``) is the only
+place JSON is required (``03`` §3.3).
 
-**Why the registration is not part of the bundle.** The registry is process-wide host state, exactly
-like ``core.udfs``: the host installs its own vocabulary at start-up, and a story references it by
-name only, so the bundle stays library-independent data (``03`` §3.1). Keeping it in the kernel also
+**Why the registration is not part of the bundle.** The registry is host state, exactly like
+``core.udfs``: the host installs its own vocabulary at start-up, and a story references it by name
+only, so the bundle stays library-independent data (``03`` §3.1). Keeping it in the kernel also
 keeps the check where the value exists — a name that no host registered fails at the stage that
 declared it, with ``UP2-E1011`` naming the types that are registered.
 
+**A run may carry its own table.** ``run(..., types={...})`` merges an overlay over the process-wide
+one for that run only, the same way ``udfs={...}`` does; the overlay reaches the stage through
+:attr:`core.refs.Scope.types`. Two runs in one process may therefore resolve one name differently.
+
 **Built-in names need no registration** (``03`` §3.1): the JSON basics (``null`` / ``bool`` /
-``str`` / ``int`` / ``float`` / ``list`` / ``dict``). ``list`` / ``dict`` are the product's own
-kind, so they take it as it is (a dictionary product must keep its keys), while the scalar names go
-through their Python constructor — the same coercion a host constructor would perform (``"int"`` on
-``"2026"`` answers ``2026``).
+``str`` / ``int`` / ``float`` / ``list`` / ``dict``). ``list`` / ``dict`` take the value as it is (a
+dictionary value must keep its keys), while the scalar names go through their Python constructor —
+the same coercion a host constructor would perform (``"int"`` on ``"2026"`` answers ``2026``).
 
 The module is **pure dictionary operations + one call**: no third-party import, no file read, no IO.
 """
@@ -43,20 +47,24 @@ _SCALARS: Final[Mapping[str, Callable[[Any], Any]]] = {
 }
 
 UNREGISTERED_FIX: Final = (
-    "call register_type(name, constructor) in the host before the run, or declare one of the names "
-    "the kernel already knows (the JSON basics)"
+    "call register_type(name, constructor) in the host, pass types={...} to run(), or declare one "
+    "of the names the kernel already knows (the JSON basics)"
 )
 
 
 class UnknownTypeError(Exception):
-    """A chain tail declares a ``type`` neither the host nor the built-ins register.
+    """A `type` stage declares a name neither the host nor the built-ins register.
 
     The failure is ``UP2-E1011``, naming the declared type and the names that are registered.
     """
 
-    def __init__(self, name: str) -> None:
-        super().__init__(f"the type {name!r} is not registered")
+    def __init__(self, name: str, known: tuple[str, ...] = ()) -> None:
+        detail = f"the type {name!r} is not registered"
+        if known:
+            detail = f"{detail}; the registered names are: {', '.join(known)}"
+        super().__init__(detail)
         self.name = name
+        self.known = known
 
 
 class TypeConstructionError(Exception):
@@ -87,36 +95,55 @@ def unregister_type(name: str) -> bool:
     return _TYPES.pop(name, None) is not None
 
 
-def get_type(name: str) -> TypeConstructor | None:
-    """The constructor the **host** registered for ``name``, or ``None`` (built-ins included)."""
-    return _TYPES.get(name)
+def all_types() -> dict[str, TypeConstructor]:
+    """A copy of the process-wide table, for a run to merge its overlay over."""
+    return dict(_TYPES)
 
 
-def type_names() -> tuple[str, ...]:
-    """Every name a chain tail may declare today: the built-ins and the host's, sorted.
+def _effective(table: Mapping[str, TypeConstructor] | None) -> Mapping[str, TypeConstructor]:
+    """The table a lookup reads: the run's own (already merged), or the process-wide one."""
+    return _TYPES if table is None else table
+
+
+def get_type(
+    name: str, *, table: Mapping[str, TypeConstructor] | None = None
+) -> TypeConstructor | None:
+    """The constructor registered for ``name``, or ``None`` (built-ins included)."""
+    return _effective(table).get(name)
+
+
+def type_names(table: Mapping[str, TypeConstructor] | None = None) -> tuple[str, ...]:
+    """Every name a `type` stage may declare today: the built-ins and the effective table's, sorted.
 
     The list is what ``UP2-E1011`` reports.
     """
-    return tuple(sorted(BUILTIN_TYPES | set(_TYPES)))
+    return tuple(sorted(BUILTIN_TYPES | set(_effective(table))))
 
 
-def build_type(name: str, product: Any) -> Any:
-    """Build the declared type from the product at the chain tail (``03`` §3.2/§3.3).
+def build_type(
+    name: str,
+    product: Any,
+    /,
+    *,
+    table: Mapping[str, TypeConstructor] | None = None,
+) -> Any:
+    """Build the declared type from the value at a `type` stage (``03`` §3.2/§3.3).
 
-    A dictionary product becomes ``Cls(**payload)`` and a list ``Cls(*items)``; anything else is
-    handed to the constructor as it is, which is how a scalar-shaped type is validated. The caller
-    checks that the result is still JSON: a constructor is a validator, not a container for objects.
+    A dictionary value becomes ``Cls(**payload)`` and a list ``Cls(*items)``; anything else is
+    handed to the constructor as it is, which is how a scalar-shaped type is built. The answer
+    **is** the chain's new value — the caller carries it on; only the exit requires JSON.
 
     A built-in scalar name is a constructor too (``int("2026")``), so **every** refusal -- a host
     constructor raising and a built-in conversion failing alike -- is ``TypeConstructionError``
     (``UP2-E2019``); an unrepresentable value must not surface as an operator defect.
     """
-    constructor = _TYPES.get(name)
+    effective = _effective(table)
+    constructor = effective.get(name)
     if constructor is None and name not in BUILTIN_TYPES:
-        raise UnknownTypeError(name)
+        raise UnknownTypeError(name, type_names(effective))
     try:
         return _builtin(name, product) if constructor is None else _call(constructor, product)
-    except Exception as exc:  # any constructor failure is a coded failure of that step
+    except Exception as exc:  # any constructor failure is a coded failure of that stage
         raise TypeConstructionError(name, f"{exc.__class__.__name__}: {exc}") from exc
 
 
@@ -145,6 +172,7 @@ __all__ = [
     "TypeConstructionError",
     "TypeConstructor",
     "UnknownTypeError",
+    "all_types",
     "build_type",
     "get_type",
     "register_type",

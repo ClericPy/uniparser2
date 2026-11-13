@@ -196,6 +196,20 @@ def test_trial_failed_exits_nonzero(tmp_path: Path, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["code"] == "UP2-E2005"
 
 
+def test_trial_reports_a_non_json_product_as_a_diagnostic(tmp_path: Path, capsys) -> None:
+    """A product outside the JSON domain is the CLI's own refusal to print, not an engine error.
+
+    The engine answers a ``datetime`` (or any host object) as produced (`N5`); this host's JSON
+    boundary reports ``UP2-E1004`` instead of crashing with a raw ``TypeError``.
+    """
+    path = write_chain(tmp_path, [["py", "strptime", "%Y-%m-%d"]])
+    code = main(["trial", str(path), "--input", "text=2026-11-13", "--json"])
+    assert code == EXIT_FAILED
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["code"] == "UP2-E1004"
+    assert "Traceback" not in captured.err
+
+
 def test_trial_products_reference(tmp_path: Path, capsys) -> None:
     path = write_chain(tmp_path, [["py", "urljoin", "$n1.url"]])
     code = main(

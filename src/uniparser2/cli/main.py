@@ -55,7 +55,7 @@ from uniparser2 import (
 )
 from uniparser2.core import compare_products, registry
 from uniparser2.core.conformance import check
-from uniparser2.core.values import loads_json
+from uniparser2.core.values import dumps_json, loads_json
 from uniparser2.net import RequestCache
 from uniparser2.store import (
     AuditRow,
@@ -711,7 +711,13 @@ def _report_outcome(outcome: Outcome, as_json: bool, *, trace: Trace | None = No
             "fix": outcome.fix,
         }
         code = EXIT_FAILED
-    _emit_state(payload, as_json=as_json, trace=trace)
+    try:
+        _emit_state(payload, as_json=as_json, trace=trace)
+    except Up2Error as exc:
+        # The engine answers a non-JSON product as produced (N5); this host's own JSON boundary
+        # is what refuses it, and it reports the refusal as a diagnostic, not a traceback.
+        _print_diagnostic(exc.diagnostic, as_json=as_json)
+        return EXIT_FAILED
     return code
 
 
@@ -719,16 +725,18 @@ def _emit_state(payload: dict[str, Any], *, as_json: bool, trace: Trace | None) 
     """Print one run's state, and its trace when the caller asked for one.
 
     The trace is a key of the JSON document (so one call answers both), and one line per event in
-    the text output -- printing it twice would be unreadable for a long run.
+    the text output -- printing it twice would be unreadable for a long run. The write is strict
+    JSON (`dumps_json`), so a product outside the JSON domain raises a coded error instead of a
+    raw ``TypeError``.
     """
     if as_json:
         if trace is not None:
             payload["trace"] = trace.to_list()
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        print(dumps_json(payload, indent=2, subject="the run's product"))
         return
     if trace is not None:
         _print_trace(trace)
-    print(f"[{payload['state']}] " + json.dumps(payload, ensure_ascii=False))
+    print(f"[{payload['state']}] " + dumps_json(payload, subject="the run's product"))
 
 
 def _print_trace(trace: Trace) -> None:

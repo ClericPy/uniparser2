@@ -2,13 +2,13 @@
 
 A **story** is ``{"globals": {...}, "nodes": {...}}``. A node body is a **chain** (an array;
 ``[]`` is identity) or a **field map** (an object). A chain calls another node with
-``["node", name]``, and a chain ends with ``["type", name]`` when the product has a registered
-shape.
+``["node", name]``, and a chain constructs a registered type anywhere in it with
+``["type", name]``.
 
 Composition is a call, not a route: there is no ``entry``, ``collect``, ``next`` or effect. ``run``
 compiles the story, executes the node it names (the first node when it names none) and returns that
 node's product. A failure raises ``Up2Error`` carrying the diagnostic and the node's JSON Pointer;
-the run's exit passes through the single exit (``pack``).
+the product is returned as produced (there is no export step).
 
 The kernel performs no IO and is synchronous: host code enters only through ``udf`` (``fetch``
 is the conventional downloader), and a udf that answers an awaitable is rejected.
@@ -186,12 +186,25 @@ def run(
 def _type_overlay(
     types: Mapping[str, TypeConstructor] | Sequence[TypeConstructor] | None,
 ) -> dict[str, TypeConstructor]:
-    """A run's own type table: a name → constructor mapping, or callables named by ``__name__``."""
+    """A run's own type table: a name → constructor mapping, or callables named by ``__name__``.
+
+    A callable with no ``__name__`` (a ``functools.partial``, say) has no name to register under,
+    so it is a ``ValueError`` naming the item — the same host-input rule ``register_type`` applies.
+    """
     if types is None:
         return {}
     if isinstance(types, Mapping):
         return dict(types)
-    return {item.__name__: item for item in types}
+    overlay: dict[str, TypeConstructor] = {}
+    for item in types:
+        name = getattr(item, "__name__", None)
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                f"run(types=...) needs a mapping, or callables with a __name__; "
+                f"{item!r} has none — pass a name → constructor mapping instead"
+            )
+        overlay[name] = item
+    return overlay
 
 
 def _entry_name(story: CompiledStory, node: str | None) -> str:

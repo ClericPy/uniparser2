@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, is_dataclass
+from functools import partial
 from typing import Any, cast
 
 import pytest
@@ -217,6 +218,14 @@ def test_a_sequence_of_classes_is_named_by_its_own_name() -> None:
 
     chain = [["py", "const", {"number": "INV-1"}], ["type", "Invoice"], ["py", "getattr", "number"]]
     assert run(_story(chain), "a", types=[Invoice]) == "INV-1"
+
+
+def test_a_sequence_item_without_a_name_is_a_value_error() -> None:
+    """A callable with no ``__name__`` (a partial, say) has nothing to register under."""
+    chain = [["py", "const", {"number": "INV-1"}], ["type", "Invoice"]]
+    with pytest.raises(ValueError) as excinfo:
+        run(_story(chain), "a", types=[partial(int)])
+    assert "__name__" in str(excinfo.value)
 
 
 def test_a_run_overlay_does_not_leak_into_the_process() -> None:

@@ -14,7 +14,6 @@ from uniparser2 import (
     Scope,
     compile_field,
     eval_field,
-    pack,
 )
 from uniparser2.core import registry
 from uniparser2.ops import pyops
@@ -42,11 +41,7 @@ class _HostResponse:
         return {}
 
 
-_CALLABLE_FIX = (
-    'a method is not a value: read the text with ["css","text",""] (or "html" / '
-    '"outer"), or register a udf that calls it'
-)
-"""The fix hint both refusals carry (`refs._walk_attribute`, `pyops._py_getattr`)."""
+"""A method read through a reference or `py.getattr` is a value, not an error."""
 
 
 def run(chain: Any, value: Any, *, scope: Scope | None = None) -> Outcome:
@@ -68,24 +63,21 @@ def test_e2001_reference_missing_attribute_names_the_class() -> None:
     assert "AttributeError: '_HostResponse' object has no attribute 'txet'" in outcome.reason
 
 
-def test_e2002_reference_refuses_a_callable_attribute() -> None:
-    """A dotted reference never calls a method, exactly as `py.getattr` never does (03 §13 O12)."""
+def test_a_callable_attribute_is_read_by_a_reference() -> None:
+    """A dotted reference reads a method, exactly as `py.getattr` does; neither one calls it."""
     scope = Scope(locals={"resp": _HostResponse(200, "body")})
     outcome = run([["ctx", "get", "locals.resp.headers"]], None, scope=scope)
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2002"
-    assert "the attribute 'headers' of _HostResponse is callable" in outcome.reason
-    assert outcome.fix == _CALLABLE_FIX
+    assert isinstance(outcome, Ok)
+    assert callable(outcome.value)
 
 
-def test_the_reference_and_getattr_refusals_agree() -> None:
-    """The same message shape and the same fix hint, so an author sees one rule, not two."""
+def test_a_reference_and_getattr_agree_on_a_method() -> None:
+    """One rule, not two: both answer the bound method."""
     response = _HostResponse(200, "body")
     reference = run([["ctx", "get", "locals.r.json"]], None, scope=Scope(locals={"r": response}))
     attribute = run([["py", "getattr", "json"]], response)
-    assert isinstance(reference, Failed) and isinstance(attribute, Failed)
-    assert reference.code == attribute.code == "UP2-E2002"
-    assert reference.fix == attribute.fix
+    assert isinstance(reference, Ok) and isinstance(attribute, Ok)
+    assert callable(reference.value) and callable(attribute.value)
 
 
 def test_e2001_reference_indexes_a_sequence() -> None:
@@ -135,44 +127,12 @@ def test_e2002_text_function_on_non_text() -> None:
     assert outcome.code == "UP2-E2002"
 
 
-def test_e2003_pack_rejects_opaque() -> None:
-    outcome = pack(FakeNode())
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2003"
-    # The fix names the accessor actions (``core/export.py``: text / html / outer / @attribute).
-    assert "text" in outcome.fix
-
-
-def test_e2003_pack_rejects_non_json() -> None:
-    outcome = pack({"a": {1, 2}})
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2003"
-
-
-def test_e2003_pack_rejects_a_host_object() -> None:
-    """A host object may flow, but it can never be a product (design doc 03 §3.3)."""
-    outcome = pack(_HostResponse(200, "body"))
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2003"
-    assert "_HostResponse" in outcome.reason
-
-
-def test_e2003_pack_rejects_a_host_object_nested_in_a_product() -> None:
-    outcome = pack({"answer": _HostResponse(200, "body")})
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2003"
-
-
 def test_a_host_object_flows_through_a_stage_unchanged() -> None:
     """The value that flows may be an object: a stage reads it, nothing converts it."""
     response = _HostResponse(200, "body")
     assert run([["py", "getattr", "status"]], response) == Ok(200)
     # The empty chain is identity: the same object comes out unchanged (`03` §2.3).
     assert eval_field(compile_field([]), response, scope=Scope(step_input=response)) == Ok(response)
-
-
-def test_e2003_pack_accepts_json() -> None:
-    assert pack({"a": [1, None, True]}) == Ok({"a": [1, None, True]})
 
 
 def _boom_import() -> Any:

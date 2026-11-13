@@ -21,9 +21,8 @@ import pytest
 
 INVARIANT_CASES: dict[str, str] = {
     # invariant id (as written in 01 §1.1) -> the test function that executes it
-    "I3": "test_pack_is_called_at_one_place_only",
     "I5": "test_no_operator_performs_io_on_the_evaluate_path",
-    "N5": "test_only_the_run_exit_requires_json",
+    "N5": "test_the_exit_hands_back_what_the_run_produced",
 }
 """A declared invariant is executed here. Keys are the ids in `01` §1.1 and §4-§6."""
 
@@ -32,6 +31,7 @@ INVARIANT_CASES: dict[str, str] = {
 ENFORCED_ELSEWHERE: dict[str, str] = {
     "I1": "`core/` imports no third-party library: `ruff` TID + the import scan in `tests/core`",
     "I2": "downward dependencies only: the import scan in `tests/core`",
+    "I3": "no export check: the product is the value, asserted by `N5`'s case below",
     "I4": "the compile product is separate from chain data: `tests/compile`",
     "I6": "control flow is a stage: `each` / the `try` directive are registry stages, `tests/ops`",
     "I7": "lazy engine imports: the `find_spec` guard in `tests/ops`",
@@ -83,6 +83,57 @@ def test_every_referenced_case_exists() -> None:
     cases = _cases_in_this_directory()
     missing = sorted(set(INVARIANT_CASES.values()) - cases)
     assert not missing, f"INVARIANT_CASES names case(s) that do not exist here: {missing}"
+
+
+def test_every_live_code_has_a_throw_site() -> None:
+    """A code in ``CODES`` is a promise that the engine can emit it; a throw site is the proof.
+
+    ``conformance`` checks codes against **tests**, not against the code. Without this, a number
+    could sit in ``CODES`` that nothing raises -- and the reverse, a retired number silently being
+    emitted again, is what the next case guards.
+    """
+    from uniparser2.core.errors import CODES
+
+    thrown = _codes_in_sources()
+    never = sorted(set(CODES) - thrown)
+    assert not never, f"code(s) declared in CODES that no source line raises: {never}"
+
+
+def test_no_retired_number_is_still_thrown() -> None:
+    """`01` §4.3: a code is **stable**, so a retired number is never reused and never emitted."""
+    from uniparser2.core.errors import RETIRED
+
+    thrown = _codes_in_sources()
+    reused = sorted(set(RETIRED) & thrown)
+    assert not reused, f"retired number(s) still raised by the engine: {reused}"
+
+
+def test_a_code_is_live_or_retired_never_both() -> None:
+    from uniparser2.core.errors import CODES, RETIRED
+
+    both = sorted(set(CODES) & set(RETIRED))
+    assert not both, f"code(s) in both CODES and RETIRED: {both}"
+
+
+def test_every_retired_number_says_why() -> None:
+    from uniparser2.core.errors import RETIRED
+
+    silent = sorted(number for number, reason in RETIRED.items() if len(reason.strip()) < 20)
+    assert not silent, f"retired number(s) without a reason: {silent}"
+
+
+def _codes_in_sources() -> set[str]:
+    """Every code literal written in ``src/``, the tables aside."""
+    import re
+
+    root = Path(__file__).resolve().parents[2] / "src"
+    pattern = re.compile(r"UP2-E\d{4}")
+    found: set[str] = set()
+    for path in root.rglob("*.py"):
+        if path.name == "errors.py":
+            continue  # the tables themselves are not throw sites
+        found.update(pattern.findall(path.read_text(encoding="utf-8")))
+    return found
 
 
 @pytest.mark.parametrize("invariant", sorted(INVARIANT_CASES))

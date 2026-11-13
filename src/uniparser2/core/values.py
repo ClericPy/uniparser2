@@ -3,7 +3,7 @@
 Two things that are easy to confuse:
 - ``JsonValue``: a value that may be exported (export packing accepts nothing else).
 - ``Opaque``: a handle (a DOM node, for example) that may flow inside a chain but **must not be
-  exported**; export packing reports ``UP2-E2003`` for it.
+  exported**; the exit hands it back like any other value, and the report is the host's.
 
 A third thing flows the same way: **a host object** (a response, a ``udf`` result). It is not
 ``Opaque`` (the kernel does not own it), but it is no more exportable — it may be an input, an

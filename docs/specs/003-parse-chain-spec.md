@@ -183,12 +183,12 @@ at compile time: a story is compiled without a host, so it is only known for sur
 |---|---|
 | no host registered the name | `UP2-E1011`, listing the names that are (the built-ins and the run's overlay included) |
 | the constructor raised | `UP2-E2019`, with the constructor's own exception text in `reason` |
-| a constructed value reaches the run's exit | `UP2-E2003` at the entry node |
+| nothing -- the exit answers the product as produced (`N5`) |
 
 **A value that flows may be a host object; a run's exit must be JSON.** A response, a `selectolax`
 node handle and anything a `udf` or a `type` stage built may flow mid-chain and be read by
-`py.getattr`, a reference path, or a `udf` parameter. The **run boundary** (`pack`, `UP2-E2003`) is
-the one place that stops. A pydantic model is the same category as a dataclass: `Model(**payload)` is
+`py.getattr`, a reference path, or a `udf` parameter -- and the run hands that value back as its
+product, unchanged. A pydantic model is the same category as a dataclass: `Model(**payload)` is
 the constructor the stage already calls, and a `ValidationError` is `UP2-E2019`.
 
 A field-map node has no trailing stage of its own, so a record that must be typed is a chain that
@@ -236,7 +236,7 @@ but the table lacks is
 `UP2-E1010`, reported by `run` before evaluation with the names that are available.
 
 **A udf may return any value.** A response object flows to the next stage and is read with
-`py.getattr`; only the run's exit and a `type` stage require JSON. A udf that returns an awaitable
+`py.getattr`, and the exit answers it unchanged. A udf that returns an awaitable
 is `UP2-E2009`: the kernel is synchronous, and an async host calls its async function in its own
 event loop before returning.
 
@@ -288,11 +288,11 @@ run(
     globals=None,          # merged over the story's `globals` for this run
     udfs=None,             # merged over the process-wide udf table for this run
     trace=None,            # a Trace, or None
-) -> Any                   # the entry node's product, packed
+) -> Any                   # the entry node's product, unchanged
 ```
 
 The run is synchronous: it compiles the story, resolves the node and the globals, checks the udf
-table, executes the node, and packs the product. Nothing suspends; nothing is handed to a host loop.
+table and executes the node. Nothing suspends; nothing is handed to a host loop.
 A host that wants concurrency calls `run` from its own threads or event loop and owns the result.
 
 The run's `Scope` carries the effective globals, the run's `locals`, its `public` notes, its
@@ -490,11 +490,12 @@ Cross-story composition is the host's; the kernel does not know a store or anoth
 ## 9. The exit and schema
 
 - **The exit is the product of the node `run` names** (the first node when none is named).
-- **A `schema` is the registered type itself**, applied by a `["type", name]` stage; the run's exit
-  still passes through `pack` (`UP2-E2003`).
+- **A `schema` is the registered type itself**, applied by a `["type", name]` stage; the exit answers
+  whatever the run produced (`N5`), with no packing step.
 - **A node always produces a product or fails**: a query that matched nothing is a value (its
   shape's empty value, `01` §4.2), so there is no "skipped node" and no invented `null`.
-- A node call's product may be a host object; only the run's exit and a `type` stage require JSON.
+- A node's product may be a host object, and the exit hands it back as it is: serializing a product
+  is the host's business, not a rule the engine invents.
 
 ---
 

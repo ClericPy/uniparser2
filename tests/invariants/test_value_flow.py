@@ -24,7 +24,6 @@ import pytest
 from uniparser2 import (
     Failed,
     Ok,
-    Up2Error,
     compile_field,
     eval_field,
     register_type,
@@ -127,34 +126,15 @@ def test_a_host_object_may_be_read_by_a_reference(
 
 
 @PRODUCERS
-def test_only_the_run_exit_requires_json(producer: list[Any], story_extra: dict[str, Any]) -> None:
-    """A host object flows freely; the **exit** is the one place that packs it (`01` N5)."""
-    story = {"nodes": {**story_extra, "a": [["py", "const", {"title": "hi"}], producer]}}
-    with pytest.raises(Up2Error) as info:
-        run(story, "a")
-    assert info.value.diagnostic.code == "UP2-E2003"
+def test_the_exit_hands_back_what_the_run_produced(
+    producer: list[Any], story_extra: dict[str, Any]
+) -> None:
+    """No export check anywhere: the product is the value, whoever produced it.
 
-
-def test_pack_is_called_at_one_place_only() -> None:
-    """The exit is the single packing point (`01` N5): no operator and no stage packs.
-
-    A source-level assertion on purpose — the point of the invariant is *where* the call is, and a
-    behavioural test cannot tell "packed once" from "packed twice with the same answer".
+    The engine does not decide whether a host can serialize a value -- it reports what happened.
     """
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2] / "src" / "uniparser2"
-    offenders = []
-    for path in root.rglob("*.py"):
-        if path.name == "export.py":
-            continue
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith(("from", "import", "#")):
-                continue
-            if "pack(" in stripped and "packed" not in stripped:
-                offenders.append(f"{path.relative_to(root)}:{number} {stripped}")
-    assert offenders == [], f"only the run exit may pack, found: {offenders}"
+    story = {"nodes": {**story_extra, "a": [["py", "const", {"title": "hi"}], producer]}}
+    assert isinstance(run(story, "a"), _Record)
 
 
 # ---------------------------------------------------------------- an operator does no IO
@@ -227,7 +207,7 @@ def test_a_chain_round_trips_whatever_an_operator_adds() -> None:
 
 def test_every_action_answers_a_value_or_a_failure_never_a_third_state() -> None:
     """`01` §4: only `Ok` and `Failed` exist, and an `Outcome` is always one of the two."""
-
+    pytest.importorskip("selectolax")
     matched = compile_field([["css1", "text", "h1.none"]])
     outcome = eval_field(matched, "<html><body></body></html>")
     assert isinstance(outcome, (Ok, Failed))

@@ -328,9 +328,10 @@ def test_an_unregistered_type_is_e1011() -> None:
     assert _run_error(story, "a").code == "UP2-E1011"
 
 
-def test_a_non_json_type_answer_is_e2003() -> None:
+def test_a_non_json_type_answer_is_returned_as_it_is() -> None:
+    """There is no export check: the engine answers what the constructor answered."""
     story = _story({"a": [["py", "const", {"url": "u"}], ["type", "BadShape"]]})
-    assert _run_error(story, "a").code == "UP2-E2003"
+    assert run(story, "a") == {1, 2}
 
 
 def test_a_type_stage_may_be_followed_by_another_stage() -> None:
@@ -412,11 +413,11 @@ def test_a_udf_may_return_a_host_object_mid_chain() -> None:
     assert run(story, "a", udfs={"respond": lambda value: _Response("body")}) == "body"
 
 
-def test_a_host_object_cannot_be_the_exit() -> None:
+def test_a_host_object_may_be_the_exit() -> None:
+    """The exit hands back whatever the run produced; serializing it is the host's business."""
     story = _story({"a": [["udf", "respond"]]})
-    assert _run_error(story, "a", udfs={"respond": lambda value: _Response("body")}).code == (
-        "UP2-E2003"
-    )
+    product = run(story, "a", udfs={"respond": lambda value: _Response("body")})
+    assert isinstance(product, _Response)
 
 
 def test_an_awaitable_udf_answer_is_e2009() -> None:

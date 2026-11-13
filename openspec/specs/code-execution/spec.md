@@ -61,12 +61,12 @@ The `code` operator SHALL bind two fixed names with no configuration: `obj` is t
 
 ### Requirement: Values in `ctx` are JSON-only, and `inputs` is retired
 
-Values in `ctx` MUST fall in the JSON value domain: `Opaque` handles (DOM/XPath nodes) and non-JSON values MUST NOT appear, and excluding a handle MUST NOT cause evaluation to fail (same principle as `UP2-E2003`). There SHALL be no `inputs` parameter and no configured binding: a value is read as `ctx.locals.<name>` at runtime, and naming it again would only rename an existing read.
+Values in `ctx` MUST fall in the JSON value domain: `Opaque` handles (DOM/XPath nodes) and non-JSON values MUST NOT enter the sandbox. A scope entry that violates this SHALL be **reported, not dropped**: the projection fails with `UP2-E2009`, naming every offending key and showing its `repr`, so a snippet never sees a variable that "was never set" while it plainly was. There SHALL be no `inputs` parameter and no configured binding: a value is read as `ctx.locals.<name>` at runtime, and naming it again would only rename an existing read.
 
-#### Scenario: Handles do not appear in `ctx`
+#### Scenario: A handle in `ctx` is reported
 
 - **WHEN** `locals` contains a DOM/XPath node handle and the chain is `["code", "'ok'"]`
-- **THEN** evaluation succeeds (the handle is excluded rather than raising)
+- **THEN** evaluation fails with `UP2-E2009`, and the reason names the key and shows its `repr`
 
 #### Scenario: The named entry point keeps compile-time validation
 
@@ -77,7 +77,7 @@ Values in `ctx` MUST fall in the JSON value domain: `Opaque` handles (DOM/XPath 
 #### Scenario: An upstream handle is rejected
 
 - **WHEN** the upstream value is a DOM/XPath node handle
-- **THEN** evaluation returns `Failed` with code `UP2-E2003` (handles do not enter the sandbox)
+- **THEN** evaluation returns `Failed` with code `UP2-E2009` (handles do not enter the sandbox)
 
 ### Requirement: Allowlist functions directly available inside the sandbox
 

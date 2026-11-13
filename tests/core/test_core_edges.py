@@ -68,22 +68,10 @@ def test_preview_of_a_host_object_names_its_class() -> None:
 
 @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
 def test_a_non_finite_float_is_not_a_json_value(bad: float) -> None:
-    """JSON has no Infinity / NaN, so a product carrying one is not exportable."""
-    from uniparser2.core.export import pack
-
+    """JSON has no Infinity / NaN, so the value domain does not call one JSON."""
     assert values.is_json_value(bad) is False
     assert values.is_json_value([1.0, bad]) is False
     assert values.is_json_value({"r": bad}) is False
-    outcome = pack(bad)
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2003"
-    assert "finite" in (outcome.fix or "")
-
-
-def test_a_finite_float_still_packs() -> None:
-    from uniparser2.core.export import pack
-
-    assert pack(1.5) == Ok(1.5)
 
 
 # ---------------------------------------------------------------- ast shape and serialization
@@ -296,7 +284,28 @@ def test_the_scope_view_merges_the_chain() -> None:
     outer = Scope(locals={"a": 1, "b": 2})
     inner = outer.child()
     inner.write_text("locals.b", 3)
-    assert inner.json_view()["locals"] == {"a": 1, "b": 3}
+    view = inner.json_view()
+    assert isinstance(view, Ok)
+    assert view.value["locals"] == {"a": 1, "b": 3}
+
+
+def test_a_non_json_scope_entry_is_reported_not_dropped() -> None:
+    """A name that plainly exists is never presented as "never set" (`AGENTS.md`, determinism)."""
+    scope = Scope(locals={"ok": 1, "handle": object()})
+    view = scope.json_view()
+    assert isinstance(view, Failed)
+    assert view.code == "UP2-E2009"
+    assert "locals.handle" in view.reason
+    assert "object object" in view.reason
+
+
+def test_every_offending_scope_entry_is_named() -> None:
+    scope = Scope(locals={"a": object()}, globals={"b": {1, 2}})
+    view = scope.json_view()
+    assert isinstance(view, Failed)
+    assert "locals.a" in view.reason
+    assert "globals.b" in view.reason
+    assert "2 value(s)" in view.reason
 
 
 def test_a_product_root_whose_value_is_none_is_present() -> None:
@@ -466,26 +475,3 @@ def test_dumps_accepts_raw_stage_lists() -> None:
     """``Stage`` keeps only the raw slots: ``slot1`` is the 2nd slot, ``slot2`` is the 3rd."""
     assert dumps([Stage(op="py", slot1="strip", slot2=None, length=2)]) == '[["py","strip"]]'
     assert dumps([Stage(op="py", slot1="strip", slot2="", length=3)]) == '[["py","strip",""]]'
-
-
-def test_a_datetime_product_names_strftime() -> None:
-    """A datetime is internal; the exit names the operator that renders it (design D14)."""
-    from datetime import datetime
-
-    from uniparser2.core.export import pack
-
-    outcome = pack(datetime(2026, 9, 24, 15, 30))
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2003"
-    assert "strftime" in outcome.fix
-
-
-def test_a_nested_datetime_product_still_names_strftime() -> None:
-    from datetime import datetime
-
-    from uniparser2.core.export import pack
-
-    outcome = pack({"when": [datetime(2026, 9, 24)]})
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2003"
-    assert "strftime" in outcome.fix

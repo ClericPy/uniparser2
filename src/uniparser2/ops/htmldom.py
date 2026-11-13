@@ -45,7 +45,7 @@ Four implementation disciplines:
    noise tags stripped) both work on a copy.
 2. **Nodes are always wrapped in ``DomNode(Opaque)``**: native engine objects never enter the value
    domain, so the output of ``nodes`` / ``self`` is naturally rejected by export boxing
-   (``UP2-E2003``).
+   (the host's serializer is what reports it).
 3. **``text`` excludes the text of ``script``/``style``/``noscript``** (the noise set of ``remove``
    in the ``04`` draft): this is **the semantics this operator promises** and does not rely on
    engine defaults (selectolax's ``text()`` would include them).
@@ -102,7 +102,7 @@ _ACTIONS: Final[Mapping[str, ActionSpec]] = {
 class DomNode(Opaque):
     """Unified wrapper around engine nodes.
 
-    It can flow through the chain, but the export must be rejected (``UP2-E2003``).
+    It can flow through the chain and out of the run unchanged.
     """
 
     __slots__ = ("raw",)

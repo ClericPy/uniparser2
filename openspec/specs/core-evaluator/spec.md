@@ -21,8 +21,8 @@ because what the value domain forbids is its **export**, not its existence.
 
 #### Scenario: an object reaches the exit
 
-- **WHEN** a run's exit product would contain a host object
-- **THEN** the run SHALL fail with `UP2-E2003`
+- **WHEN** a run's exit product is a host object
+- **THEN** the run SHALL answer that object unchanged
 
 #### Scenario: a datetime flows between stages
 
@@ -33,17 +33,19 @@ because what the value domain forbids is its **export**, not its existence.
 #### Scenario: a datetime reaches the exit
 
 - **WHEN** the chain is `[["py","strptime","%d.%m.%Y"]]` and the input is `"24.09.2026"`
-- **THEN** the run fails with `UP2-E2003`, and the fix line names `["py","strftime","…"]` as the way to
-  export it
+- **THEN** the run answers the `datetime` unchanged; turning it into text is `["py","strftime","…"]`
 
 ### Requirement: A run's product SHALL be JSON
 
-The value a run exports SHALL be JSON after the host-registered type constructor has run. A host object MAY be an input, a `udf` answer or a stage value, and it MAY flow between stages; it MUST NOT leave the run.
+`run` SHALL answer the entry node's product exactly as the run produced it. There MUST be no export
+check, no handle rejection and no substituted error: a host object, a `datetime` or a constructed
+instance is the product when the chain produced it (`N5`). Serializing a product is the host's
+concern.
 
 #### Scenario: a `udf` returns an object that reaches the exit
 
 - **WHEN** a `udf` returns a dataclass instance and no later stage converts it
-- **THEN** the run SHALL fail with `UP2-E2003`, whose message says the value cannot be exported
+- **THEN** the run SHALL answer that instance
 
 ### Requirement: `getattr` reads an attribute of the value that flows in
 
@@ -70,9 +72,9 @@ attribute of the stage's input value, and it SHALL return that attribute's value
 ### Requirement: A reference path may walk an object
 
 Reference resolution SHALL read a mapping by key, a sequence by index and an object with `getattr`, so a
-dotted path works on both a dictionary and an object. An attribute that is **callable** MUST be refused
-with `UP2-E2002`, using the same message shape and fix hint `py.getattr` uses: a method is not a value,
-and it could not leave the run (`UP2-E2003`) in any case.
+dotted path works on both a dictionary and an object. An attribute that is **callable** SHALL be read
+like any other: `getattr` reads an attribute, it never calls one, so a bound method is a value the
+reference hands on. The engine MUST NOT refuse it on the caller's behalf.
 
 #### Scenario: a dotted path into an object
 
@@ -83,8 +85,8 @@ and it could not leave the run (`UP2-E2003`) in any case.
 #### Scenario: an attribute that is a method
 
 - **WHEN** a stage writes `$resp.json` and `json` is a method of `$resp`
-- **THEN** the reference SHALL fail with `UP2-E2002`, and its `fix` SHALL be the fix hint `py.getattr`
-  carries (naming `["css","text",""]` or a `udf`)
+- **THEN** the reference SHALL answer that bound method, exactly as `py.getattr` does; the engine never
+  calls it and never refuses it
 
 #### Scenario: a header that is not a dotted path
 
@@ -205,8 +207,7 @@ JSON Pointer SHALL be the pointer of the diagnostic.
 #### Scenario: A constructor that answers an object
 
 - **WHEN** a registered constructor answers a value that cannot be serialized
-- **THEN** the run SHALL fail with `UP2-E2003` at that same stage, and no object SHALL appear in the
-  products or the exit
+- **THEN** the stage SHALL answer that value, and it SHALL be the product
 
 ### Requirement: The evaluation scope carries the run's materialization cache
 
@@ -262,20 +263,19 @@ stage that failed.
 
 ### Requirement: A non-finite float is not a JSON value
 
-The JSON value domain SHALL exclude `inf`, `-inf` and `nan`. A product that carries one — at the top
-level or nested in a list or a dict — MUST be refused by the exit packing rule with `UP2-E2003` at the
-stage that produced it, and a host function or sandboxed snippet returning one MUST be reported with
-`UP2-E2009`.
+The JSON value domain SHALL exclude `inf`, `-inf` and `nan`. A host function or sandboxed snippet
+returning one MUST be reported with `UP2-E2009`; at the exit the value is answered as produced, and
+whether it is serializable is the host's question.
 
 #### Scenario: A product is non-finite
 
 - **WHEN** a stage's product is `float("inf")`
-- **THEN** the run fails with `UP2-E2003` at that stage, and the diagnostic names the value
+- **THEN** the run answers it, and the value domain still does not call it JSON
 
 #### Scenario: A non-finite value nested in a product
 
 - **WHEN** a stage's product is `{"ratio": float("nan")}`
-- **THEN** the run fails with `UP2-E2003` at that stage
+- **THEN** the run answers it unchanged
 
 #### Scenario: A finite float remains a value
 
@@ -429,9 +429,8 @@ consulted when the stage runs, not at compile time, because a story compiles wit
 
 The constructor SHALL be a **constructor**, not a validator: whatever it answers is what the chain
 carries on, so a JSON-shaped answer flows as JSON and a container answer flows as a host object. The
-stage MUST NOT substitute the value it was handed for the value the constructor answered. A non-JSON
-value at the **exit** is refused by the packing rule there (`UP2-E2003`), which is the only place JSON
-is required.
+stage MUST NOT substitute the value it was handed for the value the constructor answered, and the exit
+hands that answer back unchanged.
 
 #### Scenario: A container answer flows as an object
 
@@ -441,4 +440,4 @@ is required.
 #### Scenario: A non-JSON exit is refused at the exit
 
 - **WHEN** the entry node's product is a constructed instance
-- **THEN** `run` SHALL fail with `UP2-E2003` at the entry node
+- **THEN** `run` SHALL answer that instance

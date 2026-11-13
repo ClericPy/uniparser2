@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from uniparser2 import Failed, Up2Error, compile_field, compile_story, eval_field, pack, run
+from uniparser2 import Failed, Up2Error, compile_field, compile_story, eval_field, run
 from uniparser2.core.errors import diag
 from uniparser2.core.export import ProductDifference, render_difference
 from uniparser2.core.values import dumps_json, loads_json
@@ -273,10 +273,7 @@ def _miss(request: Mapping[str, Any], cache: RequestCache | None) -> str:
 
 
 def _packed(value: Any) -> GraphRun:
-    """The single exit (`N5`): a product that cannot leave a chain is not a snapshot."""
-    packed = pack(value)
-    if isinstance(packed, Failed):
-        return GraphRun(error=f"{packed.reason} {packed.fix}".rstrip())
+    """The product as the run produced it: there is no export check to fail here."""
     return GraphRun(value=value)
 
 

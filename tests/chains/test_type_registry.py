@@ -119,11 +119,10 @@ def test_a_dataclass_constructs_a_product_and_the_instance_flows() -> None:
     assert _run(bundle) == "12.00"
 
 
-def test_a_constructed_instance_cannot_be_the_exit() -> None:
-    """What flows may be an object; what leaves is JSON."""
+def test_a_constructed_instance_is_the_exit() -> None:
+    """The stage builds the type and the run answers it: no export check, no substitution."""
     bundle = _story([["py", "const", {"title": "T", "price": "12.00"}], ["type", "Book"]])
-    diagnostic = _run_error(bundle)
-    assert diagnostic.code == "UP2-E2003"
+    assert isinstance(_run(bundle), Book)
 
 
 def test_a_nested_registered_type_rejects_a_misshapen_record() -> None:
@@ -189,17 +188,17 @@ def test_an_unregistered_name_fails_with_the_registered_names() -> None:
     assert "register_type" in diagnostic.fix
 
 
-def test_a_constructor_never_carries_an_object_into_the_product() -> None:
+def test_a_constructor_carries_whatever_it_answers() -> None:
     def digging(**payload: Any) -> Any:
         del payload
         return object()
 
     register_type("Digging", digging)
     try:
-        diagnostic = _run_error(_story([["py", "const", {"u": 1}]], "Digging"))
+        product = _run(_story([["py", "const", {"u": 1}]], "Digging"))
     finally:
         unregister_type("Digging")
-    assert diagnostic.code == "UP2-E2003"
+    assert type(product) is object
 
 
 def test_a_node_without_a_type_stage_builds_nothing() -> None:

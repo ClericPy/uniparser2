@@ -13,7 +13,7 @@
 |---|---|---|
 | I1 | `core/` **imports no third-party library at all**, and imports neither `ops/` / `store/` / `ui/` / `cli/` / `net/` | the kernel stays unit-testable and portable; the kernel is still usable when an engine is missing |
 | I2 | dependencies may only point **downward** (`cli → store/core`, `store → core`, `ops → core`); `core` never imports `ops` or a host layer, and operators are reached only through `core.registry` | a cycle is a design error |
-| I3 | **exactly one function** may produce the final product (`core.export.pack`); `N5` is guaranteed in exactly one place | the export type guarantee fails (R5 of the old v3) |
+| I3 | **nothing inspects the product at the exit**: `run` answers what the run produced, so no operator and no runner may validate it, reject it or substitute a different value | the engine would be inventing a rule the chain never declared (`N5`) |
 | I4 | **the compile product and the chain data are separate**: `compile()` returns a standalone object, and never hangs the compile result on a `str` subclass or on the chain dict | the dual payload of the old v3's `CompiledString` (R3) |
 | I5 | operators are **without side effects, without IO, without global state**; the write surface of `ctx` is limited to `locals` and `public`. The rule binds the **evaluate path**: a lazily-cached start-up probe that resolves which engine binary to use (`ops/code.py`'s `_worker_binary`) is allowed, but nothing on `evaluate` may touch the disk or the network | `N1` fails and the chain is not replayable |
 | I6 | control flow **may only appear as a chain stage** (`each` and the `try` directive), and branching **never appears inside a story** — the host picks the node and dispatches on the product's shape (`03` §1); node calls are composition, not branching | the old v3's protocol-like keys such as `__object__` (R2) |
@@ -34,9 +34,9 @@ src/uniparser2/
     registry.py   operator registry (@op decorator + optional dependency probing)
     compile.py    stages → CompiledField; a bundle → CompiledStory (lint + schema + precompile)
     evaluator.py  stage evaluation + field-chain / field-map evaluation
-    export.py     export packing (the single product point)
+    export.py     structural product comparison (snapshots)
     refs.py       reference syntax and scope (`$globals` / `$locals` / `$public` / `$in` / `$obj`)
-    types.py      the host's type registry (name → constructor) for the chain-tail `["type", …]`
+    types.py      the host's type registry (name → constructor) for the `["type", …]` stage
     story.py      compile a bundle and run one node synchronously (`compile_story` / `run`)
     trace.py      one event per evaluated stage (`Trace` / `TraceEvent`)
     materialize.py the run-scoped materialization cache
@@ -52,7 +52,7 @@ src/uniparser2/
     ctx.py        ctx (get / set / del / dict / list)
     udf.py        udf (host-registered functions, four argument forms)
     node.py       node (call another node of the story)
-    typeop.py     type (chain-tail validation)
+    typeop.py     type (construct the declared type)
     code.py       code (optional language-level sandbox)
   store/          the only layer that touches disk
     model.py      Status / Source / Graph, Template, TemplateMeta, AuditRow, PublishResult
@@ -110,7 +110,7 @@ Value     = JsonValue | Opaque | HostObject
 ```
 
 A **`float` must be finite**: JSON has no `Infinity` / `NaN`, so `inf` / `-inf` / `nan` is not a
-`JsonValue` and a product carrying one (nested included) is refused at the exit with `UP2-E2003`. A
+`JsonValue`, and one that reaches the exit is reported there as whatever it is. A
 chain's **text** obeys the same rule — `loads` rejects the non-JSON constants Python's decoder accepts,
 and `dumps` refuses to write them (`UP2-E1004`). A computation may still answer one mid-chain;
 Python's arithmetic is Python's, and the boundary is where the rule is enforced.
@@ -120,8 +120,8 @@ Python's arithmetic is Python's, and the boundary is where the rule is enforced.
 | **Adopt the Tree model** (D1-c of the old `dsl-design`) | the HTML/XML/JSON inputs are all trees, and the export is one projection of the tree; "multiple values" are opened up by explicit operators (`nodes` hands out a list, `each` expands it), not by an implicit boolean flag |
 | **Do not adopt the D1-b Row model** | it would promote the special case of "a list page" to a global model, wrapping scalar scenarios in containers |
 | **Do not adopt the D1-d stream model** | the export needs a fold to finish, the mental burden is permanent, and low-code users cannot follow it |
-| **`Opaque` is an explicit type** | `self` / `nodes` produce node handles; **the export packing layer rejects `Opaque`** (`N5`), so a value must pass through a serializing action such as `text` / `html` / `@attr` before it can leave the chain |
-| **A value that flows may be a host object; the exit must be JSON** | a response object, a library node and anything a `udf` returns travel by reference (read with `py.getattr`), but the **run's exit** and a `["type", name]` stage require JSON: the exit is `UP2-E2003`, and a type constructor's answer is re-packed at that stage (`03` §3.3) |
+| **`Opaque` is an explicit type** | `self` / `nodes` produce node handles, and the type is public (`Opaque`): a host that receives one can recognize it and decide what to do, instead of the engine rejecting it on the host's behalf |
+| **A value that flows may be a host object, and the exit hands it back** | a response object, a library node, a `datetime` and anything a `udf` returns travel by reference (read with `py.getattr`), and the run answers exactly what the chain produced (`N5`); a `["type", name]` stage's constructed instance is no exception (`03` §3.3) |
 | **`bytes` never enters the value domain** | the caller decodes (`run(story, node, input)` and the CLI's `--input K=@file` hand over text); a tree is built on demand by the operator that consumes the value, under a run-scoped cache (`03` §6) |
 
 **Lessons from v3**: the `_RECURSION_LIST` boolean flag let every operator decide on its own "whether to expand a list element by element", scattering the behavior across 14 classes (the internal source material, not shipped in this repository, `uniparser-essence.md` §5-R). This design **does not have that flag**: a list is produced by an ordinary operator (`css nodes` / `xpath nodes` / `re findall` / `json`) and expanded in exactly one place — an explicit `each` stage whose field map says what one element becomes — and the behavior of any operator on a `list` input must be written down explicitly in its own Schema.
@@ -208,22 +208,29 @@ Key points:
 
 ---
 
-## 6. Export packing (the single implementation point of N5)
+## 6. The exit (N5: it reports, it does not judge)
+
+`run` answers **the node's product as the node produced it**:
 
 ```python
-def pack(value: Value) -> Ok | Failed: ...
+product = run(story, node, input)   # whatever the chain built, unchanged
 ```
 
-Two steps, in a fixed order:
+There is **no packing step, no export check, and no schema argument**:
 
-1. **Reject what cannot leave the run**: an `Opaque` handle, a `datetime`, or any value outside the
-   JSON domain (a non-finite float included) yields `UP2-E2003` with a fix naming the operator that
-   turns it into text.
-2. **Return the value unchanged** once it passes.
+- an `Opaque` handle, a `datetime`, a host object or a `type` stage's constructed instance **is** the
+  product when the chain produced it; the caller decides what to do with it;
+- a value the host cannot serialize fails **in the host's own serializer**, where the trace already
+  shows which operator produced it -- the engine does not pre-empt that with a coded error;
+- there is no empty-value settlement step either.
 
-There is **no schema argument and no empty-value settlement step**. A schema is the **registered
-type itself**, applied by a `["type", name]` stage at the chain tail (`03` §3): the stage validates
-the product and the exit only packs, so packing sees an ordinary JSON value (§4.2).
+**Why the old packing layer is gone.** It was a rule the chain never declared: the engine guessed
+"the host wants JSON", rejected everything else, and substituted a friendlier error for one the host
+could raise itself. That is exactly the hidden rule this design refuses -- the chain says what it
+does, and the engine does precisely that (`AGENTS.md`, "Determinism: what you see is what you get").
+
+A schema, when a story needs one, is the **registered type itself** applied by a `["type", name]`
+stage anywhere in a chain (`03` §3): the stage constructs the type and carries the result.
 
 ### 6.1 Own Schema description (superseded)
 
@@ -324,7 +331,7 @@ Absorbing the old v3's "library logging conventions": in `__init__.py`, `logger 
 | compile ok | `DEBUG` | `chain_id` / `tpl_key` / fingerprint / node count / elapsed time |
 | stage evaluation | `DEBUG` | node key / field name / stage index / action / elapsed time / outcome state (**off by default**; the trial bench's trace does not depend on logs) |
 | a `Failed` stage | `WARNING` | error code + one-sentence reason + node/field location |
-| export packing failure | `WARNING` | error code + JSON Pointer + expected type vs actual type |
+| product difference (snapshot) | `WARNING` | JSON Pointer + expected vs actual |
 | missing operator dependency | `INFO` (on the first `up2 ops`) | operator name + missing dependency + install command |
 
 **Deviation record from the upstream material**: the old v3 achieved "does not blow up" with "an error is a value + a `SYSTEM_ERRORS` allowlist re-raise" (the internal source material, not shipped in this repository, `uniparser-essence.md` §B5). This design replaces that with the two-outcome model (`Ok` / `Failed`), but **keeps the allowlist idea**: `KeyboardInterrupt` / `SystemExit` / `MemoryError` / `OSError` are **never swallowed** and propagate directly upward (implementation site: the fallback `except Exception:` in `evaluator`, never a bare `except:`).

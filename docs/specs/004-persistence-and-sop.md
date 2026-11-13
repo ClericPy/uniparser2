@@ -316,7 +316,7 @@ up2 ops --json      # operators / actions / arity and slot roles / argument sche
 
 > **Corrected**: the earlier draft wrote `up2 lint --ops` and a `up2 schemas --json` command. There is
 > no `--ops` flag on `lint` (`up2 ops` is its own command, and `lint` takes a chain file), and there
-> is no `schemas` command: the registered *type* names are the `type` a chain tail declares (`03` §3), and
+> is no `schemas` command: the registered *type* names are the `type` a stage declares (`03` §3), and
 > `up2 ops` is the single capability self-description of `08` §1.
 
 ### S1 · Drafting
@@ -449,7 +449,7 @@ up2 doctor [--fix]                           # chains and audit correspond? --fi
 | 8 | forgetting the `each` stage, so the fields run once over the whole page (or `each` receives something that is not a list) | the list version fails loudly with `UP2-E2002`; the "ran once over the page" version is a wrong product at runtime | only S3's `trace` can reveal the latter; the `tpl_key` name and the samples should hint that this is a list page |
 | 9 | `["py","int",""]` (a parameter written for a function that has none) | `UP2-E1004` | a parameter slot is omitted, never written empty: `["py","int"]`; a time string is parsed with `["py","strptime","%Y-%m-%d"]` and rendered with `py.strftime` |
 | 10 | `["re","search",["<pattern>",1]]` with a group the pattern does not have | `UP2-E1005` | check the group index or name against the pattern; `search` takes `[pattern, group]` |
-| 11 | putting a node handle straight into the product (forgetting `text`/`@attr`) | `UP2-E2003` | serialize the `Opaque` handle into text first |
+| 11 | putting a node handle straight into the product (forgetting `text`/`@attr`) | the host's serializer raises on `Opaque` | serialize the handle into text first |
 | 12 | a node call that closes a cycle (`a -> b -> a`) | `UP2-E1017` | inline one of the nodes, or run two calls from the host |
 | 13 | a node key using a reserved name (`globals`) or duplicated | `UP2-E1009` | change the key |
 | 14 | `tpl_key` carrying `:` or `/`, or `root_domain` carrying `/` / `\` / `..` | `UP2-E3002` | pick a name inside the character set, and a domain that is one path component |
@@ -505,7 +505,7 @@ two consequences that must be remembered:
 |---|---|
 | **Absent by default** | it exists only in the optional extra `uniparser2[code]` (`pydantic-monty`); if that is not installed, a compile-time `UP2-E1107` plus an install command, and `up2 ops` marks it unavailable; **`uniparser2[all]` does not contain it** — installing everything must not incidentally grant code-execution capability |
 | **Language-level sandbox** | measured surface by surface instead of by slogan: `import socket` / `import subprocess`, `compile` and `__import__` **do not exist** (`ModuleNotFoundError` / `NameError`); `open(…)` and `os.getenv(…)` **exist and are blocked** by the Monty runtime defaults (`PermissionError` / "not supported in this environment"); `eval` / `exec` exist as language features and carry no capability; the classic escape chain (`''.__class__.__mro__[1].__subclasses__()`) fails at the language level (`AttributeError`) |
-| **JSON only** | only the upstream value and the JSON projection of `ctx` enter the sandbox; handles can neither leave the chain (`UP2-E2003`) nor enter the sandbox, and inside the sandbox `ctx` contains JSON values only, with handles excluded without an error |
+| **JSON only** | only the upstream value and the JSON projection of `ctx` enter the sandbox; a handle cannot enter it (`UP2-E2009`), and the projection reports a non-JSON `ctx` entry by name instead of hiding it |
 | **Limits configured explicitly** | memory, single-execution duration, request timeout and host round-trip budget are each pinned by the host (`uniparser2.ops.code.configure`); passing a limit name inside the chain is merely an unknown argument (compile-time `UP2-E1005`) |
 | **Deterministic by default** | frozen clock + fixed time zone + no `sleep` + seeded random, which guarantees that the same chain and the same input replay character for character; when the host explicitly switches back to following the host, that guarantee is given up |
 | **The chain is self-visible** | the fact that a chain contains code can be grepped in the frozen artifact (the operator name `code`), so an audit need not go back to the host's code |

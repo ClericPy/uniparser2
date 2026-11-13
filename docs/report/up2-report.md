@@ -8,7 +8,7 @@ Generated from `uniparser2` 0.9.0 · one case per `(operator, action)` pair the 
 
 - **Coverage gap**: missing [('node', 'call'), ('type', 'check')] · non-Ok behavior cases []
 - the registry declares **81** pairs = **80** pairs covered by cases
-- states across every run: `Failed` 10, `Ok` 113
+- states across every run: `Failed` 9, `Ok` 114
 
 | operator | arity | slots | summary | actions |
 |---|---|---|---|---|
@@ -1114,7 +1114,7 @@ A query that matches nothing is a **value** — the empty value of its shape (`"
 - note: UP2-E2002
 - chain: `[["py", "upper"]]`
 - input: `42`
-- output: `Failed(code='UP2-E2002', reason='py.upper needs a str, got int', fix='turn the upstream value into text with py.str / py.getitem first')` (Failed)
+- output: `Failed(code='UP2-E2002', reason='py.upper needs a str, got int', fix='turn the upstream value into text with py.str / py.getitem first', allowed=())` (Failed)
 
 #### `Failed (evaluation failed)` — outcome
 - tier ★★★ Core
@@ -1128,14 +1128,14 @@ A query that matches nothing is a **value** — the empty value of its shape (`"
 - note: UP2-E2018: the dict is there, the key is not — an error, not an empty value
 - chain: `[["py", "getitem", "text"]]`
 - input: `{'a': 1}`
-- output: `Failed(code='UP2-E2018', reason="KeyError: 'text' — the dict has no key 'text'", fix='read a key the mapping has, or make the producing stage write it')` (Failed)
+- output: `Failed(code='UP2-E2018', reason="KeyError: 'text' — the dict has no key 'text'", fix='read a key the mapping has, or make the producing stage write it', allowed=())` (Failed)
 
 #### `Failed (an attribute that is a method)` — outcome
 - tier ★★★ Core
 - note: UP2-E2002: py.getattr never calls a method (the fix names an operator or a udf)
 - chain: `[["py", "getattr", "json"]]`
 - input: `_HostObject(status=200, url='https://example.com/list.html')`
-- output: `Failed(code='UP2-E2002', reason="the attribute 'json' of _HostObject is callable, and py.getattr never calls it", fix='a method is not a value: read the text with ["css","text",""]…` (Failed)
+- output: `Ok(value=<bound method _HostObject.json of _HostObject(status=200, url='https://example.com/list.html')>)` (Ok)
 
 #### `Failed (an absent attribute)` — outcome
 - tier ★★★ Core
@@ -1149,14 +1149,14 @@ A query that matches nothing is a **value** — the empty value of its shape (`"
 - note: UP2-E2001: a reference path that does not exist is a failure, not an empty value
 - chain: `[["ctx", "get", "locals.nope"]]`
 - input: `None`
-- output: `Failed(code='UP2-E2001', reason="locals.nope is missing key 'nope' at locals", fix='read a key the value has, or make the producing stage write it')` (Failed)
+- output: `Failed(code='UP2-E2001', reason="locals.nope is missing key 'nope' at locals", fix='read a key the value has, or make the producing stage write it', allowed=())` (Failed)
 
 #### `Failed (sandbox code raised)` — outcome
 - tier ★★★ Core
 - note: UP2-E2017 (the sandbox code can catch it with try/except)
 - chain: `[["code", "1 / 0"]]`
 - input: `None`
-- output: `Failed(code='UP2-E2017', reason='the sandboxed code raised an exception: ZeroDivisionError: division by zero', fix='fix src; the snippet can catch it itself with try/except')` (Failed)
+- output: `Failed(code='UP2-E2017', reason='the sandboxed code raised an exception: ZeroDivisionError: division by zero', fix='fix src; the snippet can catch it itself with try/except', allow…` (Failed)
 
 #### `Failed (sandbox execution over limit)` — outcome
 - tier ★★★ Core

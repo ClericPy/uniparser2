@@ -2,7 +2,7 @@
 
 ## Purpose
 Defines a story as a map of callable nodes: the bundle shape, node bodies, node calls, the field-map
-rule that writes every field to `$locals`, the chain-tail `type` stage, the synchronous `run` facade,
+rule that writes every field to `$locals`, the `type` constructor stage, the synchronous `run` facade,
 and the JSON boundary at the exit.
 
 ## Requirements
@@ -170,16 +170,17 @@ resolve one name to their own constructors.
 - **THEN** the later run SHALL fail `UP2-E1011` on `["type","A"]`, because the first run's table was
   local to it
 
-### Requirement: The exit product is JSON
+### Requirement: The exit reports the product unchanged
 
-The product of the entry node SHALL pass through `pack` before it is returned. A host object, a
-DOM handle or any other non-JSON value at the exit MUST fail with `UP2-E2003` at the entry node.
-Mid-chain values MAY be host objects.
+`run` SHALL return the entry node's product exactly as the run produced it. There MUST be no export
+check, no handle rejection and no substituted error: a host object, a DOM handle, a `datetime` or a
+`type` stage's constructed instance IS the product when the chain produced it. Serializing a product
+is the host's concern, and a value the host cannot serialize fails in the host's own serializer.
 
-#### Scenario: A response object cannot be the exit
+#### Scenario: A response object can be the exit
 
 - **WHEN** the entry node returns a host response object
-- **THEN** `run` raises `UP2-E2003`
+- **THEN** `run` returns that same object
 
 #### Scenario: A response object can be parsed mid-chain
 
@@ -213,7 +214,7 @@ A chain MAY carry `["type", "Name"]` at any position. The stage SHALL build the 
 from the current value and carry the **constructed value** onward, and it SHALL reject an unregistered
 name with `UP2-E1011` or a raising constructor with `UP2-E2019`. A `type` stage that is not the last
 stage of its chain MUST NOT be rejected: a later stage receives the constructed value. A constructed
-value that reaches the run's exit MUST fail with `UP2-E2003`, because the exit is JSON.
+value that reaches the run's exit IS the product, answered unchanged.
 
 #### Scenario: A constructed value flows on
 
@@ -233,4 +234,4 @@ value that reaches the run's exit MUST fail with `UP2-E2003`, because the exit i
 #### Scenario: A constructed value cannot be the exit
 
 - **WHEN** the entry node's product is a constructed instance
-- **THEN** `run` SHALL fail with `UP2-E2003` at the entry node
+- **THEN** `run` SHALL answer that instance

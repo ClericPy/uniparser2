@@ -122,12 +122,10 @@ def test_a_payload_replaces_the_older_kwargs(udfs) -> None:
 
 
 def test_a_host_object_return_flows_mid_chain(udfs) -> None:
-    """A udf may answer any value; only the run's exit and a `type` stage require JSON."""
+    """A udf may answer any value, and the exit hands it back unchecked."""
     udfs("up2_test_bad", lambda value: {1, 2})
     assert run([["udf", "up2_test_bad"]], "x") == Ok({1, 2})
-    with pytest.raises(Up2Error) as info:
-        run_story({"nodes": {"a": [["udf", "up2_test_bad"]]}}, "a")
-    assert info.value.diagnostic.code == "UP2-E2003"
+    assert run_story({"nodes": {"a": [["udf", "up2_test_bad"]]}}, "a") == {1, 2}
 
 
 def test_exception_inside_udf_becomes_e2099(udfs) -> None:

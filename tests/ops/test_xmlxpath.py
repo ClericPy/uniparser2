@@ -29,7 +29,6 @@ from uniparser2 import (
     Up2Error,
     compile_field,
     eval_field,
-    pack,
 )
 from uniparser2.core import registry
 from uniparser2.ops import xmlxpath
@@ -144,9 +143,6 @@ def test_nodes_returns_opaque_list(xml_ready: None) -> None:
     assert isinstance(outcome, Ok)
     assert len(outcome.value) == 2
     assert all(isinstance(node, Opaque) for node in outcome.value)
-    packed = pack(outcome.value)
-    assert isinstance(packed, Failed)
-    assert packed.code == "UP2-E2003"
 
 
 def test_nodes_on_attribute_result_is_type_failure(xml_ready: None) -> None:

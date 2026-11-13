@@ -272,21 +272,15 @@ def test_missing_ctx_attribute_is_loud(sandbox: Any) -> None:
     assert "AttributeError" in outcome.reason
 
 
-def test_handles_are_excluded_from_ctx(sandbox: Any) -> None:
-    """Handles do not appear in ctx, and that is **not an error**.
-
-    It is the same principle as "a handle cannot leave the chain".
-    """
-    src = (
-        "result = 'present'\n"
-        "try:\n"
-        "    ctx.locals.node\n"
-        "except AttributeError:\n"
-        "    result = 'absent'\n"
-        "result"
-    )
+def test_handles_are_reported_not_dropped(sandbox: Any) -> None:
+    """A handle in the scope is an error that names the key, never a silently missing variable."""
+    src = "ctx.locals.node\nresult = 'unreachable'"
     outcome = _run(_code(src), None, locals_={"node": DomNode(object()), "text": "ok"})
-    assert outcome == Ok("absent")
+    assert isinstance(outcome, Failed)
+    assert outcome.code == "UP2-E2009"
+    # The failure names the key and shows its repr, so the fix is obvious from the message.
+    assert "locals.node" in outcome.reason
+    assert "DomNode" in outcome.reason
 
 
 def test_ctx_assignment_does_not_flow_back(sandbox: Any) -> None:
@@ -308,8 +302,9 @@ def test_a_payload_replaces_named_inputs(sandbox: Any) -> None:
 
 
 def test_upstream_handle_is_rejected() -> None:
+    """The sandbox takes JSON, so a node handle is refused at that boundary (not at an exit)."""
     outcome = _failed(_run(_code("1"), DomNode(object())))
-    assert outcome.code == "UP2-E2003"
+    assert outcome.code == "UP2-E2009"
 
 
 def test_non_json_return_is_rejected(sandbox: Any) -> None:

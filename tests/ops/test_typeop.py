@@ -112,15 +112,34 @@ def test_an_unregistered_name_is_e1011_and_names_the_registered_ones() -> None:
     assert "Article" in diagnostic.message
 
 
-def test_a_non_json_answer_flows_and_fails_only_at_the_exit() -> None:
-    """The stage carries what the constructor answered; the exit is what requires JSON."""
-    diagnostic = _run_error([["py", "const", {"url": "u"}], ["type", "BadShape"]])
-    assert diagnostic.code == "UP2-E2003"
+def test_an_unregistered_name_carries_the_registered_names_in_allowed() -> None:
+    """`02` §7 / `03` §3.3: the diagnostic enumerates the substitutes, not only the mistake."""
+    diagnostic = _run_error([["py", "const", {}], ["type", "Gone"]])
+    assert "Article" in diagnostic.allowed
+    assert "int" in diagnostic.allowed
+    assert list(diagnostic.allowed) == sorted(diagnostic.allowed)
+    assert diagnostic.to_dict()["allowed"] == list(diagnostic.allowed)
 
 
-def test_a_container_answer_cannot_be_the_exit() -> None:
-    diagnostic = _run_error([["py", "const", {"url": "u", "title": "t"}], ["type", "Article"]])
-    assert diagnostic.code == "UP2-E2003"
+def test_the_allowed_names_include_the_run_overlay() -> None:
+    @dataclass
+    class OnlyHere:
+        pass
+
+    diagnostic = _run_error([["py", "const", {}], ["type", "Gone"]], types=[OnlyHere])
+    assert "OnlyHere" in diagnostic.allowed
+
+
+def test_a_non_json_answer_is_carried_as_it_is() -> None:
+    """The stage carries what the constructor answered, and nothing checks it afterwards."""
+    assert run(_story([["py", "const", {"url": "u"}], ["type", "BadShape"]]), "a") == {1, 2}
+
+
+def test_a_container_answer_is_the_product() -> None:
+    assert isinstance(
+        run(_story([["py", "const", {"url": "u", "title": "t"}], ["type", "Article"]]), "a"),
+        _Article,
+    )
 
 
 def test_a_builtin_conversion_failure_is_e2019() -> None:

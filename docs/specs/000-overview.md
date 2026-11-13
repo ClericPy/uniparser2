@@ -21,7 +21,9 @@ The end state is pinned down before the design starts, so that every later trade
 
 ```python
 def run(story: Story, node: str | None = None, input: JsonValue = None, *, globals=None,
-        udfs: Mapping[str, UdfFn] | None = None, trace: Trace | None = None) -> JsonValue: ...
+        udfs: Mapping[str, UdfFn] | None = None,
+        types: Mapping[str, TypeConstructor] | Sequence[TypeConstructor] | None = None,
+        trace: Trace | None = None) -> JsonValue: ...
 # Story      = a compiled story: `globals` + `nodes` (`03` §2)
 # node       = the node to run; the first node when omitted
 # input      = that node's `$in`
@@ -35,7 +37,7 @@ def run(story: Story, node: str | None = None, input: JsonValue = None, *, globa
 | **N2** | **A chain survives a lossless JSON round trip** | a chain is data, and `dumps(loads(x)) == dumps(x)` holds character for character (absorbing the old design's "tests are the contract") |
 | **N3** | **A bad chain fails at compile time** | unknown operator, unknown action, mismatched argument type, dangling reference, cycle, reserved-name collision — all error during `compile()` and never reach runtime |
 | **N4** | **A query that matches nothing does not blow up the chain** | "not there" is the shape's empty value (`""` / `[]` / `None`), not an error and not a settled `null`; a failed stage always fails the run with the code of the stage that failed. The empty-value rule replaced the third outcome in `empty-value-semantics` (`01` §4.2, `D-01-1`) |
-| **N5** | **The export is packed by a single function** | any export value must pass through the `export` layer; non-serialisable values such as DOM handles never appear in the export |
+| **N5** | **The exit reports the product, it does not judge it** | `run` answers exactly what the run produced, with no export check, no handle rejection and no substituted error; whether a value is serializable is the host's question, answered by the host's own serializer |
 | **N6** | **No code capability inside a rule** | a chain cannot reach a host capability: no `import` of third-party code, no file, no network and no process, and custom logic enters through a host-registered named function (`udf`). The **single opt-in exception** is the `code` sandbox (`02` §6.12, `04` §11.3): absent by default, language-level only, and measured to expose no host capability — it is NOT a promise about the words `eval`/`exec` (per-surface table in `04` §11.3) |
 | **N7** | **Callable nodes, no DAG scheduling** | a story is a map of **callable nodes**; a node call may name any node, the call graph is acyclic (`03` §5.2), and there is no join, no in-degree counting and no scheduler |
 | **N8** | **Fully synchronous** | no `async`/`await`; `run` executes the node and returns its product, and a host `udf` that needs async work resolves it in the host before returning (`03` §4). Concurrency, if wanted, wraps whole runs |
@@ -48,7 +50,7 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 
 - One of the target products is precisely a **request-specific dict** (`{"url":…, "method":…, "headers":{}, "timeout":30, "body":null}`), which naturally contains dict / int / null / bool and cannot simultaneously satisfy "flat, all str".
 - A product is a JSON value; a `["type", name]` stage validates it (`03` §3), so a structured export is the norm rather than an exception.
-- What is genuinely valuable in the "all str" discipline is **"the export has a single packing point"** and **"the exit type is asserted"**, and those two are inherited here in the form of `N5` + the `type` stage.
+- What is genuinely valuable in the "all str" discipline is **"the exit type is asserted"**, and that one is inherited here in the form of `type` stages; the old "single packing point" rule is **not** inherited -- a packing layer would make the engine guess what the host does with a value.
 
 **Conclusion**: the export is **the product of the node `run` names**, validated by a `["type", name]` stage when one is written; a collection is a named field of that product. The old "flat `dict[str,str]`" fallback (`produces: "flat"`) is gone with the node model (`03` §12.1).
 
@@ -72,7 +74,7 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 | Layer | What it does | What it explicitly does not do |
 |---|---|---|
 | **L1 operator layer** | the value domain / the outcome model / references / compile-time validation / export packing; **12 operators** (`css`/`css1`/`xpath`/`json`/`re`/`py`/`udf`/`ctx`/`each`/`code`/`node`/`type`, where `time`/`cast`/`const` have been merged into `py` and `code` is in `02` §6.12) with all their actions; **the globals/locals design of `ctx`**; **the conformance test set** (every `(operator, action)` has a case) | no multi-field orchestration, no list/nested structures, **no domain names or business keys** |
-| **L2 structure layer** | a **story**: `globals` plus a map of **nodes** (a node body is a chain or a field map; `["node", name]` composes, `["type", name]` validates a chain tail); multi-field orchestration; `each` iteration (a list → one value per element) → arbitrarily nested `list`/`dict`; a synchronous `run`; the run-scoped materialization cache; lint | **still no domain names or business keys**; no network requests of its own (`fetch` is a host `udf`) |
+| **L2 structure layer** | a **story**: `globals` plus a map of **nodes** (a node body is a chain or a field map; `["node", name]` composes, `["type", name]` constructs a host type at any stage); multi-field orchestration; `each` iteration (a list → one value per element) → arbitrarily nested `list`/`dict`; a synchronous `run`; the run-scoped materialization cache; lint | **still no domain names or business keys**; no network requests of its own (`fetch` is a host `udf`) |
 | **L3 binding layer** | binding a chain to a business identity and freezing it: `root_domain` / `tpl_key`, the Store, fingerprints and auditing, the `publish` gates, the `S0–S7` SOP; a seam example of a host consuming the request dict | — |
 
 **Criterion**: item 5 of the L3 acceptance criteria in `07` §3 requires that "after deleting every concept of `04` from the code, all L1/L2 tests still pass" — that is the mechanically checkable form of "the first two layers have zero business coupling".
@@ -86,7 +88,7 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 ### 4.1 What is in (the kernel)
 
 1. **The value domain and the evaluation kernel**: the value tree, the outcome model, the operator registry, chain evaluation, export packing (`01`, `02`).
-2. **The story specification**: `globals` + `nodes`, node bodies (a chain or a field map), `["node", name]` composition, the chain-tail `["type", name]`, the synchronous `run`, the compile-time lint checklist (`03`).
+2. **The story specification**: `globals` + `nodes`, node bodies (a chain or a field map), `["node", name]` composition, the `["type", name]` constructor stage, the synchronous `run`, the compile-time lint checklist (`03`).
 3. **Chain persistence and the SOP**: the `Template` / `TemplateAudit` data model, the Store abstraction (file + SQLite), the step-by-step LLM SOP (`04`).
 4. **The in-place trial UI**: `up2 lint` / `up2 trial` / `up2 studio` / `up2 ops` / `up2 publish` / `up2 audit` (`06`).
 5. **Engineering foundations**: uv dependencies and releases, layered pytest, documentation-driven development, OpenSpec integration, change-linter (`05`).
@@ -120,7 +122,7 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 | **field chain** | field chain | the ordered list of stages belonging to one output field |
 | **field** | field | a key of a field-map product; every result is written into the current `$locals`, and the `_` prefix only keeps it out of the product |
 | **product** | product | the value a node produced; a node call returns it as the stage value |
-| **product type** | `type` | a chain-tail stage `["type", name]` that validates the value against a host-registered type (`03` §3) |
+| **product type** | `type` | a constructor stage `["type", name]` that builds a host-registered type from the value, at any position in a chain (`03` §3) |
 | **scope** | scope | `globals` (read-only constants) / `locals` (the current scope; a node call shares it) / `public` (the run's shared notes) / `$in` (the node invocation's input) / `$obj` (the stage value) (`03` §8) |
 | **freezing** | publish | writing a validated chain into the Store and leaving an audit row |
 | **snapshot** | snapshot | the expected product of a chain on a fixed sample input, placed under `tests/snapshots/`; the behaviour contract of the chain |
@@ -135,7 +137,7 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 | `000-overview.md` (this document) | positioning, the end-state acceptance criteria, goal mapping, scope, glossary, map |
 | `001-architecture-and-value-model.md` | layering and invariants, package structure, the value tree, the outcome model and the empty-value rule, export packing, security and resource limits |
 | `002-dsl-spec-triples-and-operators.md` | the canonicalisation of the chain stage `[operator, mode, argument]` and the increasing enumeration strength of the slots, reference syntax, the full operator set, allowlisted functions, compile-time error codes |
-| `003-parse-chain-spec.md` | the **story** model: `globals` + `nodes`, node bodies (chain / field map), `["node", …]` calls, the chain-tail `["type", …]`, the synchronous `run`, `each` and the field map, materialization and the run-scoped cache, scope, the lint checklist, a complete walkthrough |
+| `003-parse-chain-spec.md` | the **story** model: `globals` + `nodes`, node bodies (chain / field map), `["node", …]` calls, the `["type", …]` constructor stage, the synchronous `run`, `each` and the field map, materialization and the run-scoped cache, scope, the lint checklist, a complete walkthrough |
 | `004-persistence-and-sop.md` | the `Template`/`TemplateAudit` data model, fingerprints, the Store abstraction and its implementations, the `S0–S7` SOP, the counter-example list |
 | `005-engineering-workflow.md` | uv dependencies and releases, directory structure, TDD and test layering, documentation-driven development, OpenSpec integration, change-linter, CI |
 | `006-trial-ui-design.md` | the pywebview three-column trial UI, single-stage trace, the save-as-snapshot loop, TUI/CLI degradation |

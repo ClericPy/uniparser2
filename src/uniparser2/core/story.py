@@ -26,7 +26,6 @@ from .ast import CompiledField, CompiledStage
 from .compile import compile_field, compile_field_map
 from .errors import Failed, Up2Error, diag
 from .evaluator import eval_field, eval_field_map
-from .export import pack
 from .limits import MAX_STORY_NODES
 from .refs import RESERVED_ROOTS, Scope
 from .trace import Trace
@@ -152,7 +151,7 @@ def run(
     constants for this run; ``udfs`` merges over the process-wide udf table and ``types`` over the
     process-wide type registry, both for this run only. A udf name the chosen node uses (directly or
     through a node call) but the effective table lacks is ``UP2-E1010``, raised before evaluation.
-    The product passes through ``pack``; a non-JSON exit is ``UP2-E2003`` at the entry node.
+    The product is returned as the run produced it: no export check, no substitution.
 
     ``types`` is a name → constructor mapping, or a sequence of callables whose ``__name__`` is the
     name. The merged table reaches a `type` stage through the scope, so two runs in one process may
@@ -181,18 +180,7 @@ def run(
         types=merged_types,
     )
     runner = _NodeRunner(story, scope, trace)
-    product = runner.call(entry, input)
-    packed = pack(product)
-    if isinstance(packed, Failed):
-        raise Up2Error(
-            diag(
-                packed.code,
-                packed.reason,
-                fix=packed.fix,
-                pointer=story.nodes[entry].pointer,
-            )
-        )
-    return product
+    return runner.call(entry, input)
 
 
 def _type_overlay(
@@ -259,7 +247,13 @@ class _NodeRunner:
             )
             if isinstance(outcome, Failed):
                 raise Up2Error(
-                    diag(outcome.code, outcome.reason, fix=outcome.fix, pointer=node.pointer)
+                    diag(
+                        outcome.code,
+                        outcome.reason,
+                        fix=outcome.fix,
+                        pointer=node.pointer,
+                        allowed=outcome.allowed,
+                    )
                 )
             return outcome.value
         finally:

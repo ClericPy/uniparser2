@@ -214,9 +214,11 @@ def _py_getattr(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
 
     - an absent attribute is ``UP2-E2002`` with the exception's own class name in ``reason``
       (``AttributeError: 'Response' object has no attribute 'txet'``);
-    - an attribute that is **callable** is refused, because a method is not a value: the fix names
-      the operator (``["css","text",""]``) or a ``udf``. A zero-argument method on a document node
-      can mutate the tree (``selectolax``'s ``decompose``), so it is never called here.
+    - an attribute that is **callable** is returned as it is: ``getattr`` reads an attribute, it
+      never calls one. A bound method is a perfectly good value to hand to a ``udf``, and this
+      operator does not decide on the caller's behalf that a method "is not a value". The engine
+      never invokes it, so a method that would mutate a document tree (``selectolax``'s
+      ``decompose``) is harmless here.
     """
     del scope
     name = params["ref_or_literal"]
@@ -233,14 +235,6 @@ def _py_getattr(value: Any, params: Mapping[str, Any], scope: Scope) -> Outcome:
             code="UP2-E2002",
             reason=f"{exc.__class__.__name__}: {exc}",
             fix="check the attribute name against the value, or make the producing stage write it",
-        )
-    if callable(found):
-        return Failed(
-            code="UP2-E2002",
-            reason=f"the attribute {name!r} of {type_name(value)} is callable, and py.getattr "
-            "never calls it",
-            fix='a method is not a value: read the text with ["css","text",""] (or "html" / '
-            '"outer"), or register a udf that calls it',
         )
     return Ok(found)
 

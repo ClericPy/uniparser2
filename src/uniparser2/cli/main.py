@@ -41,7 +41,6 @@ from typing import Any
 import uniparser2
 from uniparser2 import (
     Diagnostic,
-    Failed,
     Ok,
     Outcome,
     Scope,
@@ -52,7 +51,6 @@ from uniparser2 import (
     compile_field,
     compile_story,
     eval_field,
-    pack,
     run,
 )
 from uniparser2.core import compare_products, registry
@@ -703,9 +701,6 @@ def _cmd_audit(args: argparse.Namespace) -> int:
 
 def _report_outcome(outcome: Outcome, as_json: bool, *, trace: Trace | None = None) -> int:
     if isinstance(outcome, Ok):
-        packed = pack(outcome.value)
-        if isinstance(packed, Failed):
-            return _report_outcome(packed, as_json, trace=trace)
         payload: dict[str, Any] = {"state": "ok", "value": outcome.value}
         code = EXIT_OK
     else:

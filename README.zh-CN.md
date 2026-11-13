@@ -117,9 +117,10 @@ product = up2.run(
 )  # 同步；`fetch` 会阻塞
 ```
 
-`run(story, node=None, input=None, *, globals=None, udfs=None, trace=None)` 返回该节点的产物（不写
-`node` 时跑第一个节点）。`globals` 在该次运行里合并覆盖 story 的常量。出口和 `type` 阶段要求 JSON；
-响应对象可以在链中间流动，用 `py.getattr` 读取。`fetch` 接收**请求对象**（`{"url": …}`）；
+`run(story, node=None, input=None, *, globals=None, udfs=None, types=None, trace=None)` 返回该节点的
+产物（不写 `node` 时跑第一个节点）。`globals` 在该次运行里合并覆盖 story 的常量；`types` 与 `udfs` 同样
+按运行合并覆盖进程级类型注册表。**只有出口要求 JSON**：响应对象、或 `type` 构造出的实例都可以在链中间
+流动，用 `py.getattr` 读取。`fetch` 接收**请求对象**（`{"url": …}`）；
 `["ctx","dict",{"url":"obj"}]` 从当前值构造一个。
 
 </details>
@@ -253,7 +254,7 @@ uv run up2 ops --json     # arity、槽位、动作、参数 schema、依赖、�
 | `each` | 标准库 | 对列表每个元素跑一个字段表或一条链 |
 | `udf` | 宿主注册 | 运行表里的任意函数；DTO / `*` / `**` / 一个显式参数 |
 | `node` | story | 用当前值作为 `$in` 调用另一个节点 |
-| `type` | story | 在链尾用注册类型校验产物 |
+| `type` | story | 用注册类型构造产物，可放在任意阶段 |
 | `code` | pydantic-monty（`[code]`，不在 `[all]`） | `run`——语言级沙箱里的链内代码 |
 
 `py` 没有 `eval` / `exec` / `import`；宿主代码只能通过 `udf` 进入。内核只用标准库、不做 IO。

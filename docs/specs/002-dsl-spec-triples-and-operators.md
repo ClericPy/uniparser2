@@ -113,7 +113,7 @@ an array of stages and the empty array is the only identity. A string in chain p
 - **There is no `<node name>` reference root**: a node's product is the value its call returns, and a field map writes every field into `$locals`. A standalone field chain may declare external product roots when it is compiled (`--product`); a story has no such roots.
 - **A dotted path dispatches on the value it walks** (`03` §13 O12): a mapping is read by key, a sequence by a digit index and a host object by `getattr`.
   An attribute that is **callable** is refused with `UP2-E2002`, the same way `py.getattr` refuses one — a method is not a value, and it could not leave the
-  run anyway (`UP2-E2003`); the fix hint names `["css","text",""]` or a `udf`.
+  run as it is; a bound method is a value like any other, and the engine never calls it.
 - A `_`-prefixed field is a **local**: every field map writes every result into `$locals`, and the `_` prefix only keeps the field out of the product.
 - **There is no iteration variable**: inside `each`'s field map the current element is the **input value** of every field chain (§6.9), and each element is
   evaluated in its own child scope — `$locals.*` falls back outward **by name** (the innermost scope holding the path's first segment resolves the whole path,
@@ -255,7 +255,7 @@ are compile errors (`UP2-E1005`): a guard that protects nothing is a mistake, no
 - The input is a `str` (containing HTML) or a node (`Opaque`). **A list input reports `UP2-E2002`**: parsing item by item belongs to the chain-level structure
   (`each`, §6.9); doing it here would only yield a semantically murky "concatenation".
 - **Nodes are always wrapped as `DomNode(Opaque)`**: native engine objects do not enter the value domain, so the products of `nodes` / `self` are naturally
-  rejected by export packing (`UP2-E2003`).
+  answered as the product as it is; the engine does not judge what a host can serialize.
 - There is exactly one engine: **`selectolax`** (`requires=("selectolax",)`). Not installed ⇒ compile-time `UP2-E1107` + the install command.
 - **XML is not its business**: XML uses §6.11's `xpath`. Measured, selectolax raises `ValueError: Bad CSS Selectors` outright for XML with prefixed namespaces
   (`dc|creator`), the unprefixed spelling (`dc\:creator`) yields `[]`, and it merges `<Item>` with `<item>`.
@@ -385,7 +385,7 @@ Deliberately not checked: `join.sep` (the runtime coerces it with `str()`), and 
 | Predicate | `or` / `and` | operand array | Python's `or`/`and` over `[value, *operands]`; an empty array answers the upstream value |
 
 **Time is Python's pair on real values.** `strptime` produces a `datetime`, `strftime` consumes one, and `from_timestamp` / `to_timestamp` convert epoch
-seconds. A `datetime` may flow between stages (the value model allows host objects) but it is **not exportable**: the exit reports `UP2-E2003` and names
+seconds. A `datetime` may flow between stages (the value model allows host objects); the exit reports it unchanged, and `strftime` is how a story turns one into text
 `py.strftime` as the way out. There is no format guessing: the format is explicit and validated at compile time, so `03/04/2026` needs `"%d/%m/%Y"` or
 `"%m/%d/%Y"`. Relative and natural-language dates are out of scope (a host `udf` or `code`). The layout allowlist is locale-free and platform-stable: `%a` /
 `%A` / `%b` / `%B` / `%p` / `%c` / `%x` / `%X` are locale-decided, `%Z` is platform-decided, `%e` / `%k` / `%l` / `%G` / `%V` are platform-specific and `%s`
@@ -415,7 +415,7 @@ structure is not copied** (it is treated as immutable and must not be modified i
 - `["cast", "int"]` and `["py","int"]` have exactly the same expressive power, and one operator fewer means one document fewer and one conformance
   declaration fewer;
 - **`datetime` is an internal value only**: `strptime` / `from_timestamp` produce one, `strftime` / `to_timestamp` consume one, and the exit refuses it
-  (`UP2-E2003`); it never enters the stored JSON value domain;
+  unchanged; it never enters the stored JSON value domain;
 - when the business side wants `str`, it writes `"str"` in the business schema instead of relying on a forced conversion at the end of the chain.
 
 ### 6.7 ~~`time`~~ — absorbed into `py`'s `strptime` / `strftime`
@@ -522,7 +522,7 @@ products. Anything else is `UP2-E1005`.
   deferred to `run`'s pre-flight, because the table is run state. A function that cannot accept the selected form
   is `UP2-E1005` at compile time when known.
 - **A udf may answer any value.** A host object (a response, a node handle) is carried by reference and read with
-  `py.getattr`; only the run's exit (`UP2-E2003`) requires JSON. An awaitable answer is
+  `py.getattr`, and the exit hands it back unchanged. An awaitable answer is
   `UP2-E2009`: the kernel is synchronous, so the host calls an async function in its own event loop before returning.
 - **`ctx` is not injected**: a function that needs the scope takes the payload the chain hands it; writing the scope
   stays `ctx.set`'s job.
@@ -567,7 +567,7 @@ a two-element array `[expression, ns]` (D3).
 - The input is a `str` (XML text) or a node (`XPathNode`); **the XML must be well formed**: a parse failure ⇒ `UP2-E2005`, and the fix points straight at the
   `css` operator (use it for HTML).
 - There is only one dependency: **`lxml`** (`requires=("lxml",)`) — no `cssselect`, no bs4; XPath is native lxml capability.
-- Nodes are wrapped as `XPathNode(Opaque)` and are likewise rejected at the exit (`UP2-E2003`).
+- Nodes are wrapped as `XPathNode(Opaque)`, so a host that receives one can recognize it.
 
 ### 6.12 `code` — code inside the chain (sandbox)
 
@@ -589,7 +589,7 @@ string ⇒ `None`; `x = 1 + 1; x * 3` ⇒ `6`. **`print` is silenced** (the host
 same pattern `udf` uses.
 
 **`ctx` contains JSON values only**: handles (DOM / XPath nodes) do not appear in `ctx`, and no error is raised because of their absence — the same principle
-as `UP2-E2003`. When the upstream value itself is a handle it is rejected explicitly (`UP2-E2003`).
+as `UP2-E2009`. When the upstream value itself is a handle it is rejected explicitly (`UP2-E2009`).
 
 **Assignments to `ctx` inside the sandbox do not flow back** to the engine scope: to write, use `ctx.set` in the chain.
 
@@ -619,7 +619,7 @@ for containers.
   marks it unavailable; `uniparser2[all]` does not include it.
 
 **Error codes**: a limit ⇒ `UP2-E2016`; an exception in the sandboxed code ⇒ `UP2-E2017`; a non-product return (or a non-JSON input) ⇒ `UP2-E2009`; an upstream
-handle ⇒ `UP2-E2003`.
+handle ⇒ `UP2-E2009`.
 
 ### 6.13 `node` — call a story node
 
@@ -655,7 +655,7 @@ the host's type registry at this stage:
 - the stage may appear **anywhere** in a chain (`chain-tail` was the rule until the value really flowed);
 - an unregistered name is `UP2-E1011`, listing the registered names; a constructor that raises is `UP2-E2019`,
   with its own exception text;
-- a constructed value at the run's **exit** is `UP2-E2003`, because the exit is JSON;
+- a constructed value at the run's exit is the product, unchanged;
 - a run may inject its own table: `run(story, types={...})` (a name → constructor map, or a sequence of classes
   named by `__name__`), the same overlay pattern `udfs={...}` uses.
 
@@ -694,7 +694,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 |---|---|---|
 | `UP2-E2001` | a reference path cannot be resolved at runtime (the actual structure has fewer keys than declared) | give the path and the actual type/key set of the value |
 | `UP2-E2002` | a stage input's type does not match what the operator expects | give the type the operator expects and the actual type |
-| `UP2-E2003` | the run's exit or a `["type", …]` product is not JSON (`Opaque` or a non-JSON type) | convert it to text first via `text` / `html` / `outer` / `@<attribute name>` |
+| ~~`UP2-E2003`~~ | **retired** with the export packing layer (`N5`): the exit reports the product as produced, so no exit-side type check exists; a handle that cannot enter the sandbox is `UP2-E2009` | -- |
 | `UP2-E2004` | the lazy import of an operator's optional dependency failed | give the install command |
 | `UP2-E2005` | value conversion failed | give the source type, the target type and a preview of the source value |
 | `UP2-E2009` | an operator returned a value that cannot be a product (an awaitable, a non-JSON sandbox value) | a sandboxed value must be JSON; call an async function in the host's own event loop and return its value |

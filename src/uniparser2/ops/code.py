@@ -10,7 +10,7 @@ exactly one action (run this source once), so the chain omits the action slot (t
 - ``ctx``: a **scope object**, used attribute-style as ``ctx.locals.args1`` / ``ctx.globals.base``.
   ``ctx`` is built inside the sandbox from the JSON projection of the scope by a **prelude** (code
   inside the sandbox), hence zero host round-trips; non-JSON values such as ``Opaque`` handles in
-  ``locals`` never appear (they could not leave the chain anyway, ``UP2-E2003``).
+  ``locals`` never appear (the sandbox takes JSON, and a handle is not).
 - The return value = **the value of the last expression** (REPL semantics); if the source ends with
   an assignment / ``print`` / a comment, it is ``None``.
 
@@ -413,7 +413,10 @@ class Code(Op):
                 reason=f"the sandbox pool failed to start: {exc}",
                 fix=f"make sure the optional dependency is installed: {_EXTRA}",
             )
-        return _run_in_sandbox(module, pool, src, call.value, call.scope.json_view())
+        view = call.scope.json_view()
+        if isinstance(view, Failed):
+            return view
+        return _run_in_sandbox(module, pool, src, call.value, view.value)
 
 
 def _code_enabled() -> bool:
@@ -433,7 +436,7 @@ def _bad_value(name: str, value: Any) -> Failed | None:
     """
     if isinstance(value, Opaque):
         return Failed(
-            code="UP2-E2003",
+            code="UP2-E2009",
             reason=f"{name} is a node handle and cannot enter the sandbox",
             fix="convert the handle to text with text / @<attribute> first, then pass it to code",
         )

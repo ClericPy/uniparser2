@@ -354,14 +354,14 @@ def test_getattr_absent_attribute_is_e2002_naming_the_class() -> None:
     )
 
 
-def test_getattr_refuses_a_callable_attribute() -> None:
-    """A method is never turned into a value silently (selectolax's `decompose` mutates a tree)."""
+def test_getattr_reads_a_callable_attribute_as_it_is() -> None:
+    """`getattr` reads an attribute, it never calls one: a bound method is a value like any other.
+
+    Whether a method is useful is the caller's judgement -- handing one to a ``udf`` is a real use.
+    """
     outcome = run([["py", "getattr", "json"]], _HostResponse())
-    assert isinstance(outcome, Failed)
-    assert outcome.code == "UP2-E2002"
-    assert "callable" in outcome.reason
-    assert '["css","text",""]' in outcome.fix
-    assert "udf" in outcome.fix
+    assert isinstance(outcome, Ok)
+    assert callable(outcome.value)
 
 
 def test_getattr_on_a_value_without_attributes_is_e2002() -> None:
@@ -396,10 +396,10 @@ def test_getattr_on_a_selectolax_node() -> None:
     assert run([["py", "getattr", "attributes"]], node) == Ok({"id": "a"})
     parent = run([["py", "getattr", "parent"]], node)
     assert isinstance(parent, Ok)
+    # `.text` is a method; reading it answers the bound method, and nothing calls it.
     method = run([["py", "getattr", "text"]], node)
-    assert isinstance(method, Failed)
-    assert method.code == "UP2-E2002"
-    assert "callable" in method.reason
+    assert isinstance(method, Ok)
+    assert callable(method.value)
 
 
 def test_the_identity_action_is_gone() -> None:

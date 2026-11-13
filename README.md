@@ -120,9 +120,11 @@ product = up2.run(
 )  # synchronous; `fetch` blocks
 ```
 
-`run(story, node=None, input=None, *, globals=None, udfs=None, trace=None)` returns the node's product
-(the first node is the default). `globals` merges over the story's constants for that run. The exit and
-a `type` stage require JSON; a response object may flow mid-chain and be read with `py.getattr`.
+`run(story, node=None, input=None, *, globals=None, udfs=None, types=None, trace=None)` returns the
+node's product (the first node is the default). `globals` merges over the story's constants for that run;
+`types` merges over the process-wide type registry the same way `udfs` does. **Only the exit requires
+JSON**: a response object, or a `type` stage's constructed instance, may flow mid-chain and be read with
+`py.getattr`.
 `fetch` takes a **request object** (`{"url": …}`); `["ctx","dict",{"url":"obj"}]` builds one from the
 current value.
 
@@ -261,7 +263,7 @@ uv run up2 ops --json     # arity, slots, actions, parameter schema, dependencie
 | `each` | stdlib | one field map or one chain per element of a list |
 | `udf` | host-registered | any function in the run's table; DTO / `*` / `**` / one explicit argument |
 | `node` | story | call another node with the current value as its `$in` |
-| `type` | story | validate a chain-tail product against a registered type |
+| `type` | story | construct a registered type from the value, at any stage |
 | `code` | pydantic-monty (`[code]`, not in `[all]`) | `run` — in-chain code in a language-level sandbox |
 
 `py` has no `eval` / `exec` / `import`; `udf` is the only way host code enters. The kernel is the

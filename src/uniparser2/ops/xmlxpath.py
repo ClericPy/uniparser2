@@ -75,7 +75,7 @@ _ACTIONS: Final[Mapping[str, ActionSpec]] = {
 class XPathNode(Opaque):
     """XML element handle.
 
-    It can flow through the chain, but the export must be rejected (``UP2-E2003``).
+    It can flow through the chain and out of the run unchanged.
     """
 
     __slots__ = ("raw",)

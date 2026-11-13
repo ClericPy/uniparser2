@@ -286,20 +286,22 @@ class Scope:
             f"{text!r} is not a writable path (only {', '.join(WRITABLE_ROOTS)} are writable)"
         )
 
-    def json_view(self) -> dict[str, dict[str, Any]]:
+    def json_view(self) -> Outcome:
         """The **JSON projection** of the scope: ``{"locals": …, "globals": …, "public": …}``.
 
         The ``locals`` view is resolved along the scope lineage (outermost first, the innermost
         winning), so in-chain code and host functions see the same name a reference read sees.
 
-        Non-JSON values (``Opaque`` node handles, for example) are **dropped** rather than
-        reported as an error -- they could never leave the chain anyway (``UP2-E2003``), so in-chain
-        code not seeing them follows the same principle instead of being a new silent drop.
+        A value that is not JSON is **reported, not dropped**: silently removing a name would make
+        in-chain code see a variable that "was never set" while it plainly was, which is exactly the
+        kind of hidden rule this engine does not have. The failure names every offending key and
+        shows its ``repr``, so the fix (convert the handle to text first) is obvious from the error.
         """
         merged: dict[str, Any] = {}
         for outer in self._lineage():
             merged.update(outer.locals)
         view: dict[str, dict[str, Any]] = {}
+        offenders: list[str] = []
         for partition in CTX_PARTITIONS:
             if partition == "locals":
                 source: Mapping[str, Any] = merged
@@ -307,8 +309,24 @@ class Scope:
                 source = self.public
             else:
                 source = self.globals
-            view[partition] = {key: value for key, value in source.items() if is_json_value(value)}
-        return view
+            kept: dict[str, Any] = {}
+            for key, value in source.items():
+                if is_json_value(value):
+                    kept[key] = value
+                else:
+                    offenders.append(f"{partition}.{key} = {value!r}")
+            view[partition] = kept
+        if offenders:
+            return Failed(
+                code="UP2-E2009",
+                reason=(
+                    "the JSON projection of the scope holds "
+                    f"{len(offenders)} value(s) that are not JSON: {'; '.join(offenders)}"
+                ),
+                fix="convert each value to text or a JSON shape first, then write it back "
+                "with ctx.set (a consumer that takes JSON only is what reads this projection)",
+            )
+        return Ok(view)
 
     def _lineage(self) -> tuple[Scope, ...]:
         """The scope lineage, outermost first."""
@@ -428,10 +446,10 @@ def _walk_sequence(current: list[Any] | tuple[Any, ...], segment: str, ref: Ref)
 def _walk_attribute(current: Any, segment: str, ref: Ref, walked: list[str]) -> Outcome:
     """Read an attribute of a host object; the reason carries the exception's own class name.
 
-    A **callable** attribute is refused with the same code, message and fix hint ``py.getattr``
-    uses: a method is not a value, and ``$resp.json`` would resolve to a bound method that cannot
-    leave the run anyway (``UP2-E2003``) -- refusing it here makes the failure early and clear
-    (``03`` §13 O12).
+    A **callable** attribute is read like any other: ``getattr`` reads, it does not call, so
+    ``$resp.json`` resolves to the bound method and hands it on. Whether that is useful is the
+    caller's judgement -- the engine does not refuse a value because it anticipates a problem
+    (``AGENTS.md``, "Determinism: what you see is what you get").
     """
     try:
         found = getattr(current, segment)
@@ -441,14 +459,6 @@ def _walk_attribute(current: Any, segment: str, ref: Ref, walked: list[str]) -> 
             reason=f"{ref.raw} at {'.'.join(walked) or ref.root}: {exc.__class__.__name__}: {exc}",
             fix="check the attribute name against the host object, or read it with "
             '["py","getattr",NAME]',
-        )
-    if callable(found):
-        return Failed(
-            code="UP2-E2002",
-            reason=f"the attribute {segment!r} of {type_name(current)} is callable, and a "
-            "reference never calls it",
-            fix='a method is not a value: read the text with ["css","text",""] (or "html" / '
-            '"outer"), or register a udf that calls it',
         )
     return Ok(found)
 

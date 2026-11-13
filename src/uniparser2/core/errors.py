@@ -7,6 +7,10 @@ Three layers:
   and the reference set for conformance. Codes the spec has defined but that are not implemented
   yet (the graph rules ``E11xx``, the ``udf``/``emit`` ones) are **not in this table**; they join it
   as their layer lands.
+- ``RETIRED``: numbers that were emitted once and are not any more, with the reason. ``01`` §4.3
+  requires a code to be **stable**, so a retired number never disappears -- it moves here and is
+  never reused. Keeping the record apart from ``CODES`` lets the conformance audit assert both
+  directions: every code in ``CODES`` has a throw site, and no ``RETIRED`` number has one.
 - ``Diagnostic``: a human-facing diagnostic (code + message + fix + optional allowed values), the
   handle an LLM uses for self-correction.
 """
@@ -16,6 +20,19 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Final
+
+RETIRED: Final[dict[str, str]] = {
+    "UP2-E1008": "a code defined in 02 §7 for a reference written in a `literal` position; §3.2 "
+    "resolved it with E1005 (a `$` in a literal slot is a shape error)",
+    "UP2-E2003": "export contains a value that cannot be serialized; retired with the export "
+    "packing layer (N5) -- the exit reports the product as produced, and a handle that cannot "
+    "enter the sandbox is E2009",
+    "UP2-E2014": "a schema is the registered type itself, applied by a [type] stage",
+    "UP2-E2015": "a missing value with the effective policy set to raise; retired with the "
+    "settlement policy (a missing value is not an error any more)",
+}
+"""Codes that were emitted once and are named here so the number is never reused (`01` §4.3)."""
+
 
 CODES: Final[dict[str, str]] = {
     # ---- compile time (UP2-E1xxx) ----
@@ -39,14 +56,11 @@ CODES: Final[dict[str, str]] = {
     # ---- runtime (UP2-E2xxx) ----
     "UP2-E2001": "reference path cannot be read at runtime (shallower than declared)",
     "UP2-E2002": "stage input type does not match what the operator expects",
-    "UP2-E2003": "export contains a value that cannot be serialized",
     "UP2-E2004": "deferred import of an operator optional dependency failed",
     "UP2-E2005": "value conversion failed",
     "UP2-E2009": "an operator returned a value that cannot be a product",
     "UP2-E2012": "the iteration count of `each` exceeds MAX_EACH_ITER",
     "UP2-E2013": "the input text exceeds MAX_TEXT_BYTES",
-    # UP2-E2015 ("value is missing and the effective policy is raise") is retired with the
-    # settlement policy: a missing value is not an error any more. The number is not reused.
     "UP2-E2016": "sandbox execution over limits (feed time / memory / host round-trip budget)",
     "UP2-E2017": "sandbox code raised an exception (syntax or unsupported constructs)",
     "UP2-E2018": "py.getitem found no such key or index",
@@ -148,11 +162,18 @@ class Ok:
 
 @dataclass(frozen=True, slots=True)
 class Failed:
-    """Evaluation failed: type mismatch, conversion failure, missing dependency, and so on."""
+    """Evaluation failed: type mismatch, conversion failure, missing dependency, and so on.
+
+    ``allowed`` carries the values a reader may substitute -- the registered type names for
+    ``UP2-E1011``, the writeable roots for a ``ctx`` failure -- so the diagnostic that reaches the
+    host enumerates them instead of only naming what was wrong (`02` §7).
+    """
 
     code: str
     reason: str
     fix: str = ""
+    allowed: tuple[str, ...] = ()
+    """The values a reader may substitute; empty for a failure that enumerates nothing."""
 
 
 type Outcome = Ok | Failed

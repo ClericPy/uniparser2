@@ -4,7 +4,7 @@ The stage is ``["type", name]``: two slots, one action, the type name in slot 2.
 **constructor** stage and may appear anywhere in a chain: whatever the constructor answers is what
 the chain carries on, so a container type carries a host object onward and a later stage reads it
 with ``py.getattr`` or hands it to a ``udf`` (``03`` §3.3). JSON is required only at the run's exit,
-where ``pack`` answers ``UP2-E2003`` for a non-JSON product.
+where the product is answered as produced, whatever its type.
 """
 
 from __future__ import annotations
@@ -60,7 +60,12 @@ class TypeCheck(Op):
         try:
             return Ok(build_type(name, call.value, table=call.scope.types or None))
         except UnknownTypeError as exc:
-            return Failed(code="UP2-E1011", reason=str(exc), fix=UNREGISTERED_FIX)
+            return Failed(
+                code="UP2-E1011",
+                reason=str(exc),
+                fix=UNREGISTERED_FIX,
+                allowed=exc.known,
+            )
         except TypeConstructionError as exc:
             return Failed(
                 code="UP2-E2019",

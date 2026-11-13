@@ -201,7 +201,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 |---|---|
 | Field-map orchestration | multi-field evaluation over one input, cross-field `locals` references — the per-field error policies were retired (`01` `D-01-1`) and the third outcome was removed later (`empty-value-semantics`) |
 | **Lists and nesting** | `each` iteration (one value per element, with the per-element scope), `$lit` escaping, arbitrarily deep nested `dict`/`list` |
-| **The story** | `globals` + `nodes`; a node body is a chain or a field map; `["node", name]` composes, `["type", name]` validates a chain tail, and `run` is synchronous — the type registry (`UP2-E1011` / `UP2-E2019`) is unchanged; the node model **landed** in `story-node-model` (0.7.0), replacing the step sequence and its `entry` / `collect` / `next` |
+| **The story** | `globals` + `nodes`; a node body is a chain or a field map; `["node", name]` composes, `["type", name]` constructs a host type at any stage, and `run` is synchronous — the type registry (`UP2-E1011` / `UP2-E2019`) is unchanged; the node model **landed** in `story-node-model` (0.7.0), replacing the step sequence and its `entry` / `collect` / `next` |
 | Host functions | `udf` with four argument forms (DTO / `*` / `**` / explicit); `fetch` is the conventional downloader; no effects, no suspension |
 | materialization | the run-scoped, byte-capped cache (`03` §6) — load-bearing for acceptance item 7 (**landed** in `add-materialization-cache`) |
 | lint | every live rule of `03` §10, each with at least one test (L20 is retired with `presets`) |
@@ -211,7 +211,7 @@ This round started from "build the scaffold + the conformance mechanism first, a
 
 > **Node model (design note `03` v0.4, change `story-node-model`, 0.7.0)**: the step sequence and its
 > effects are superseded. A story is `globals` + `nodes`; `["node", name]` composes, `["type", name]`
-> validates a chain tail, and `run` is synchronous. `fetch` is a host `udf`; there are no
+> constructs a host type at any stage, and `run` is synchronous. `fetch` is a host `udf`; there are no
 > `Request` / `RequestBatch` / `next` / `collect` / `start` / `go` / `feed`.
 
 > **Story supersession (design note `03` v0.2, design notes only)**: the L2 structure layer is a **story** —

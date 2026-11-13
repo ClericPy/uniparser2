@@ -28,7 +28,6 @@ from uniparser2 import (
     Up2Error,
     compile_field,
     eval_field,
-    pack,
 )
 from uniparser2.core import registry
 from uniparser2.core.materialize import Materializer
@@ -197,18 +196,6 @@ def test_no_match_yields_the_empty_value(fake: FakeEngine) -> None:
     assert run([["css", "text", "none"]], "<p>x</p>") == Ok([])
     assert run([["css1", "text", "none"]], "<p>x</p>") == Ok("")
     assert run([["css", "nodes", "none"]], "<p>x</p>") == Ok([])
-
-
-def test_node_handles_cannot_escape_through_pack(fake: FakeEngine) -> None:
-    """The output of ``nodes`` / ``self`` must be rejected by export boxing.
-
-    That is what wrapping in ``Opaque`` is for.
-    """
-    outcome = run([["css", "nodes", "a"]], "<p>x</p>")
-    assert isinstance(outcome, Ok)
-    packed = pack(outcome.value)
-    assert isinstance(packed, Failed)
-    assert packed.code == "UP2-E2003"
 
 
 def test_remove_prunes_all_for_css_and_first_for_css1(fake: FakeEngine) -> None:

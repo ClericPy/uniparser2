@@ -35,6 +35,42 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   differently and the process-wide table is never mutated.
 - **`UP2-E1011` reports the registered names in its message**, not only in `allowed`.
 
+### Removed
+
+- **BREAKING — the export packing layer (`core.export.pack`) is gone, and `UP2-E2003` is retired.**
+  `run` now answers the entry node's product exactly as the run produced it: a host object, an
+  `Opaque` handle, a `datetime` or a `type` stage's constructed instance is the product when the chain
+  produced it. Serializing a product is the host's concern -- if the host cannot serialize it, its own
+  serializer says so, and the trace already shows which operator produced the value.
+
+  The layer was a rule the chain never declared: the engine guessed "the host wants JSON", rejected
+  everything else, and substituted a friendlier error for one the host could raise itself. `N5` and
+  `I3` in `00`/`01` now state the opposite ("the exit reports the product, it does not judge it"), and
+  `AGENTS.md` gains the determinism principle that produced this change.
+
+### Changed
+
+- **A scope value the sandbox cannot take is reported, not dropped**: `Scope.json_view()` returns an
+  `Outcome` and a non-JSON entry (a node handle, say) fails `UP2-E2009` naming the key and showing its
+  `repr`. Previously such an entry vanished silently, so in-chain code saw a variable that "was never
+  set" while it plainly was.
+- **`UP2-E1011` enumerates the registered type names in `allowed`**, as `02` §7 requires.
+- **BREAKING -- a callable attribute is a value.** `py.getattr` and a dotted reference both read a
+  bound method and hand it on instead of refusing it with `UP2-E2002`: `getattr` reads an attribute,
+  it never calls one, so `$resp.json` is a perfectly good value to give a `udf`. The old refusal
+  rested on "a method could not leave the run (`UP2-E2003`)", a reason that went away with the export
+  layer, and it was the engine guessing what the caller wanted.
+
+### Added
+
+- **A retired error code keeps its number instead of vanishing.** `core.errors.RETIRED` records the
+  numbers that were emitted once and are not any more, with the reason (`E1008`, `E2003`, `E2014`,
+  `E2015`). `01` §4.3 requires codes to be stable, so a number moves here and is never reused;
+  previously it was a comment, and `E2003` had been deleted outright.
+- **The conformance audit now checks codes against the code, not only against the tests.** Four new
+  invariant cases assert that every number in `CODES` has a throw site, that no `RETIRED` number is
+  still raised, that the two tables are disjoint, and that every retirement carries a reason.
+
 ### Fixed
 
 - **A documented contract no case executed.** `type` was written up in `01`/`02`/`03` as a chain-tail

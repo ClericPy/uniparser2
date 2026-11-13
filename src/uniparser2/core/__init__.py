@@ -11,7 +11,7 @@ from .compile import compile_field, compile_field_map, compile_stage
 from .conformance import ConformanceReport, check
 from .errors import CODES, Diagnostic, Failed, Ok, Outcome, Up2Error, diag
 from .evaluator import eval_field, eval_field_map, resolve_params
-from .export import ProductDifference, compare_products, pack, render_difference
+from .export import ProductDifference, compare_products, render_difference
 from .limits import MAX_MATERIALIZE_BYTES, MAX_MATERIALIZE_ITEMS, MAX_STEPS_PER_FIELD
 from .materialize import HTML, JSON, XML, Materialize, MaterializedArtifact, Materializer
 from .refs import Scope, is_ref_text, parse_path_text, parse_ref
@@ -92,7 +92,6 @@ __all__ = [
     "is_opaque",
     "is_ref_text",
     "loads",
-    "pack",
     "parse_path_text",
     "parse_ref",
     "preview",

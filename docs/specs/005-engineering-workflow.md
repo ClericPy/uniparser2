@@ -193,6 +193,14 @@ up2 conformance --check          # a non-zero exit code means acceptance failed
 | **Orphan cases** | An `(operator, action)` declared by a case must exist in the registry (so that cases left behind after an operator is deleted cannot fake a green run) | List the orphan cases |
 | **Orphan error codes** | A code that appears in a case must be in `errors.CODES` (so that a mistyped code, or a reference to a deleted code, is caught) | List the orphan codes |
 | **Engine contract assertions** (already landed in L1) | The semantics of `css` / `css1` (`text` excludes noisy tags, inner/outer, `remove` works on a copy, first vs. all) are asserted as a group against the real `selectolax`; the namespace / CDATA / case-sensitivity semantics of `xpath` are asserted as a group against the real `lxml` | List the actions whose behavior does not match |
+| **Invariant coverage** (`tests/invariants/`) | Every invariant `01` declares (`I*` in §1.1, `N*` in §4–§6) is either executed by a case in `tests/invariants/` or recorded as enforced by another gate | List the declared invariants that neither an executing case nor a recorded enforcement covers |
+
+> **Why invariant coverage exists.** Set coverage over `(operator, action)` pairs cannot see a claim
+> that **spans** operators. In `0.8.0`, `01`/`02`/`03` described `type` as a chain-tail validator that
+> hands the JSON on, every operator-level test agreed with that sentence, and every gate above stayed
+> green while the engine threw away the object it had just built — the very rule the tier above the
+> operator needed ("a value may be a host object until the exit") had no case anywhere. A test suite
+> that is complete per operator can still be wrong about the contract between them.
 
 **How it is implemented (already landed in L1)**: both sides are **declarations visible in the source code**; the scanner only reads source text and never executes tests.
 

@@ -25,6 +25,26 @@ implemented error code must be asserted by at least one case. Adding an operator
 case — or writing a case for something the registry does not have — turns this step red. The
 per-change checks (what to run, and when) are in `docs/specs/005` §6.
 
+## Cross-operator invariants (`tests/invariants/`)
+
+`conformance` audits `(operator, action)` pairs. It says nothing about a claim that **spans**
+operators or crosses a layer boundary — and that gap shipped a defect: `type` was documented as a
+chain-tail JSON validator in `01`/`02`/`03`, each operator's own tests agreed with that sentence,
+and every gate stayed green while the engine substituted the payload for the object it built.
+
+`tests/invariants/` exists so a documented claim has an executing case:
+
+- **A fact in `docs/specs/` that involves two or more operators, or a boundary between layers, needs
+  a case here** — not only a case in one operator's file. "A host object flows mid-chain whichever
+  operator produced it" and "only the run's exit requires JSON" are the canonical examples.
+- `tests/invariants/test_invariant_coverage.py` reads the ids declared in `01` §1.1 (`I*`) and §4–§6
+  (`N*`) and fails when one is neither executed here (`INVARIANT_CASES`) nor recorded as enforced by
+  another gate (`ENFORCED_ELSEWHERE`). Declaring a new invariant in `01` therefore requires naming
+  the case that proves it.
+- A source-level assertion is legitimate here when the invariant is about *where* a call may sit
+  (`pack` at the exit only, no IO on an `evaluate` path, no `async`) — behaviour tests cannot see
+  placement.
+
 ## Kernel invariants
 
 | Invariant | Concrete form |
@@ -49,6 +69,11 @@ declaration.
    `openspec-propose` skill (proposal / design / specs / tasks).
 2. Change the code + add tests + update the design docs (changes to interfaces, error codes or DSL
    syntax must land in the design drafts).
+   - **Verify a doc claim against the engine before writing it as an invariant.** Run the smallest
+     case that exercises the claim (`pack` on a host object, a stage boundary, an operator's
+     position in a chain) rather than describing what the code appears to do. A design sentence that
+     no case executes is the bug, not the spec.
+   - A claim that spans operators or layers lands in `tests/invariants/` (see above).
 3. Run the gates above; all green.
 4. `openspec-archive-change` to archive, merging the delta into `openspec/specs/`.
 5. **Record future syntax changes in the CHANGELOG**: a change that alters DSL syntax or observable

@@ -1,13 +1,14 @@
 """Value domain model (design doc 01 §3): the JSON value tree plus the opaque handle.
 
 Two things that are easy to confuse:
-- ``JsonValue``: a value that may be exported (export packing accepts nothing else).
-- ``Opaque``: a handle (a DOM node, for example) that may flow inside a chain but **must not be
-  exported**; the exit hands it back like any other value, and the report is the host's.
+- ``JsonValue``: a value inside the JSON domain (what the ``code`` sandbox and every text boundary
+  accept).
+- ``Opaque``: a handle (a DOM node, for example) that may flow inside a chain and out of the run
+  unchanged; only the ``code`` sandbox refuses it (``UP2-E2009``).
 
 A third thing flows the same way: **a host object** (a response, a ``udf`` result). It is not
-``Opaque`` (the kernel does not own it), but it is no more exportable — it may be an input, an
-argument or an answer, while a **run's exported product must still be JSON** (design doc 03 §3.3).
+``Opaque`` (the kernel does not own it), and it may be an input, an argument, or the run's product,
+answered exactly as produced (design doc `01` §6).
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from .errors import Up2Error, diag
 class Opaque:
     """Marker base class for non-serializable values (DOM nodes, for example).
 
-    Export packing rejects it.
+    Only the ``code`` sandbox refuses it (``UP2-E2009``); the run hands it back as produced.
     """
 
     __slots__ = ()
@@ -65,12 +66,12 @@ def type_name(value: object) -> str:
 
 
 def is_opaque(value: object) -> bool:
-    """Whether this is a handle that cannot be exported."""
+    """Whether this is a handle the JSON domain cannot render as data."""
     return isinstance(value, Opaque)
 
 
 def is_json_value(value: object) -> bool:
-    """Whether this is an exportable JSON value (recursive; ``dict`` keys must be ``str``).
+    """Whether this value is inside the JSON domain (recursive; ``dict`` keys must be ``str``).
 
     A float must be **finite**: JSON has no ``Infinity`` / ``NaN``, so a product carrying one would
     leave the run as text no strict parser accepts. The computation may still produce one — only the
@@ -195,7 +196,7 @@ def text_of(value: object) -> str:
 
     A container with a non-string key is rendered with ``repr`` instead of JSON text: ``json.dumps``
     would **coerce** the key (``{1: "x"}`` becomes ``{"1": "x"}``), and a diagnostic that shows a
-    value looking valid while export refuses it is worse than no preview.
+    value looking valid while the JSON writer or the sandbox refuses it is worse than no preview.
     """
     if isinstance(value, Opaque):
         return f"<opaque {type(value).__name__}>"

@@ -112,8 +112,8 @@ an array of stages and the empty array is the only identity. A string in chain p
 - **Multi-level dotted paths** are supported (`$article.meta.url`).
 - **There is no `<node name>` reference root**: a node's product is the value its call returns, and a field map writes every field into `$locals`. A standalone field chain may declare external product roots when it is compiled (`--product`); a story has no such roots.
 - **A dotted path dispatches on the value it walks** (`03` §13 O12): a mapping is read by key, a sequence by a digit index and a host object by `getattr`.
-  An attribute that is **callable** is refused with `UP2-E2002`, the same way `py.getattr` refuses one — a method is not a value, and it could not leave the
-  run as it is; a bound method is a value like any other, and the engine never calls it.
+  An attribute that is **callable** is read like any other: `getattr` reads, it never calls — a bound method is a value like any other,
+  and the engine never invokes it.
 - A `_`-prefixed field is a **local**: every field map writes every result into `$locals`, and the `_` prefix only keeps the field out of the product.
 - **There is no iteration variable**: inside `each`'s field map the current element is the **input value** of every field chain (§6.9), and each element is
   evaluated in its own child scope — `$locals.*` falls back outward **by name** (the innermost scope holding the path's first segment resolves the whole path,
@@ -414,8 +414,8 @@ structure is not copied** (it is treated as immutable and must not be modified i
   target type";
 - `["cast", "int"]` and `["py","int"]` have exactly the same expressive power, and one operator fewer means one document fewer and one conformance
   declaration fewer;
-- **`datetime` is an internal value only**: `strptime` / `from_timestamp` produce one, `strftime` / `to_timestamp` consume one, and the exit refuses it
-  unchanged; it never enters the stored JSON value domain;
+- **`datetime` flows as a value**: `strptime` / `from_timestamp` produce one, `strftime` / `to_timestamp` consume one, and the exit answers it
+  unchanged;
 - when the business side wants `str`, it writes `"str"` in the business schema instead of relying on a forced conversion at the end of the chain.
 
 ### 6.7 ~~`time`~~ — absorbed into `py`'s `strptime` / `strftime`
@@ -588,8 +588,8 @@ string ⇒ `None`; `x = 1 + 1; x * 3` ⇒ `6`. **`print` is silenced** (the host
 `ctx.globals.y`). A missing attribute is an observable failure (`AttributeError` ⇒ `UP2-E2017`). Configuration goes through a payload built with `ctx`, the
 same pattern `udf` uses.
 
-**`ctx` contains JSON values only**: handles (DOM / XPath nodes) do not appear in `ctx`, and no error is raised because of their absence — the same principle
-as `UP2-E2009`. When the upstream value itself is a handle it is rejected explicitly (`UP2-E2009`).
+**`ctx` carries the JSON projection of the scope**: a non-JSON entry (a handle, say) fails the projection with `UP2-E2009`, named by key and
+`repr` — it is reported, not dropped. When the upstream value itself is a handle it is rejected explicitly (`UP2-E2009`).
 
 **Assignments to `ctx` inside the sandbox do not flow back** to the engine scope: to write, use `ctx.set` in the chain.
 
@@ -699,7 +699,7 @@ Every code must satisfy: unique, stable, carrying a one-sentence fix, and enumer
 | `UP2-E2005` | value conversion failed | give the source type, the target type and a preview of the source value |
 | `UP2-E2009` | an operator returned a value that cannot be a product (an awaitable, a non-JSON sandbox value) | a sandboxed value must be JSON; call an async function in the host's own event loop and return its value |
 | ~~`UP2-E2010`~~ | **retired with `Request`** (`03` §12.1): a request is an ordinary object, and `fetch` is a udf | the number is retired, not reused |
-| `UP2-E2011` | `output="single"` but several products or several terminals exist | change `output` to `auto` / `list` |
+| ~~`UP2-E2011`~~ | **never implemented**: `output` and terminals belonged to the retired step model (`007` §1.2) | the number is not reused |
 | `UP2-E2012` | the list given to `each` is longer than `MAX_EACH_ITER` | truncate it first with `["py","slice",":100"]` |
 | `UP2-E2013` | the input text exceeds `MAX_TEXT_BYTES` | truncate in the outer layer first, or switch to a streaming upstream |
 | ~~`UP2-E2014`~~ | **retired**: a schema is the registered type itself, applied by a `["type", …]` stage (`03` §3); the exit only packs, so there is no separate exit-schema validation | the number is retired, not reused |
@@ -739,8 +739,8 @@ it with a test patched to "temporarily turn `urljoin.base` into `Kind.REF`".
 | D-02-4 | `callback` uses a `"ctx.fields.x\|each"` string; the preset-chain container is called `parsers` | **superseded** by the L2 iteration redesign (`each`): the argument is an inline field map, so there is no selector object, no container and no name to resolve | no string surgery, one shape in one slot, and the terminology does not collide |
 | D-02-5 | `ctx` has `get/set/del/map` with an undefined write surface; there is also a `call` verb | the write surface is hard-limited to `locals.*`; `call` is deleted | preserves purity and the immutability of products; calling a function is an operator |
 | D-02-6 | three reference forms are undefined (`$locals.*`, multi-level paths, literals), and an undefined `$get` appears | one rule: a leading `$` ⇒ a reference, `{"$lit":…}` escapes; `$get` is abolished | a rule must fit in one sentence; undefined concepts are deleted |
-| D-02-7 | the `cast` vocabulary contains `datetime`, which conflicts with exit encoding (blocker N of the `02` worked-example draft) | `strptime` / `from_timestamp` produce a `datetime` that may flow between stages but is refused at the exit (`UP2-E2003` names `py.strftime`) | the stored value domain is a JSON tree; a datetime is an internal value only |
-| D-02-8 | the `py` table contains `const`/`getattr` (as well as `int`/`float`/`bool`/`str`/`list`) | `const` is a standalone operator; `getattr` **came back** with host objects (`allow-object-values`), where it reads an attribute of the value that flows in and refuses a callable one; the five type functions first went to `cast` and then, with D-02-14, back to `py` | a single entry point, avoiding one name meaning two things |
+| D-02-7 | the `cast` vocabulary contains `datetime`, which conflicts with exit encoding (blocker N of the `02` worked-example draft) | `strptime` / `from_timestamp` produce a `datetime` that may flow between stages and out of the run as produced | the stored value domain is a JSON tree; a datetime is an internal value only |
+| D-02-8 | the `py` table contains `const`/`getattr` (as well as `int`/`float`/`bool`/`str`/`list`) | `const` is a standalone operator; `getattr` **came back** with host objects (`allow-object-values`), where it reads an attribute of the value that flows in and hands a callable one on; the five type functions first went to `cast` and then, with D-02-14, back to `py` | a single entry point, avoiding one name meaning two things |
 | D-02-9 | the `re` capture-group action does not say how pattern and group name are given together | `search` takes `[pattern, group]`; the separate `group` action is gone | one action fewer, and two parameters fit one positional array |
 | D-02-10 | there are no `default` / `first` / `sort` / `uniq` / `urlsplit` / encoding functions | the allowlist functions are completed | the list was ported from `dsl-design` §3.4 and taken from `essence` §3.4; these are equivalent ports of existing behaviour |
 | D-02-11 | `css1` was deleted for a while (replaced by `css` + `py.first`) | `css1` is restored: `css` produces a `list`, `css1` produces a scalar | in L1 `nodes` cannot shoulder "take all values"; first-match-by-default risks silent truncation; `css_first` is not a fast path and the gain is in extracting N-1 fewer values |

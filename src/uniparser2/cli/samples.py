@@ -181,7 +181,7 @@ def run_graph(graph: Any, value: Any, *, cache: RequestCache | None = None) -> G
 
 
 def _run_field(graph: Any, value: Any) -> GraphRun:
-    """A field chain: compile, evaluate, and pack the product through the single exit (`N5`)."""
+    """A field chain: compile, evaluate, and answer the product as produced (`N5`)."""
     try:
         compiled = compile_field(graph, products=())
     except Up2Error as exc:

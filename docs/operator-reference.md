@@ -34,9 +34,10 @@ count):
 | an object | a data map only: `each`'s field map, `ctx.dict`, `xpath`'s namespace map | `["ctx","dict",{"u":"obj","base":"globals.base"}]` |
 | nothing | no required parameter left | `["py","strip"]`, `["json"]` |
 
-An object is **never a parameter list**: a single-parameter action takes the value itself, so
-`["py", "urljoin", {"base": "…"}]` is the object as `urljoin`'s value and is rejected at compile time
-with `UP2-E1005` instead of silently doing something else. `{"$lit": …}` is the escape for a literal
+An object is **never a parameter list**: a single-parameter action takes the value itself — `urljoin`
+needs one base, so the stage writes it as the parameter (`["py", "urljoin", "$globals.base_url"]`),
+and handing it an object instead is a compile-time `UP2-E1005`, never a silent re-interpretation.
+`{"$lit": …}` is the escape for a literal
 that starts with `$`; a leading `$` in a `ref_or_literal` position is a reference
 (`"$globals.base_url"`), and `$obj` names the whole value the stage received (`$in` names the story
 node's input). The escape works at any depth, so `["py","or",[{"$lit":"$a"},"fallback"]]` quotes the
@@ -154,10 +155,8 @@ parameter is a literal or a reference, so `["py","getitem","$globals.key"]` read
 `getattr` is its twin for a **host object**: it reads the value's own attribute
 (`["py","getattr","status_code"]` on a response, `["py","getattr","attributes"]` on a `selectolax`
 node), which is what a value that is not JSON needs. An absent attribute is `UP2-E2002` and its `reason`
-begins with the exception's own class — `AttributeError: 'Response' object has no attribute 'txet'` — and
-An attribute that is **callable** is refused with the same code: a method is never called (a
-zero-argument method such as `selectolax`'s `decompose` mutates the tree), so the `fix` names the operator
-to use instead (`["css","text",""]`) or a `udf`. A value with no attributes at all (an integer, say) is
+begins with the exception's own class — `AttributeError: 'Response' object has no attribute 'txet'` `. An attribute that is **callable** is returned as it is: `getattr` reads an attribute, it never
+calls one, so a bound method is a value like any other and a `udf` may call it. A value with no attributes at all (an integer, say) is
 the same `AttributeError` failure.
 
 **Identity is `[]`**: a chain whose value **is** its own input is the empty array. The whole-chain
@@ -174,8 +173,8 @@ where the function needs a scalar is a compile-time `UP2-E1005` (`urljoin.base`,
 
 `strptime` parses the upstream text with one explicit, literal format and answers a `datetime`; there is
 no format guessing, and a text that does not match is `UP2-E2005` naming the format. `strftime` renders
-a `datetime` back to text. A `datetime` may flow between stages, but it is not exportable: a chain that
-ends with one fails at the exit with `UP2-E2003`, whose fix names `["py","strftime",…]`. The format is
+a `datetime` back to text. A `datetime` may flow between stages and out of the run as produced; render it with
+`["py","strftime",…]` when the host needs text. The format is
 validated at compile time against a locale-free allowlist, so `%B` / `%b` / `%a` / `%p` and `%Z` are
 compile errors. `from_timestamp` / `to_timestamp` convert epoch seconds at a fixed offset (hours, a
 half-hour zone writes `5.5`; default `0` = UTC), with no timezone database or DST.
@@ -275,8 +274,8 @@ The action **is** the function name. The third slot selects the call:
 
 The chain carries no code — only a name from the run's table (`register_udf`, or
 `run(…, udfs={...})`); a missing name is `UP2-E1010`, reported by `run` before evaluation. A udf may
-answer **any** value: a response object flows to the next stage and is read with `py.getattr`, while
-the run's exit and a `["type", …]` stage still require JSON. An awaitable answer is `UP2-E2009`; the
+answer **any** value: a response object flows to the next stage, is read with `py.getattr`, and is
+what the run answers. An awaitable answer is `UP2-E2009`; the
 kernel is synchronous.
 
 ### `node` — call a story node (no extra)
@@ -287,13 +286,13 @@ The name is literal and must be a node of the same story (`UP2-E1016` otherwise)
 is acyclic (`UP2-E1017`). A `node` stage has no argument slot: put a stage in front of it to produce
 a different input. A standalone chain (compiled without a story) rejects the stage.
 
-### `type` — validate a chain's product (no extra)
+### `type` — construct a registered type (no extra)
 
-`["type", "Article"]` builds the host-registered type from the current value and answers the JSON the
-constructor approved. A mapping is `Cls(**payload)`, a list `Cls(*items)`, anything else `Cls(value)`.
-An unregistered name is `UP2-E1011`; a raising constructor is `UP2-E2019`; a non-JSON approval is
-`UP2-E2003`. The stage must be the **last** stage of its chain (`UP2-E1005` otherwise). A field-map
-node has no tail, so wrap it: `[["node","fields"], ["type","Article"]]`.
+`["type", "Article"]` builds the host-registered type from the current value and answers the
+constructed value; the stage may appear **anywhere** in a chain. A mapping is `Cls(**payload)`, a
+list `Cls(*items)`, anything else `Cls(value)`. An unregistered name is `UP2-E1011` (naming the
+registered names); a raising constructor is `UP2-E2019`. A later stage reads the instance with
+`py.getattr`.
 
 ### `code` — code inside the chain (optional extra `[code]`)
 

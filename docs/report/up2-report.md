@@ -357,7 +357,7 @@ arity 3 · slot 2=function / slot 3=params · dependencies: none · 48 actions (
 
 #### `getattr` — read an attribute of the value that flows in (a host object's own attribute)
 - tier ★★★ Core · parameter slot: the value itself · `ref_or_literal: ref_or_literal`
-- note: read an attribute of a host object (never a callable one)
+- note: read an attribute of a host object (a callable one is handed on as a value)
 - chain: `[["py", "getattr", "status"]]`
 - input: `_HostObject(status=200, url='https://example.com/list.html')`
 - output: `Ok(value=200)` (Ok)
@@ -1130,9 +1130,9 @@ A query that matches nothing is a **value** — the empty value of its shape (`"
 - input: `{'a': 1}`
 - output: `Failed(code='UP2-E2018', reason="KeyError: 'text' — the dict has no key 'text'", fix='read a key the mapping has, or make the producing stage write it', allowed=())` (Failed)
 
-#### `Failed (an attribute that is a method)` — outcome
+#### `Ok (a method attribute is a value)` — outcome
 - tier ★★★ Core
-- note: UP2-E2002: py.getattr never calls a method (the fix names an operator or a udf)
+- note: a callable attribute is read like any other: getattr hands the bound method on and never calls it
 - chain: `[["py", "getattr", "json"]]`
 - input: `_HostObject(status=200, url='https://example.com/list.html')`
 - output: `Ok(value=<bound method _HostObject.json of _HostObject(status=200, url='https://example.com/list.html')>)` (Ok)

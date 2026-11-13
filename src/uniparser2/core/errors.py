@@ -58,7 +58,8 @@ CODES: Final[dict[str, str]] = {
     "UP2-E2002": "stage input type does not match what the operator expects",
     "UP2-E2004": "deferred import of an operator optional dependency failed",
     "UP2-E2005": "value conversion failed",
-    "UP2-E2009": "an operator returned a value that cannot be a product",
+    "UP2-E2009": "a value that cannot cross a JSON-only boundary (the `code` sandbox, the scope"
+    " projection)",
     "UP2-E2012": "the iteration count of `each` exceeds MAX_EACH_ITER",
     "UP2-E2013": "the input text exceeds MAX_TEXT_BYTES",
     "UP2-E2016": "sandbox execution over limits (feed time / memory / host round-trip budget)",

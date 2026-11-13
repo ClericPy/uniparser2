@@ -19,7 +19,6 @@ from typing import Any
 
 from .values import preview, type_name
 
-_SERIALIZE_FIX = "first turn the node into text via text / html / outer / @<attribute>, then export"
 _PREVIEW_LIMIT: int = 120
 """How much of one value a difference shows; a product can be megabytes long."""
 

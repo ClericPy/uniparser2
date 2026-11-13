@@ -20,7 +20,8 @@ value: see its own docstring.
 ``const`` is the literal stage (the former ``const`` operator): the parameter is returned verbatim.
 Time is Python's own pair: ``strptime`` (text + explicit format -> ``datetime``) and ``strftime``
 (``datetime`` + layout -> text), plus ``from_timestamp`` / ``to_timestamp`` for epoch seconds. A
-``datetime`` may flow between stages but is not exportable; ``strftime`` is the way out (D14).
+``datetime`` may flow between stages and out of the run as produced; ``strftime`` renders it as text
+(D14).
 
 ``str`` / ``int`` / ``float`` / ``bool`` / ``from_json`` are the former ``cast`` operator: these are
 Python built-ins to begin with, and a standalone operator would only add another "where does the

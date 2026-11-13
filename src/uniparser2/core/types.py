@@ -3,8 +3,8 @@
 A ``["type", name]`` stage builds a **shape**, not a Python object graph: the host registers a
 name → constructor pair, and the stage constructs that type from the value at its position in the
 chain (``03`` §3.2). The constructor is a **constructor**: whatever it answers is what the chain
-carries on, so a container answer flows as a host object and the run's exit (``pack``) is the only
-place JSON is required (``03`` §3.3).
+carries on, so a container answer flows as a host object mid-chain; the engine requires JSON
+nowhere — only the ``code`` sandbox does (``UP2-E2009``).
 
 **Why the registration is not part of the bundle.** The registry is host state, exactly like
 ``core.udfs``: the host installs its own vocabulary at start-up, and a story references it by name
@@ -77,11 +77,12 @@ class TypeConstructionError(Exception):
 
 
 def register_type(name: str, constructor: TypeConstructor) -> None:
-    """Register (or replace) one type name. ``name`` is what a chain tail writes as its ``type``.
+    """Register (or replace) one type name. ``name`` is what a ``["type", name]`` stage declares, at
+    any position in a chain.
 
     A registration **wins over the built-in names**, so a host may give ``dict`` or ``int`` a
-    construction of its own (``03`` §3.1's closed set is what a chain tail may declare with no
-    registration, not a list the host cannot touch).
+    construction of its own (``03`` §3.1's closed set is what a ``type`` stage may declare
+    with no registration, not a list the host cannot touch).
     """
     if not name.strip() or not callable(constructor):
         raise ValueError(
@@ -131,7 +132,8 @@ def build_type(
 
     A dictionary value becomes ``Cls(**payload)`` and a list ``Cls(*items)``; anything else is
     handed to the constructor as it is, which is how a scalar-shaped type is built. The answer
-    **is** the chain's new value — the caller carries it on; only the exit requires JSON.
+    **is** the chain's new value — the caller carries it on; the engine requires JSON nowhere
+    (only the ``code`` sandbox does).
 
     A built-in scalar name is a constructor too (``int("2026")``), so **every** refusal -- a host
     constructor raising and a built-in conversion failing alike -- is ``TypeConstructionError``

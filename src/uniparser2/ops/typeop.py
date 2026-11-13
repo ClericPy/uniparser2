@@ -3,8 +3,8 @@
 The stage is ``["type", name]``: two slots, one action, the type name in slot 2. It is an ordinary
 **constructor** stage and may appear anywhere in a chain: whatever the constructor answers is what
 the chain carries on, so a container type carries a host object onward and a later stage reads it
-with ``py.getattr`` or hands it to a ``udf`` (``03`` §3.3). JSON is required only at the run's exit,
-where the product is answered as produced, whatever its type.
+with ``py.getattr`` or hands it to a ``udf`` (``03`` §3.3). The engine requires JSON nowhere; the
+product is answered as produced, whatever its type (only the ``code`` sandbox takes JSON only).
 """
 
 from __future__ import annotations

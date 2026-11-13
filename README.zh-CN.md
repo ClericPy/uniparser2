@@ -82,7 +82,7 @@ uv run up2 trial chain.json --input 'text=<h1>  Hello   world </h1>' --json
 
 一个 **story** 是 `{"globals": {...}, "nodes": {...}}`。节点体是**链**（数组；`[]` 是恒等）或
 **字段表**（对象）。链用 `["node", name]` 调用另一个节点；字段表把每个字段都在节点输入上求值，**所有**
-结果写进 `$locals`，不带 `_` 前缀的字段进入产物。`["type", name]` 作为链尾，用宿主注册的校验器收口。
+结果写进 `$locals`，不带 `_` 前缀的字段进入产物。`["type", name]` 在链的任意位置用宿主注册的类型构造值。
 
 ```jsonc
 {
@@ -111,7 +111,7 @@ uv run up2 trial chain.json --input 'text=<h1>  Hello   world </h1>' --json
 ```python
 import uniparser2 as up2
 
-up2.register_type("Author", Author)  # 校验器，不是容器
+up2.register_type("Author", Author)  # 构造器：实例在链中间流动
 product = up2.run(
     story, "authors", "https://quotes.toscrape.com", udfs={"fetch": my_fetch}
 )  # 同步；`fetch` 会阻塞
@@ -119,8 +119,8 @@ product = up2.run(
 
 `run(story, node=None, input=None, *, globals=None, udfs=None, types=None, trace=None)` 返回该节点的
 产物（不写 `node` 时跑第一个节点）。`globals` 在该次运行里合并覆盖 story 的常量；`types` 与 `udfs` 同样
-按运行合并覆盖进程级类型注册表。**只有出口要求 JSON**：响应对象、或 `type` 构造出的实例都可以在链中间
-流动，用 `py.getattr` 读取。`fetch` 接收**请求对象**（`{"url": …}`）；
+按运行合并覆盖进程级类型注册表。**没有哪一步要求 JSON**：响应对象、或 `type` 构造出的实例都可以在链中间
+流动，用 `py.getattr` 读取，`run` 原样返回它。`fetch` 接收**请求对象**（`{"url": …}`）；
 `["ctx","dict",{"url":"obj"}]` 从当前值构造一个。
 
 </details>
@@ -292,7 +292,7 @@ uv run up2 test example.com 政府文件列表     # 不一致时打印 JSON Poi
 <details>
 <summary><b>状态与路线图</b></summary>
 
-**0.8.0。** L1（算子层）已完成并有机械审计。L2 是 **story** 模型：`globals` + `nodes`、节点调用、
+**0.9.0。** L1（算子层）已完成并有机械审计。L2 是 **story** 模型：`globals` + `nodes`、节点调用、
 字段表与 `$locals`、`["type", …]`、同步的 `run` 门面，以及作为宿主 `udf` 的 `fetch`。L3 的**模板仓库**
 已落地：文件与 SQLite 两种实现、指纹、只增审计，以及 `publish` / `get` / `audit` / `snapshot` /
 `test` / `doctor` 命令。仓库里的 `samples/*/site.json` 和宿主脚本可端到端运行。

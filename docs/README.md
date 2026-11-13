@@ -8,7 +8,7 @@ what the system should be; design note `05` §5 describes how code and notes are
 | Note | File | Content |
 |---|---|---|
 | `00` | [`000-overview.md`](specs/000-overview.md) | positioning, the end-state acceptance criteria, where the four root goals land, glossary, scope and exclusions |
-| `01` | [`001-architecture-and-value-model.md`](specs/001-architecture-and-value-model.md) | layering and invariants, package structure, the value tree, the outcome model and the empty-value rule, exit boxing, security and resource limits |
+| `01` | [`001-architecture-and-value-model.md`](specs/001-architecture-and-value-model.md) | layering and invariants, package structure, the value tree, the outcome model and the empty-value rule, the exit (`N5`), security and resource limits |
 | `02` | [`002-dsl-spec-triples-and-operators.md`](specs/002-dsl-spec-triples-and-operators.md) | the chain stage `[operator, action, argument]`, the enumeration strength of the slots, reference syntax, the full operator set (including `node`, `type` and the optional `code` sandbox), the error code table |
 | `03` | [`003-parse-chain-spec.md`](specs/003-parse-chain-spec.md) | the **story** model: `globals` + `nodes`, node bodies as chains or field maps, `["node", …]` calls, `$locals`, the `["type", …]` stage, the synchronous `run` facade, `each` and the field map, on-demand materialization, scope, the compile-time lint checklist, and the GitHub walkthrough |
 | `04` | [`004-persistence-and-sop.md`](specs/004-persistence-and-sop.md) | the persistence data model for chains, fingerprints and auditing, the Store abstraction, the `S0–S7` freezing process, the chain's trust boundary |

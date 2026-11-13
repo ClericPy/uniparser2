@@ -44,8 +44,8 @@ Four implementation disciplines:
    (`03` §6): a cached document MUST NOT be mutated, so ``remove`` and ``text`` (which needs the
    noise tags stripped) both work on a copy.
 2. **Nodes are always wrapped in ``DomNode(Opaque)``**: native engine objects never enter the value
-   domain, so the output of ``nodes`` / ``self`` is naturally rejected by export boxing
-   (the host's serializer is what reports it).
+   domain, so ``nodes`` / ``self`` answer handles (only the ``code`` sandbox refuses them,
+   ``UP2-E2009``; serialization is the host's report to make).
 3. **``text`` excludes the text of ``script``/``style``/``noscript``** (the noise set of ``remove``
    in the ``04`` draft): this is **the semantics this operator promises** and does not rely on
    engine defaults (selectolax's ``text()`` would include them).

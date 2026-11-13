@@ -59,25 +59,29 @@ The `code` operator SHALL bind two fixed names with no configuration: `obj` is t
 - **WHEN** the chain is `["code", "ctx.locals.nope"]`
 - **THEN** evaluation fails (an `AttributeError` class of failure) rather than returning `None` or an empty string
 
-### Requirement: Values in `ctx` are JSON-only, and `inputs` is retired
+### Requirement: Values in `ctx` are JSON-only
 
-Values in `ctx` MUST fall in the JSON value domain: `Opaque` handles (DOM/XPath nodes) and non-JSON values MUST NOT enter the sandbox. A scope entry that violates this SHALL be **reported, not dropped**: the projection fails with `UP2-E2009`, naming every offending key and showing its `repr`, so a snippet never sees a variable that "was never set" while it plainly was. There SHALL be no `inputs` parameter and no configured binding: a value is read as `ctx.locals.<name>` at runtime, and naming it again would only rename an existing read.
+Values in `ctx` MUST fall in the JSON value domain: `Opaque` handles (DOM/XPath nodes) and non-JSON values MUST NOT enter the sandbox. A scope entry that violates this SHALL be **reported, not dropped**: the projection fails with `UP2-E2009`, naming every offending key and showing its `repr`, so a snippet never sees a variable that "was never set" while it plainly was.
 
 #### Scenario: A handle in `ctx` is reported
 
 - **WHEN** `locals` contains a DOM/XPath node handle and the chain is `["code", "'ok'"]`
 - **THEN** evaluation fails with `UP2-E2009`, and the reason names the key and shows its `repr`
 
+#### Scenario: An upstream handle is rejected
+
+- **WHEN** the upstream value is a DOM/XPath node handle
+- **THEN** evaluation returns `Failed` with code `UP2-E2009` (handles do not enter the sandbox)
+
+### Requirement: The named entry point (`inputs`) is retired
+
+There SHALL be no `inputs` parameter and no configured binding: a value is read as `ctx.locals.<name>` at runtime, and naming it again would only rename an existing read.
+
 #### Scenario: The named entry point keeps compile-time validation
 
 - **WHEN** the chain is `["code", {"src": "x + 1", "inputs": {"x": "$locals.n"}}]` and it is compiled
 - **THEN** compilation fails with `UP2-E1005` at `/0/1/src`, because the named entry point is retired:
   the source is the parameter itself, and the value it held is read as `ctx.locals.n` inside the source
-
-#### Scenario: An upstream handle is rejected
-
-- **WHEN** the upstream value is a DOM/XPath node handle
-- **THEN** evaluation returns `Failed` with code `UP2-E2009` (handles do not enter the sandbox)
 
 ### Requirement: Allowlist functions directly available inside the sandbox
 

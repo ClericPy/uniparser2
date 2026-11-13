@@ -187,13 +187,13 @@ up2 conformance --check          # a non-zero exit code means acceptance failed
 | Check | Criterion | Failure message |
 |---|---|---|
 | **Action coverage** | Every `(operator, action)` pair in the registry is declared covered by at least one case under `tests/` | List the uncovered `(operator, action)` pairs and their operators |
-| **Function coverage** | Each of the **31** allowlisted `py` functions has a case | List the uncovered function names |
+| **Function coverage** | Each of the **48** allowlisted `py` functions has a case | List the uncovered function names |
 | **Parameter kind coverage** | Each of the three kinds (`ref` / `literal` / `ref_or_literal`) has a positive and a negative case | List the missing kinds |
 | **Error code coverage** | Every code in `errors.CODES` (the table of **implemented** codes, not the specification table) is asserted by at least one case | List the codes with no case |
 | **Orphan cases** | An `(operator, action)` declared by a case must exist in the registry (so that cases left behind after an operator is deleted cannot fake a green run) | List the orphan cases |
 | **Orphan error codes** | A code that appears in a case must be in `errors.CODES` (so that a mistyped code, or a reference to a deleted code, is caught) | List the orphan codes |
 | **Engine contract assertions** (already landed in L1) | The semantics of `css` / `css1` (`text` excludes noisy tags, inner/outer, `remove` works on a copy, first vs. all) are asserted as a group against the real `selectolax`; the namespace / CDATA / case-sensitivity semantics of `xpath` are asserted as a group against the real `lxml` | List the actions whose behavior does not match |
-| **Invariant coverage** (`tests/invariants/`) | Every invariant `01` declares (`I*` in §1.1, `N*` in §4–§6) is either executed by a case in `tests/invariants/` or recorded as enforced by another gate | List the declared invariants that neither an executing case nor a recorded enforcement covers |
+| **Invariant coverage** (`tests/invariants/`) | Every invariant the notes declare (`I1`–`I8` in `01` §1.1, `N1`–`N8` in `00` §2) is either executed by a case in `tests/invariants/` or recorded as enforced by another gate | List the declared invariants that neither an executing case nor a recorded enforcement covers |
 
 > **Why invariant coverage exists.** Set coverage over `(operator, action)` pairs cannot see a claim
 > that **spans** operators. In `0.8.0`, `01`/`02`/`03` described `type` as a chain-tail validator that
@@ -207,7 +207,7 @@ up2 conformance --check          # a non-zero exit code means acceptance failed
 | Side | Source | Mechanism |
 |---|---|---|
 | Declaration side | `core.registry.declared_pairs()` + `errors.CODES` | Carried by the registry and the code table themselves, so no second cross-reference table has to be maintained |
-| Coverage side | the test sources | 1) the decorator `@pytest.mark.covers("re", "search")`; 2) the module-level constant `COVERS_PAIRS = (("py","strip"), …)` (suited to a batch of 31 like `py`); 3) error codes: a `UP2-E` followed by **at least 4 digits** in the test sources counts as covering that code |
+| Coverage side | the test sources | 1) the decorator `@pytest.mark.covers("re", "search")`; 2) the module-level constant `COVERS_PAIRS = (("py","strip"), …)` (suited to a batch of 48 like `py`); 3) error codes: a `UP2-E` followed by **at least 4 digits** in the test sources counts as covering that code |
 | Comparison | `core.conformance.check` | **Pure set arithmetic**, never touching the filesystem (preserving the I1 invariant that `core` has no IO); file scanning lives in `cli/conformance.py` |
 
 **Three traps hit during implementation (written down so they are not repeated)**:
@@ -216,7 +216,7 @@ up2 conformance --check          # a non-zero exit code means acceptance failed
 2. **A test must not contain the literal of a "deliberately nonexistent" code** (such as `UP2-E9999`): it too counts as a coverage declaration and pollutes the repository-level audit. Such a test has to build it as `"UP2-E" + "9999"`.
 3. **`tests/` must be a real package** (an `__init__.py` in every subdirectory): otherwise same-name test files in different directories shadow each other as far as mypy is concerned (`Duplicate module named "test_errors"`), and mypy's `module = ["tests.*"]` override rule fails to match (it requires fully qualified names).
 
-> This mechanism is the direct implementation of "the test cases that nail down all syntax at the DSL operator layer guarantee this part is complete and consistent": **completeness** is guaranteed by set coverage (declaration ⊆ coverage and coverage ⊆ declaration), and **consistency** by "parameterize the same group of assertions over every action" plus the engine contract assertions. The latest measurement round (0.8.0): 81 declared `(operator, action)` pairs = 81 covered pairs, all 36 implemented error codes have cases, and `up2 conformance --check` exits 0.
+> This mechanism is the direct implementation of "the test cases that nail down all syntax at the DSL operator layer guarantee this part is complete and consistent": **completeness** is guaranteed by set coverage (declaration ⊆ coverage and coverage ⊆ declaration), and **consistency** by "parameterize the same group of assertions over every action" plus the engine contract assertions. The latest measurement round (0.9.0): 81 declared `(operator, action)` pairs = 81 covered pairs, all 35 implemented error codes have cases, and `up2 conformance --check` exits 0.
 
 ### 4.2 TDD rhythm (red-green-refactor)
 
@@ -330,7 +330,7 @@ After changing `.py` / `.sh` files, run these checks through the project environ
 | Types | `uv run mypy` (strict) | any `.py` change |
 | Tests | `uv run pytest` (affected subset → full run); `uv run pytest -n 4` for a parallel local run (`pytest-xdist`), not `-n auto` on a high-core machine — measured, too many workers can be slower than serial | any logic change |
 | Coverage gate | `uv run pytest --cov=uniparser2.core --cov-fail-under=95` | before a PR / wrapping up a stage |
-| Security | `uv run bandit -r src` | when input validation, deserialization, regular expressions or subprocesses are touched (in this project `core/compile.py`, `ops/re.py` and `store/*` are long-term hits) |
+| Security | `uv run bandit -r src` | when input validation, deserialization, regular expressions or subprocesses are touched (in this project `core/compile.py`, `ops/regex.py` and `store/*` are long-term hits) |
 | Dependencies | `uv run pip-audit` | when the dependency list changes |
 | Catalogue freshness | `uv run pytest tests/report` | when an operator, an action or a case changes — the suite compares `docs/report/up2-report.md` with a fresh render, so a stale catalogue fails like any other test; `UP2_UPDATE_REPORT=1 uv run pytest tests/report` rewrites the file from the same run. The module skips when an optional engine is missing, so the cells that install every extra are the ones that really check it |
 
@@ -413,7 +413,7 @@ honest than pretending to cover them). The dependency audit stays a local check 
 | # | Check | Expectation |
 |---|---|---|
 | 1 | Does `core/` import any third party? | no (`01` I1) |
-| 2 | Is there exactly one boxing point at the exit? | yes (`01` §6, `core/export.py`) |
+| 2 | Does anything inspect or reject the product at the exit? | no — the exit reports it (`01` §6 `N5`; `core/export.py` is the snapshot comparison only) |
 | 3 | Does every `UP2-E*` have a test? | yes (§4 hard rule 4) |
 | 4 | Does every chain have at least 1 sample and snapshot? | yes (`04` §6 G2) |
 | 5 | Can `publish` write a chain that failed lint? | no (`04` §5 step 2) |

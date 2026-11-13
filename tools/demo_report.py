@@ -412,7 +412,7 @@ def _py_cases() -> list[Case]:
             "getattr",
             _HOST_OBJECT,
             "status",
-            "read an attribute of a host object (never a callable one)",
+            "read an attribute of a host object (a callable one is handed on as a value)",
         ),
         ("Core", 7, "len", [1, 2, 3], "", "length"),
         ("Core", 8, "slice", "abcdef", ":3", 'slice: ":3" / "1:5" / "::-1"'),
@@ -662,10 +662,11 @@ def edge_cases() -> list[Case]:
         ),
         Case(
             "outcome",
-            "Failed (an attribute that is a method)",
+            "Ok (a method attribute is a value)",
             [["py", "getattr", "json"]],
             _HOST_OBJECT,
-            note="UP2-E2002: py.getattr never calls a method (the fix names an operator or a udf)",
+            note="a callable attribute is read like any other: getattr hands the bound method on "
+            "and never calls it",
         ),
         Case(
             "outcome",

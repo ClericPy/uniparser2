@@ -483,19 +483,19 @@ boundary as four layers: **the first three are the three sources of code capabil
 
 A chain is JSON, and `core/` contains no `eval` / `exec` / `__import__` (`N6`). **A default installation (including `uniparser2[all]`) installs
 no code-execution capability at all**: a chain can only call operators and actions already declared in the registry. This layer is statically decidable — read the chain and read
-the output of `up2 ops` and you can enumerate everything it can do; the 40 allowlisted `py` functions are pure functions that ship with the engine (JSON in, JSON out, no IO) and belong to this layer.
+the output of `up2 ops` and you can enumerate everything it can do; the 48 allowlisted `py` functions are pure functions that ship with the engine (JSON in, JSON out, no IO) and belong to this layer.
 
 ### 11.2 Layer two: `udf` = host-registered functions (the chain holds only a name)
 
 A `udf` stage holds only a **function name** (`["udf", "my_fn", {"strict": true}]`); the function's own source is not in the chain and can only be reviewed and registered
-in advance by the host (`register_udf`, or the `entry_points` group `uniparser2.udfs`); an unregistered name raises `UP2-E1010` **at compile time**. Hence **registration is
+in advance by the host (`register_udf`, or the `entry_points` group `uniparser2.udfs`); an unregistered name is reported by `run` **before evaluation** (`UP2-E1010`). Hence **registration is
 trust**: that function runs with the host's full authority and can touch files, the network and processes; "what this chain can do" = what this deployment has registered. It brings
 two consequences that must be remembered:
 
 - **Its auditable nature is deployment-bound**: the same chain under a different deployment may have a different set of usable functions (the `udf` contract is declared as `("udf", "*")`,
   not as individual function names).
-- **What it read away must be answered by auditing the function itself**: `ctx` is a **live scope** injected according to the function signature (`ctx.locals` is writable, `ctx.globals` is
-  read-only), and a host function sees whatever it wants — the chain data cannot set limits on its behalf.
+- **What it read away must be answered by auditing the function itself**: `ctx` is **not injected** — the function receives only the value the chain hands it (the four call
+  forms), and a host function sees whatever it wants — the chain data cannot set limits on its behalf.
 
 ### 11.3 Layer three: `code` = optional sandboxed code (absent by default)
 

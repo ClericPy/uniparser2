@@ -22,7 +22,7 @@ type UdfFn = Callable[..., Any]
 
 A single DTO argument, one explicit argument, or a spread list/mapping depends on the stage; an
 awaitable answer is ``UP2-E2009`` because the kernel is synchronous. Any other answer may flow
-mid-chain; only the run's exit requires JSON.
+mid-chain and out of the run as produced.
 """
 
 _UDFS: dict[str, UdfFn] = {}

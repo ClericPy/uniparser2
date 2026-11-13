@@ -125,10 +125,6 @@ process-wide udf table and `types` over the process-wide type registry, execute 
 first when omitted) and return its product. A udf the chosen node reaches MUST be in the effective
 table, else `UP2-E1010` before evaluation. The run MUST be synchronous.
 
-`types` MAY be a mapping of name → constructor, or a sequence of callables whose `__name__` is the
-name. The merge SHALL NOT mutate the process-wide registry, and two runs with different overlays SHALL
-resolve one name to their own constructors.
-
 #### Scenario: The first node is the default
 
 - **WHEN** a story has nodes `a` and `b` and `run(story, input="x")` is called
@@ -153,6 +149,12 @@ resolve one name to their own constructors.
 
 - **WHEN** a udf returns an awaitable
 - **THEN** the run fails with `UP2-E2009`
+
+### Requirement: A run may inject its own type table
+
+`types` MAY be a mapping of name to constructor, or a sequence of callables whose `__name__` is the
+name. The merge SHALL NOT mutate the process-wide registry, and two runs with different overlays SHALL
+resolve one name to their own constructors.
 
 #### Scenario: A run injects its own type
 
@@ -187,6 +189,11 @@ is the host's concern, and a value the host cannot serialize fails in the host's
 - **WHEN** a node fetches a response, reads `py.getattr text`, and returns a JSON field map
 - **THEN** the run succeeds
 
+#### Scenario: A constructed value is the exit
+
+- **WHEN** the entry node's product is a constructed instance
+- **THEN** `run` SHALL answer that instance
+
 ### Requirement: The CLI accepts the node model
 
 `up2 lint` SHALL compile a story and report its node count and names. `up2 trial` SHALL accept a
@@ -213,8 +220,7 @@ udf SHALL report `UP2-E1010` listing the missing function names instead of reach
 A chain MAY carry `["type", "Name"]` at any position. The stage SHALL build the host-registered type
 from the current value and carry the **constructed value** onward, and it SHALL reject an unregistered
 name with `UP2-E1011` or a raising constructor with `UP2-E2019`. A `type` stage that is not the last
-stage of its chain MUST NOT be rejected: a later stage receives the constructed value. A constructed
-value that reaches the run's exit IS the product, answered unchanged.
+stage of its chain MUST NOT be rejected: a later stage receives the constructed value.
 
 #### Scenario: A constructed value flows on
 

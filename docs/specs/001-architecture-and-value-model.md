@@ -1,7 +1,7 @@
 # uniparser2 Design · 01 Architecture and Value Model
 
 > **Status**: design draft v0.1, now located in `docs/specs/` and committed. **Upstream**: `00`.
-> **What this document answers**: which layers the engine consists of, which way dependencies are allowed to point, what values look like inside a chain, what to do when something fails, where the export is narrowed down, and where the security boundary is drawn.
+> **What this document answers**: which layers the engine consists of, which way dependencies are allowed to point, what values look like inside a chain, what to do when something fails, how the exit treats the product, and where the security boundary is drawn.
 
 ---
 
@@ -164,8 +164,8 @@ The three answers are **different on purpose**, and nothing settles one into ano
 | the product is not the declared shape | the **host-registered type constructor** refuses it (`UP2-E2019`) | the `["type", name]` stage (`03` §3) |
 
 A value that may be absent is the author's decision, taken where it applies: `py.or` replaces
-`None` or `""` in one field. A field that must exist is enforced by the type constructor at the chain
-tail, which reports it at the type stage that validated the value.
+`None` or `""` in one field. A field that must exist is enforced by the type constructor at its
+`type` stage, which reports it there.
 
 > **The settlement policy is retired** (change `retire-settlement-policy`): the `Policy` type, the four
 > `on_missing` / `on_error` strategies, the `policy=` parameter of `eval_field`, the `policy` block of a
@@ -180,7 +180,7 @@ Error codes are **the LLM's handle for self-correction**: every code must be **u
 | Segment | Meaning | Example |
 |---|---|---|
 | `UP2-E1xxx` | compile time (lint / Schema) | `UP2-E1001` unknown operator |
-| `UP2-E2xxx` | runtime (evaluation / packing) | `UP2-E2001` the reference path does not exist |
+| `UP2-E2xxx` | runtime (evaluation) | `UP2-E2001` the reference path does not exist |
 | `UP2-E3xxx` | storage (the template store / auditing) | `UP2-E3001` chain fingerprint conflict |
 
 Full code table: **compile time** see `02` §7, **runtime** see `02` §7.1, **storage** see `04` §5.1 (implemented: `UP2-E3001`–`UP2-E3005`). A bare `except:` is **forbidden**; the only fallback allowed is `except Exception:`, and it must be turned into a `Failed` carrying a code — the store layer is the one place where such a fallback raises `Up2Error` with `UP2-E3004` instead, because a store failure has no `Failed` channel (`04` §5).
@@ -198,7 +198,7 @@ def compile(chain: Chain) -> CompiledGraph: ...
 | Phase | What it does | What it must not do |
 |---|---|---|
 | **Compile time** | full lint (`03` §10); Schema validation of every operator's arguments; action legality validation; reference resolution and the "may only point backward" check; pre-compilation of CSS selectors / regexes / jmespath expressions; `type` resolution; fingerprint computation | any IO, any evaluation, any network |
-| **Runtime** | pure evaluation: execute the stages according to the compile product, produce the value-domain tree, pack the export | structural validation, string parsing, any reflection other than looking an operator up by name |
+| **Runtime** | pure evaluation: execute the stages according to the compile product, produce the product as the chain built it | structural validation, string parsing, any reflection other than looking an operator up by name |
 
 Key points:
 
@@ -274,9 +274,9 @@ class CssOp: ...
 |---|---|
 | **Explicit registration** | register explicitly with the `@op(...)` decorator; **no** implicit discovery through `__subclasses__()` (a subclass that is never imported silently drops an operator — the same root cause as R7). Registration has **two phases**: validate all names first, then commit to the table, avoiding the half-registration left behind by "the name was taken and an alias conflict raised" |
 | **Optional-dependency probing** | at import time only `importlib.util.find_spec(name)`, which **does not trigger an import**. When a dependency is missing, the **declaration is kept** but marked unavailable — that is how a reference to it can give `UP2-E1107` plus the install command (more diagnostic value than letting it disappear from the registry). `up2 ops` lists the unavailable entries |
-| **Dependency granularity** | dependencies can be declared per **action** (`ActionSpec.requires`), not only per operator: a missing `html-to-markdown` for `py.html_to_markdown` does not affect `py.strip`. There is also `any_requires`, meaning "installing any one of them is enough" (selectolax / beautifulsoup4 for `css`) |
+| **Dependency granularity** | dependencies can be declared per **action** (`ActionSpec.requires`), not only per operator: a missing `html-to-markdown` for `py.html_to_markdown` does not affect `py.strip` |
 | **Lazy import** | the actual use of third-party code happens inside the operator through `importlib.import_module` (optional dependencies are always imported dynamically, so that four type checkers do not each report "module does not exist"); a failure turns into `UP2-E2004` and hints at the install name |
-| **Capability self-description** | `up2 ops --json` outputs, per operator: name, aliases, arity (`arity`), slot roles (`action_slot` / `slots`), the action enumeration (`actions`, each with `name` / `summary` / `available`), the argument Schema (`params`: `name` / `kind` / `required` / `default`), **the writing slot 3 takes (`param_form`: `none` / `value` / `named`, see `02` §4)**, dependencies (`requires` / `missing`) and the install command of a missing dependency — an LLM drafting a chain reads this first (`04` §7-S0, §8) |
+| **Capability self-description** | `up2 ops --json` outputs, per operator: name, aliases, arity (`arity`), slot roles (`action_slot` / `slots`), the action enumeration (`actions`, each with `name` / `summary` / `available`), the argument Schema (`params`: `name` / `kind` / `required` / `default`), **the writing slot 3 takes (`param_form`: `none` / `value` / `array`, see `02` §4)**, dependencies (`requires` / `missing`) and the install command of a missing dependency — an LLM drafting a chain reads this first (`04` §7-S0, §8) |
 | **Aliases** | `py` ↔ `python`, `json` ↔ `jmespath`; aliases resolve to the same operator inside the registry, and **the chain data keeps the original spelling** (stable fingerprints) |
 | **The evaluation signature of an operator** | `evaluate(call) -> Outcome`, where `call` is a `Call` context object (`value` / `action` / `params` / `payload` / `scope`). A context object instead of a long argument list: adding a field does not break every operator's signature |
 
@@ -286,7 +286,7 @@ class CssOp: ...
 
 | Surface | Measure |
 |---|---|
-| **Code execution** | `core/` contains no `eval`/`exec`/`compile`/`__import__`, and a rule cannot reach host code: `udf` only looks a name up in the host registry, and an unregistered name is a compile-time error (`UP2-E1010`). The **one exception** is the opt-in `code` sandbox (`02` §6.12): measured there, `compile`/`__import__` do not exist and file/environment/network/process reach **fails** (absent or blocked, per surface), while the language features `eval`/`exec` do exist and grant no capability of their own (`04` §11.3) |
+| **Code execution** | `core/` contains no `eval`/`exec`/`compile`/`__import__`, and a rule cannot reach host code: `udf` only looks a name up in the host registry, and an unregistered name is reported by `run` before evaluation (`UP2-E1010`). The **one exception** is the opt-in `code` sandbox (`02` §6.12): measured there, `compile`/`__import__` do not exist and file/environment/network/process reach **fails** (absent or blocked, per surface), while the language features `eval`/`exec` do exist and grant no capability of their own (`04` §11.3) |
 | **IO** | the kernel does no network or file work; `store/` is the only layer that touches disk, and it stores only chains and audits (it does not store input or output content unless `--save-sample` is explicit) |
 | **SSRF / fetching surface** | the kernel issues no requests, so this surface does not exist; the request dict is consumed by the host, and the host does its own URL allowlisting (this design only declares the structure, in `03` §4.1) |
 | **Regex backtracking (ReDoS)** | at compile time a **nested-quantifier check** is run on regexes and reports `UP2-E1013`. **Measured correction**: Python 3.13/3.14 `re` **has no `timeout` argument**, so **there is no timeout backstop at runtime** — static detection catches only the most classic shape (`(a+)+`), and missed shapes such as overlapping alternations are a recorded gap (`02` §6.3) |

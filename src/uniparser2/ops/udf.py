@@ -14,7 +14,7 @@ Four argument forms (the third slot selects the call):
 ================  ==========================================================
 
 A udf may answer **any** value: a response object flows to the next stage and is read with
-``py.getattr``; only the run's exit requires JSON. An awaitable answer is
+``py.getattr``, and the run answers it as produced. An awaitable answer is
 ``UP2-E2009`` because the kernel is synchronous.
 """
 

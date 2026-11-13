@@ -17,8 +17,8 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - **BREAKING — `type` constructs the declared type, and the value flows**: `["type","Article"]` now
   answers the `Article` instance instead of substituting the mapping it was built from, so a later
   stage reads it with `py.getattr` or hands it to a `udf`. The stage carries the constructor's answer
-  as it is; only the run's **exit** requires JSON (`UP2-E2003`). A chain that ended with
-  `["type","Article"]` and expected the payload at the exit now fails there — write the fields out
+  as it is; nothing requires JSON any more — not a stage, not the exit. A chain that ended with
+  `["type","Article"]` and expected the payload back now gets the instance — write the fields out
   (a field-map node) or serialize with a `udf`.
 - **BREAKING — a `type` stage may appear anywhere in a chain**: the chain-tail rule (`UP2-E1005`) is
   gone. It existed only because the payload was carried instead of the instance.
@@ -78,10 +78,22 @@ and versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
   whole gate set stayed green while the stage discarded the object its constructor built. The gap was
   structural: `up2 conformance` audits `(operator, action)` pairs and error codes, and nothing audited
   a claim that **spans** operators. `tests/invariants/` now executes those claims ("a host object
-  flows mid-chain whichever operator produced it", "only the run's exit requires JSON", "`pack` is
-  called at one place", "no IO on an `evaluate` path", "the chain is a fixed point for every declared
-  pair"), and `tests/invariants/test_invariant_coverage.py` reads the invariant ids declared in `01`
-  and fails when one has neither an executing case nor a recorded enforcement.
+  flows mid-chain whichever operator produced it", "the exit hands back what the run produced",
+  "no IO on an `evaluate` path", "the chain is a fixed point for every declared pair"), and
+  `tests/invariants/test_invariant_coverage.py` reads the invariant ids declared in `00`/`01`
+  and fails when one has neither an executing case nor a recorded enforcement. The audit now also
+  reads `00` §2's `N1`–`N8` contract table, and its enforcement records name gates that exist.
+- **`up2 trial` reports a product it cannot print as `UP2-E1004`** instead of crashing with a raw
+  `TypeError`: the engine answers a `datetime`, a host object or a constructed instance as produced
+  (`N5`), and the CLI's own JSON boundary is what refuses it — as a coded diagnostic, not a
+  traceback.
+- **`run(types=[…])` rejects a callable with no `__name__` with a `ValueError` naming it** (a
+  `functools.partial`, say) instead of an `AttributeError`; pass a name → constructor mapping
+  instead.
+- **Every inline chain example the README and the operator reference write is compiled by a test**
+  (`tests/docs/test_documented_chains_compile.py`), so a documented spelling the engine does not
+  take turns red; the `urljoin` passage now shows the single-parameter reference form instead of a
+  misleading object example.
 
 ## [0.8.0] - 2026-11-12
 

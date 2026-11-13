@@ -185,7 +185,7 @@ at compile time: a story is compiled without a host, so it is only known for sur
 | the constructor raised | `UP2-E2019`, with the constructor's own exception text in `reason` |
 | nothing -- the exit answers the product as produced (`N5`) |
 
-**A value that flows may be a host object; a run's exit must be JSON.** A response, a `selectolax`
+**A value that flows may be a host object; the exit answers it as produced (`N5`).** A response, a `selectolax`
 node handle and anything a `udf` or a `type` stage built may flow mid-chain and be read by
 `py.getattr`, a reference path, or a `udf` parameter -- and the run hands that value back as its
 product, unchanged. A pydantic model is the same category as a dataclass: `Model(**payload)` is
@@ -287,6 +287,7 @@ run(
     *,
     globals=None,          # merged over the story's `globals` for this run
     udfs=None,             # merged over the process-wide udf table for this run
+    types=None,            # merged over the process-wide type registry for this run
     trace=None,            # a Trace, or None
 ) -> Any                   # the entry node's product, unchanged
 ```
@@ -510,7 +511,7 @@ Cross-story composition is the host's; the kernel does not know a store or anoth
 | L5 | every `node` stage names a node of this story | `UP2-E1016` |
 | L6 | the node-call graph is acyclic | `UP2-E1017` |
 | L7 | every stage (including sub-chains of `each`) passes operator validation | `UP2-E1001`…`E1005` |
-| L8 | a `type` stage is the last stage of its chain and names a non-empty string | `UP2-E1005` |
+| L8 | a `type` stage's parameter is a literal (the name); whether it is registered is the stage's runtime question | `UP2-E1011` |
 | L9 | no resource limit is exceeded (`01` §9) | `UP2-E1012` |
 | L10 | an operator's optional dependency is installed | `UP2-E1107` |
 | L11 | a udf name is a non-empty string (registration is checked by `run`) | `UP2-E1005` |

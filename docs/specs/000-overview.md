@@ -20,15 +20,15 @@ The boundary of its complexity is written into the name: **it is an evaluator + 
 The end state is pinned down before the design starts, so that every later trade-off aligns with it.
 
 ```python
-def run(story: Story, node: str | None = None, input: JsonValue = None, *, globals=None,
+def run(story: Story, node: str | None = None, input: Any = None, *, globals=None,
         udfs: Mapping[str, UdfFn] | None = None,
         types: Mapping[str, TypeConstructor] | Sequence[TypeConstructor] | None = None,
-        trace: Trace | None = None) -> JsonValue: ...
+        trace: Trace | None = None) -> Any: ...
 # Story      = a compiled story: `globals` + `nodes` (`03` §2)
 # node       = the node to run; the first node when omitted
 # input      = that node's `$in`
 # udfs       = the run's host functions (`fetch` is the conventional downloader)
-# product    = JsonValue; every node is an entry point, so there is no `collect`
+# product    = whatever the chain produced; every node is an entry point, so there is no `collect`
 ```
 
 | No. | Contract | Description |
@@ -73,7 +73,7 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 
 | Layer | What it does | What it explicitly does not do |
 |---|---|---|
-| **L1 operator layer** | the value domain / the outcome model / references / compile-time validation / export packing; **12 operators** (`css`/`css1`/`xpath`/`json`/`re`/`py`/`udf`/`ctx`/`each`/`code`/`node`/`type`, where `time`/`cast`/`const` have been merged into `py` and `code` is in `02` §6.12) with all their actions; **the globals/locals design of `ctx`**; **the conformance test set** (every `(operator, action)` has a case) | no multi-field orchestration, no list/nested structures, **no domain names or business keys** |
+| **L1 operator layer** | the value domain / the outcome model / references / compile-time validation; **12 operators** (`css`/`css1`/`xpath`/`json`/`re`/`py`/`udf`/`ctx`/`each`/`code`/`node`/`type`, where `time`/`cast`/`const` have been merged into `py` and `code` is in `02` §6.12) with all their actions; **the globals/locals design of `ctx`**; **the conformance test set** (every `(operator, action)` has a case) | no multi-field orchestration, no list/nested structures, **no domain names or business keys** |
 | **L2 structure layer** | a **story**: `globals` plus a map of **nodes** (a node body is a chain or a field map; `["node", name]` composes, `["type", name]` constructs a host type at any stage); multi-field orchestration; `each` iteration (a list → one value per element) → arbitrarily nested `list`/`dict`; a synchronous `run`; the run-scoped materialization cache; lint | **still no domain names or business keys**; no network requests of its own (`fetch` is a host `udf`) |
 | **L3 binding layer** | binding a chain to a business identity and freezing it: `root_domain` / `tpl_key`, the Store, fingerprints and auditing, the `publish` gates, the `S0–S7` SOP; a seam example of a host consuming the request dict | — |
 
@@ -87,7 +87,7 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 
 ### 4.1 What is in (the kernel)
 
-1. **The value domain and the evaluation kernel**: the value tree, the outcome model, the operator registry, chain evaluation, export packing (`01`, `02`).
+1. **The value domain and the evaluation kernel**: the value tree, the outcome model, the operator registry, chain evaluation (`01`, `02`).
 2. **The story specification**: `globals` + `nodes`, node bodies (a chain or a field map), `["node", name]` composition, the `["type", name]` constructor stage, the synchronous `run`, the compile-time lint checklist (`03`).
 3. **Chain persistence and the SOP**: the `Template` / `TemplateAudit` data model, the Store abstraction (file + SQLite), the step-by-step LLM SOP (`04`).
 4. **The in-place trial UI**: `up2 lint` / `up2 trial` / `up2 studio` / `up2 ops` / `up2 publish` / `up2 audit` (`06`).
@@ -135,7 +135,7 @@ The hard contracts C1/C2/C3 of the old `dsl-design` are "the export must be `dic
 | Document | Role |
 |---|---|
 | `000-overview.md` (this document) | positioning, the end-state acceptance criteria, goal mapping, scope, glossary, map |
-| `001-architecture-and-value-model.md` | layering and invariants, package structure, the value tree, the outcome model and the empty-value rule, export packing, security and resource limits |
+| `001-architecture-and-value-model.md` | layering and invariants, package structure, the value tree, the outcome model and the empty-value rule, the exit (`N5`), security and resource limits |
 | `002-dsl-spec-triples-and-operators.md` | the canonicalisation of the chain stage `[operator, mode, argument]` and the increasing enumeration strength of the slots, reference syntax, the full operator set, allowlisted functions, compile-time error codes |
 | `003-parse-chain-spec.md` | the **story** model: `globals` + `nodes`, node bodies (chain / field map), `["node", …]` calls, the `["type", …]` constructor stage, the synchronous `run`, `each` and the field map, materialization and the run-scoped cache, scope, the lint checklist, a complete walkthrough |
 | `004-persistence-and-sop.md` | the `Template`/`TemplateAudit` data model, fingerprints, the Store abstraction and its implementations, the `S0–S7` SOP, the counter-example list |

@@ -100,7 +100,7 @@ def markdown_result(outcome: Outcome) -> bool:
 
 
 class _HostResponse:
-    """A stand-in host object: attributes are values, methods are not."""
+    """A stand-in host object: attributes are values, and so are methods."""
 
     __slots__ = ("status", "text")
 

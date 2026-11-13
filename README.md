@@ -85,7 +85,8 @@ uv run up2 trial chain.json --input 'text=<h1>  Hello   world </h1>' --json
 A **story** is `{"globals": {...}, "nodes": {...}}`. A node body is a **chain** (array; `[]` is
 identity) or a **field map** (object). A chain calls another node with `["node", name]`; a field map
 evaluates every field on the node input, writes **every** result into `$locals`, and puts the fields
-without a `_` prefix into the product. `["type", name]` ends a chain with a host-registered validator.
+without a `_` prefix into the product. `["type", name]` constructs a host-registered type from the
+value, at any stage of a chain.
 
 ```jsonc
 {
@@ -114,7 +115,7 @@ without a `_` prefix into the product. `["type", name]` ends a chain with a host
 ```python
 import uniparser2 as up2
 
-up2.register_type("Author", Author)  # a validator, not a container
+up2.register_type("Author", Author)  # a constructor: its instance flows mid-chain
 product = up2.run(
     story, "authors", "https://quotes.toscrape.com", udfs={"fetch": my_fetch}
 )  # synchronous; `fetch` blocks
@@ -122,9 +123,9 @@ product = up2.run(
 
 `run(story, node=None, input=None, *, globals=None, udfs=None, types=None, trace=None)` returns the
 node's product (the first node is the default). `globals` merges over the story's constants for that run;
-`types` merges over the process-wide type registry the same way `udfs` does. **Only the exit requires
-JSON**: a response object, or a `type` stage's constructed instance, may flow mid-chain and be read with
-`py.getattr`.
+`types` merges over the process-wide type registry the same way `udfs` does. **Nothing requires
+JSON**: a response object, or a `type` stage's constructed instance, flows mid-chain, is read with
+`py.getattr`, and is exactly what `run` answers.
 `fetch` takes a **request object** (`{"url": …}`); `["ctx","dict",{"url":"obj"}]` builds one from the
 current value.
 
@@ -303,7 +304,7 @@ uv run up2 test example.com 政府文件列表     # a mismatch prints a JSON Po
 <details>
 <summary><b>Status and roadmap</b></summary>
 
-**0.8.0.** L1 (the operator layer) is complete and mechanically audited. L2 is the **story** model:
+**0.9.0.** L1 (the operator layer) is complete and mechanically audited. L2 is the **story** model:
 `globals` + `nodes`, node calls, field maps and `$locals`, `["type", …]`, the synchronous `run`
 facade, and `fetch` as a host `udf`. L3's **template store** is in: file and SQLite implementations,
 fingerprints, append-only audit, and the `publish` / `get` / `audit` / `snapshot` / `test` / `doctor`

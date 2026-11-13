@@ -184,7 +184,7 @@ def test_no_operator_performs_io_on_the_evaluate_path() -> None:
 
 
 def test_a_chain_round_trips_whatever_an_operator_adds() -> None:
-    """`01` N2: `dumps(loads(x))` is a fixed point, for **every** registered operator.
+    """`00` N2: `dumps(loads(x))` is a fixed point, for **every** registered operator.
 
     Drive it off the registry rather than a hand-written list: a new operator is covered the moment
     it is declared, which is the property the hand-written `tests/serialization` list lacks.

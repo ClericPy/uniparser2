@@ -62,10 +62,10 @@ and every gate stayed green while the engine substituted the payload for the obj
 - **A fact in `docs/specs/` that involves two or more operators, or a boundary between layers, needs
   a case here** — not only a case in one operator's file. "A host object flows mid-chain whichever
   operator produced it" and "the exit hands back what the run produced" are the canonical examples.
-- `tests/invariants/test_invariant_coverage.py` reads the ids declared in `01` §1.1 (`I*`) and §4–§6
-  (`N*`) and fails when one is neither executed here (`INVARIANT_CASES`) nor recorded as enforced by
-  another gate (`ENFORCED_ELSEWHERE`). Declaring a new invariant in `01` therefore requires naming
-  the case that proves it.
+- `tests/invariants/test_invariant_coverage.py` reads the ids the notes declare (`I1`–`I8` in
+  `01` §1.1, `N1`–`N8` in `00` §2) and fails when one is neither executed here (`INVARIANT_CASES`)
+  nor recorded as enforced by another gate (`ENFORCED_ELSEWHERE`). Declaring a new invariant in
+  `00`/`01` therefore requires naming the case that proves it.
 - A source-level assertion is legitimate here when the invariant is about *where* something may
   happen (no IO on an `evaluate` path, no `async` anywhere) — behaviour tests cannot see placement.
 
